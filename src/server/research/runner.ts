@@ -1,0 +1,462 @@
+import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import type { Db } from "../db/client";
+import {
+  companies,
+  markets,
+  researchJobs,
+  researchRules,
+  researchRuns,
+} from "../db/schema";
+import { defaultHvacRuleConfig, type RuleConfig } from "../domain/rules";
+import { createCandidate } from "../repo/companies";
+import { audit } from "../repo/audit";
+import { executeDiscovery } from "../providers/registry";
+import { researchCompany, type ResearchResult } from "./engine";
+import { getStaleDays } from "../repo/settings";
+
+export type RunMode = "test" | "small" | "full" | "stale" | "rejected" | "retry";
+
+export interface CreateRunOptions {
+  mode: RunMode;
+  ruleId?: string | null;
+  marketId?: string | null;
+  actor: string;
+  dryRun?: boolean;
+  providerFilter?: string[];
+  maxCandidates?: number;
+  concurrency?: number;
+  pagesPerCompany?: number;
+  stopOnError?: boolean;
+}
+
+export interface RunCounters {
+  totalCandidates: number;
+  createdCompanies: number;
+  duplicatesMerged: number;
+  excludedCount: number;
+  completedJobs: number;
+  failedJobs: number;
+  factsRecorded: number;
+  contactsDiscovered: number;
+}
+
+export async function createResearchRun(
+  db: Db,
+  opts: CreateRunOptions
+): Promise<string> {
+  // 1. Resolve rule & market
+  let ruleId = opts.ruleId ?? null;
+  let marketId = opts.marketId ?? null;
+  let ruleConfig: RuleConfig;
+
+  if (ruleId) {
+    const [row] = await db
+      .select()
+      .from(researchRules)
+      .where(eq(researchRules.id, ruleId))
+      .limit(1);
+    ruleConfig = (row?.config as RuleConfig) || defaultHvacRuleConfig();
+    if (row?.marketId && !marketId) {
+      marketId = row.marketId;
+    }
+  } else if (marketId) {
+    const [def] = await db
+      .select()
+      .from(researchRules)
+      .where(and(eq(researchRules.marketId, marketId), eq(researchRules.isDefault, true)))
+      .limit(1);
+    ruleId = def?.id ?? null;
+    ruleConfig = (def?.config as RuleConfig) || defaultHvacRuleConfig();
+  } else {
+    const [def] = await db
+      .select()
+      .from(researchRules)
+      .where(eq(researchRules.isDefault, true))
+      .limit(1);
+    ruleId = def?.id ?? null;
+    marketId = def?.marketId ?? null;
+    ruleConfig = (def?.config as RuleConfig) || defaultHvacRuleConfig();
+  }
+
+  // 2. Fallback resolve market if still null
+  if (!marketId) {
+    const [market] = await db
+      .select({ id: markets.id })
+      .from(markets)
+      .where(eq(markets.key, "hvac"))
+      .limit(1);
+    marketId = market?.id ?? null;
+  }
+
+  // 3. Candidate limit based on mode
+  let limit = ruleConfig.discovery.limits.maxCandidates || 50;
+  if (opts.mode === "test") limit = 3;
+  else if (opts.mode === "small") limit = 15;
+  if (opts.maxCandidates && opts.maxCandidates > 0) {
+    limit = opts.maxCandidates;
+  }
+
+  const limits = {
+    maxCandidates: limit,
+    concurrency: opts.concurrency ?? ruleConfig.discovery.limits.concurrency ?? 2,
+    pagesPerCompany: opts.pagesPerCompany ?? ruleConfig.discovery.limits.pagesPerCompany ?? 12,
+    stopOnError: opts.stopOnError ?? ruleConfig.discovery.limits.stopOnError ?? false,
+    providerFilter: opts.providerFilter ?? null,
+  };
+
+  const initialCounters: RunCounters = {
+    totalCandidates: 0,
+    createdCompanies: 0,
+    duplicatesMerged: 0,
+    excludedCount: 0,
+    completedJobs: 0,
+    failedJobs: 0,
+    factsRecorded: 0,
+    contactsDiscovered: 0,
+  };
+
+  const [run] = await db
+    .insert(researchRuns)
+    .values({
+      marketId,
+      ruleId,
+      mode: opts.mode,
+      dryRun: opts.dryRun ?? false,
+      limits,
+      counters: initialCounters as any,
+      actor: opts.actor,
+      status: "QUEUED",
+    })
+    .returning({ id: researchRuns.id });
+
+  if (!run) throw new Error("Failed to create research run");
+
+  await audit(db, {
+    actor: opts.actor,
+    action: "research_run.created",
+    entityType: "research_run",
+    entityId: run.id,
+    details: { mode: opts.mode, limits, marketId },
+  });
+
+  return run.id;
+}
+
+export interface ExecuteRunOptions {
+  timeoutMs?: number;
+  mockPages?: any[];
+  autoEnrich?: boolean;
+}
+
+export async function executeRun(
+  db: Db,
+  runId: string,
+  runOpts?: ExecuteRunOptions
+): Promise<RunCounters> {
+  const [run] = await db
+    .select()
+    .from(researchRuns)
+    .where(eq(researchRuns.id, runId))
+    .limit(1);
+
+  if (!run) throw new Error(`Run ${runId} not found`);
+
+  // Update status to RUNNING
+  await db
+    .update(researchRuns)
+    .set({ status: "RUNNING", startedAt: new Date(), updatedAt: new Date() })
+    .where(eq(researchRuns.id, runId));
+
+  const limits = (run.limits as Record<string, any>) || {};
+  const maxCandidates = limits.maxCandidates || 25;
+  const concurrency = Math.min(Math.max(limits.concurrency || 2, 1), 6);
+  const pagesPerCompany = limits.pagesPerCompany || 12;
+  const stopOnError = !!limits.stopOnError;
+  const timeoutMs = runOpts?.timeoutMs ?? limits.timeoutMs ?? (run.mode === "test" ? 1000 : 8000);
+  const runActor = run.actor || "Research Runner";
+
+  let ruleConfig: RuleConfig = defaultHvacRuleConfig();
+  if (run.ruleId) {
+    const [r] = await db
+      .select()
+      .from(researchRules)
+      .where(eq(researchRules.id, run.ruleId))
+      .limit(1);
+    if (r?.config) ruleConfig = r.config as RuleConfig;
+  }
+
+  const counters: RunCounters = {
+    totalCandidates: 0,
+    createdCompanies: 0,
+    duplicatesMerged: 0,
+    excludedCount: 0,
+    completedJobs: 0,
+    failedJobs: 0,
+    factsRecorded: 0,
+    contactsDiscovered: 0,
+  };
+
+  const companyIdsToResearch: string[] = [];
+
+  // Step 1: Candidate intake according to mode
+  if (run.mode === "stale") {
+    const staleDays = await getStaleDays(db);
+    const cutoff = new Date(Date.now() - staleDays * 86400 * 1000);
+    const staleCond = or(isNull(companies.lastVerifiedAt), lt(companies.lastVerifiedAt, cutoff));
+    const staleRows = await db
+      .select({ id: companies.id })
+      .from(companies)
+      .where(run.marketId ? and(eq(companies.marketId, run.marketId), staleCond) : staleCond)
+      .limit(maxCandidates);
+    companyIdsToResearch.push(...staleRows.map((r) => r.id));
+  } else if (run.mode === "rejected") {
+    const rejCond = inArray(companies.status, ["REJECTED", "DISQUALIFIED"]);
+    const rejectedRows = await db
+      .select({ id: companies.id })
+      .from(companies)
+      .where(run.marketId ? and(eq(companies.marketId, run.marketId), rejCond) : rejCond)
+      .limit(maxCandidates);
+    companyIdsToResearch.push(...rejectedRows.map((r) => r.id));
+  } else if (run.mode === "retry") {
+    const failedJobs = await db
+      .select({ companyId: researchJobs.companyId })
+      .from(researchJobs)
+      .where(and(eq(researchJobs.runId, runId), eq(researchJobs.status, "FAILED")));
+    for (const j of failedJobs) {
+      if (j.companyId) companyIdsToResearch.push(j.companyId);
+    }
+  } else {
+    // Standard discovery: test, small, full
+    const discovered = await executeDiscovery(
+      db,
+      {
+        rule: ruleConfig,
+        keywords: ruleConfig.discovery.keywords,
+        states: ruleConfig.geography.states,
+        cities: ruleConfig.geography.cities,
+        zips: ruleConfig.geography.zips,
+        limit: maxCandidates,
+      },
+      limits.providerFilter
+    );
+
+    counters.totalCandidates = discovered.length;
+
+    for (const d of discovered) {
+      const intake = await createCandidate(
+        db,
+        {
+          name: d.name,
+          website: d.website,
+          phone: d.phone,
+          address: d.street,
+          city: d.city,
+          state: d.state,
+          zip: d.zip,
+          provider: d.provider,
+          providerRef: d.providerRef,
+        },
+        { actor: run.actor || "Discovery Runner", marketId: run.marketId ?? undefined }
+      );
+
+      if (intake.kind === "created") {
+        counters.createdCompanies++;
+        companyIdsToResearch.push(intake.id);
+      } else if (intake.kind === "duplicate") {
+        counters.duplicatesMerged++;
+        companyIdsToResearch.push(intake.existingId);
+      } else if (intake.kind === "excluded") {
+        counters.excludedCount++;
+      }
+    }
+  }
+
+  // Deduplicate target company IDs
+  const uniqueCompanyIds = Array.from(new Set(companyIdsToResearch)).slice(0, maxCandidates);
+
+  // Step 2: Create research jobs in DB
+  const jobIds: string[] = [];
+  for (const cid of uniqueCompanyIds) {
+    const [j] = await db
+      .insert(researchJobs)
+      .values({
+        runId,
+        companyId: cid,
+        kind: "research",
+        status: "QUEUED",
+      })
+      .returning({ id: researchJobs.id });
+    if (j) jobIds.push(j.id);
+  }
+
+  // Step 3: Run jobs with concurrency pool
+  let activeIndex = 0;
+  let encounteredError: string | null = null;
+
+  async function worker() {
+    while (activeIndex < uniqueCompanyIds.length) {
+      if (stopOnError && encounteredError) break;
+
+      const idx = activeIndex++;
+      const companyId = uniqueCompanyIds[idx];
+      const jobId = jobIds[idx];
+      if (!companyId || !jobId) continue;
+
+      await db
+        .update(researchJobs)
+        .set({ status: "RUNNING", startedAt: new Date() })
+        .where(eq(researchJobs.id, jobId));
+
+      try {
+        const result: ResearchResult = await researchCompany(db, companyId, {
+          runId,
+          ruleConfig,
+          maxPages: pagesPerCompany,
+          timeoutMs,
+          mockPages: runOpts?.mockPages,
+          actor: runActor,
+        });
+
+        counters.completedJobs++;
+        counters.factsRecorded += result.factsRecorded;
+        counters.contactsDiscovered += result.contactsDiscovered;
+
+        if (runOpts?.autoEnrich && result.status !== "DISQUALIFIED") {
+          try {
+            const { enrichCompany } = await import("../enrichment/pipeline");
+            await enrichCompany(db, companyId, { actor: `${runActor} (Auto-Enrich)` });
+          } catch {
+            // Non-blocking enrichment: discoveries and primary facts are preserved
+          }
+        }
+
+        await db
+          .update(researchJobs)
+          .set({
+            status: "COMPLETED",
+            finishedAt: new Date(),
+            result: result as any,
+          })
+          .where(eq(researchJobs.id, jobId));
+      } catch (err: any) {
+        counters.failedJobs++;
+        const msg = err.message || String(err);
+        encounteredError = msg;
+
+        await db
+          .update(researchJobs)
+          .set({
+            status: "FAILED",
+            finishedAt: new Date(),
+            lastError: msg,
+          })
+          .where(eq(researchJobs.id, jobId));
+      }
+
+      // Periodically update run counters
+      await db
+        .update(researchRuns)
+        .set({ counters: counters as any, updatedAt: new Date() })
+        .where(eq(researchRuns.id, runId));
+    }
+  }
+
+  const workers = Array.from({ length: concurrency }, () => worker());
+  await Promise.all(workers);
+
+  // Finalize run
+  const finalStatus =
+    counters.failedJobs === 0
+      ? "COMPLETED"
+      : counters.completedJobs > 0
+      ? "PARTIAL"
+      : "FAILED";
+
+  await db
+    .update(researchRuns)
+    .set({
+      status: finalStatus,
+      finishedAt: new Date(),
+      lastError: encounteredError,
+      counters: counters as any,
+      updatedAt: new Date(),
+    })
+    .where(eq(researchRuns.id, runId));
+
+  await audit(db, {
+    actor: run.actor || "Research Runner",
+    action: "research_run.finished",
+    entityType: "research_run",
+    entityId: runId,
+    details: { status: finalStatus, counters },
+  });
+
+  return counters;
+}
+
+export async function pauseRun(db: Db, runId: string, actor: string): Promise<void> {
+  await db
+    .update(researchRuns)
+    .set({ status: "QUEUED", updatedAt: new Date() })
+    .where(eq(researchRuns.id, runId));
+
+  await audit(db, {
+    actor,
+    action: "research_run.paused",
+    entityType: "research_run",
+    entityId: runId,
+  });
+}
+
+export async function cancelRun(db: Db, runId: string, actor: string): Promise<void> {
+  await db
+    .update(researchRuns)
+    .set({ status: "CANCELLED", finishedAt: new Date(), updatedAt: new Date() })
+    .where(eq(researchRuns.id, runId));
+
+  await db
+    .update(researchJobs)
+    .set({ status: "CANCELLED", finishedAt: new Date() })
+    .where(and(eq(researchJobs.runId, runId), eq(researchJobs.status, "QUEUED")));
+
+  await audit(db, {
+    actor,
+    action: "research_run.cancelled",
+    entityType: "research_run",
+    entityId: runId,
+  });
+}
+
+export async function getRecentRuns(db: Db, limit = 20, marketId?: string) {
+  if (marketId) {
+    return await db
+      .select()
+      .from(researchRuns)
+      .where(eq(researchRuns.marketId, marketId))
+      .orderBy(desc(researchRuns.createdAt))
+      .limit(limit);
+  }
+  return await db
+    .select()
+    .from(researchRuns)
+    .orderBy(desc(researchRuns.createdAt))
+    .limit(limit);
+}
+
+export async function getRunDetails(db: Db, runId: string) {
+  const [run] = await db
+    .select()
+    .from(researchRuns)
+    .where(eq(researchRuns.id, runId))
+    .limit(1);
+
+  if (!run) return null;
+
+  const jobs = await db
+    .select()
+    .from(researchJobs)
+    .where(eq(researchJobs.runId, runId))
+    .orderBy(desc(researchJobs.createdAt));
+
+  return { run, jobs };
+}
