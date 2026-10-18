@@ -28,7 +28,6 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
-    "@rolldown/binding-win32-x64-msvc": "^1.2.12",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^26.6.4",
     "@types/pg": "^8.23.1",
