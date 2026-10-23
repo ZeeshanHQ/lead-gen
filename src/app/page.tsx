@@ -312,7 +312,7 @@ export default async function OverviewPage() {
                   No Leads Discovered Yet
                 </h3>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
-                  Prospect new HVAC companies using live search, Google Places, or upload a CSV.
+                  Prospect new {market.name} companies using live search, Google Places, or upload a CSV.
                 </p>
                 <Link
                   href="/discover"
@@ -432,21 +432,20 @@ export default async function OverviewPage() {
 
               <div className="space-y-2 pt-1 text-slate-300">
                 <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                  Target Services &amp; Signals
+                  Target Niche Signals &amp; Keywords
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  <span className="rounded-md border border-slate-800 bg-slate-950 px-2 py-1 text-[11px] text-slate-300">
-                    High-Ticket Replacement
-                  </span>
-                  <span className="rounded-md border border-slate-800 bg-slate-950 px-2 py-1 text-[11px] text-slate-300">
-                    Consumer Financing
-                  </span>
-                  <span className="rounded-md border border-slate-800 bg-slate-950 px-2 py-1 text-[11px] text-slate-300">
-                    Field Software Detected
-                  </span>
-                  <span className="rounded-md border border-slate-800 bg-slate-950 px-2 py-1 text-[11px] text-slate-300">
-                    Owner / GM Verified
-                  </span>
+                  {(market.keywords && market.keywords.length > 0
+                    ? market.keywords.slice(0, 6)
+                    : ["Verified Phone", "Decision Maker", "Target Services"]
+                  ).map((kw, i) => (
+                    <span
+                      key={i}
+                      className="rounded-md border border-slate-800 bg-slate-950 px-2 py-1 text-[11px] text-slate-300 capitalize"
+                    >
+                      {kw}
+                    </span>
+                  ))}
                 </div>
               </div>
             </div>

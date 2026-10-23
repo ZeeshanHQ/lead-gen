@@ -86,7 +86,9 @@ export function LeadProspector({
   const [editKeywords, setEditKeywords] = useState<string>(
     activeMarket?.keywords?.length
       ? activeMarket.keywords.join(", ")
-      : "residential HVAC replacement, AC installation financing"
+      : activeMarket?.name
+      ? `${activeMarket.name} services, local companies`
+      : "Commercial services, local companies"
   );
   const [editMinScore, setEditMinScore] = useState<number>(60);
   const [savingFilters, setSavingFilters] = useState(false);
@@ -232,7 +234,7 @@ export function LeadProspector({
               </span>
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
                 <Building className="w-3.5 h-3.5 text-amber-400" />
-                Active Niche: {nicheInfo?.name || "US Residential HVAC"}
+                Active Niche: {nicheInfo?.name || "Active Niche"}
               </span>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                 🟢 Live Search Active (Tavily AI Engine)
@@ -401,7 +403,7 @@ export function LeadProspector({
             <div className="min-w-0">
               <div className="text-[11px] font-medium text-slate-400">Active Vertical</div>
               <div className="text-slate-200 font-semibold truncate">
-                {nicheInfo?.name || "US Residential HVAC"}
+                {nicheInfo?.name || "Active Niche"}
               </div>
             </div>
           </div>

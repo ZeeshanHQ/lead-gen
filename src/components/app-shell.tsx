@@ -113,7 +113,7 @@ export function AppShell({
   const [newTenantInitialCategory, setNewTenantInitialCategory] = useState("hvac");
 
   const currentTenantName = activeTenant?.name || "Astraventa Workspace";
-  const currentNicheName = activeMarket?.name || "US Residential HVAC";
+  const currentNicheName = activeMarket?.name || "Active Niche";
 
   const displayedTenants: TenantWorkspace[] =
     allTenants.length > 0
