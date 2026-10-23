@@ -427,7 +427,7 @@ export default async function OverviewPage() {
             <div className="mt-3.5 space-y-3 text-xs">
               <div className="flex items-center justify-between rounded-lg bg-slate-950/60 p-2.5 border border-slate-800">
                 <span className="text-slate-400">Min ICP Approval Score:</span>
-                <span className="font-semibold text-white">{defaultRule.config?.scoring?.minScore ?? 60} / 100</span>
+                <span className="font-semibold text-white">{defaultRule?.config?.scoring?.minScore ?? 60} / 100</span>
               </div>
 
               <div className="space-y-2 pt-1 text-slate-300">

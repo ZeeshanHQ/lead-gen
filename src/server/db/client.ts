@@ -66,9 +66,12 @@ export async function createDb(url: string): Promise<DbHandle> {
       const fsModule = await import("node:fs");
       if (fsModule.existsSync(MIGRATIONS_FOLDER)) {
         await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+      } else {
+        const { SCHEMA_DDL } = await import("./ddl");
+        await client.exec(SCHEMA_DDL);
       }
     } catch (mErr) {
-      console.warn("PGlite migration skipped/warning:", mErr);
+      console.warn("PGlite migration/DDL fallback warning:", mErr);
     }
     return {
       db: db as unknown as Db,
@@ -96,13 +99,13 @@ export async function createDb(url: string): Promise<DbHandle> {
     const fsModule = await import("node:fs");
     if (fsModule.existsSync(MIGRATIONS_FOLDER)) {
       await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+    } else {
+      const { SCHEMA_DDL } = await import("./ddl");
+      await pool.query(SCHEMA_DDL);
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Ignore benign race condition, ENOENT on serverless, or already applied migrations
-    if (!msg.includes("already exists") && !msg.includes("duplicate key value") && !msg.includes("ENOENT")) {
-      console.warn("Postgres migration skipped/warning:", msg);
-    }
+    console.warn("Postgres migration/DDL warning:", msg);
   }
 
   return { db: db as unknown as Db, driver: "pg", close: () => pool.end() };

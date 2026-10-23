@@ -38,22 +38,26 @@ export async function ensureMarketsSeeded(db: Db): Promise<void> {
   if (seededInProcess) return;
   try {
     for (const m of SEEDED_MARKETS) {
-      await db
-        .insert(markets)
-        .values({
-          key: m.key,
-          name: m.name,
-          description: m.description,
-          config: {
-            keywords: m.keywords,
-            serviceKeys: m.serviceKeys,
-            pageHints: m.pageHints,
-            category: m.category || m.key,
-            icon: m.icon || "building",
-            tenantId: m.tenantId || "tenant_main",
-          },
-        })
-        .onConflictDoNothing({ target: markets.key });
+      try {
+        await db
+          .insert(markets)
+          .values({
+            key: m.key,
+            name: m.name,
+            description: m.description,
+            config: {
+              keywords: m.keywords,
+              serviceKeys: m.serviceKeys,
+              pageHints: m.pageHints,
+              category: m.category || m.key,
+              icon: m.icon || "building",
+              tenantId: m.tenantId || "tenant_main",
+            },
+          })
+          .onConflictDoNothing({ target: markets.key });
+      } catch (err) {
+        // Ignore duplicate key or existing record
+      }
 
       const [market] = await db.select().from(markets).where(eq(markets.key, m.key)).limit(1);
       if (!market) continue;

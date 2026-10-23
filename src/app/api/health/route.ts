@@ -35,6 +35,9 @@ export async function GET() {
         environment: {
           vercel: Boolean(process.env.VERCEL),
           nodeEnv: process.env.NODE_ENV || "development",
+          hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+          hasTavilyKey: Boolean(process.env.TAVILY_API_KEY),
+          hasLlmKey: Boolean(process.env.LLM_API_KEY),
         },
         timestamp: new Date().toISOString(),
       },
