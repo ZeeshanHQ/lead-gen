@@ -552,7 +552,7 @@ export function CallerClient({
               <PhoneCall className="w-7 h-7 text-slate-600 mx-auto" />
               <p className="text-sm font-medium text-slate-200">No leads in this view</p>
               <p className="text-xs">
-                Approve leads from the Review Queue or import a CSV sheet to start calling.
+                Click "+ Find Leads" above to discover qualified leads in 1 click, or switch tabs to view all leads.
               </p>
             </div>
           ) : (

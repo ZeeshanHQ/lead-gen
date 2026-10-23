@@ -258,10 +258,10 @@ export function LeadProspector({
               <span>{isEditingFilters ? "Close Filters" : "⚙️ Quick Edit Filters"}</span>
             </button>
             <Link
-              href="/review"
+              href="/caller"
               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-800 border border-slate-700/80 text-xs font-semibold text-slate-200 hover:text-white transition-all shadow-sm"
             >
-              <span>Review Queue</span>
+              <span>Leads CRM</span>
               {totalReviewCount > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold text-[10px] border border-amber-500/30">
                   {totalReviewCount}
@@ -522,10 +522,10 @@ export function LeadProspector({
               <span>{successBanner}</span>
             </div>
             <Link
-              href="/review"
+              href="/caller"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shrink-0 transition-colors"
             >
-              <span>View Review Queue</span>
+              <span>Open Leads CRM (Ready to Call)</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>
@@ -538,7 +538,7 @@ export function LeadProspector({
           <div className="flex items-center gap-2">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Building className="w-4 h-4 text-cyan-400" />
-              Qualified Leads Ready for Review
+              Qualified Leads Stream (Ready to Call)
             </h2>
             <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-xs font-semibold">
               {leads.length} leads
@@ -546,10 +546,10 @@ export function LeadProspector({
           </div>
 
           <Link
-            href="/review"
+            href="/caller"
             className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1 transition-colors"
           >
-            <span>Open Review Queue ({totalReviewCount} total)</span>
+            <span>Open Leads CRM ({totalReviewCount} leads)</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>

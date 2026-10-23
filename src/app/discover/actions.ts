@@ -12,6 +12,8 @@ export async function addCandidateAction(input: CandidateInput, force = false) {
     const actor = await getActor(db);
     const { market } = await getActiveContext(db);
     const result = await createCandidate(db, input, { actor, force, marketId: market.id });
+    revalidatePath("/caller");
+    revalidatePath("/leads");
     revalidatePath("/review");
     revalidatePath("/discover");
     revalidatePath("/");
@@ -170,8 +172,12 @@ export async function runLeadDiscoveryAction(options: {
     const counters = await executeRun(db, runId, { timeoutMs: 6500, autoEnrich: true });
 
     // Fetch freshly qualified review leads for this active niche
-    const allLeads = await loadLeadRows(db, "review", market.id);
-    const topLeads = allLeads.slice(0, 15);
+    const [approved, review] = await Promise.all([
+      loadLeadRows(db, "approved", market.id),
+      loadLeadRows(db, "review", market.id),
+    ]);
+    const allLeads = [...approved, ...review];
+    const topLeads = allLeads.slice(0, 20);
 
     revalidatePath("/review");
     revalidatePath("/discover");
@@ -197,8 +203,12 @@ export async function getLatestReviewLeadsAction() {
     const db = await getDb();
     const { market } = await getActiveContext(db);
     const { loadLeadRows } = await import("@/server/repo/queue");
-    const leads = await loadLeadRows(db, "review", market.id);
-    return { ok: true, leads: leads.slice(0, 15), totalCount: leads.length };
+    const [approved, review] = await Promise.all([
+      loadLeadRows(db, "approved", market.id),
+      loadLeadRows(db, "review", market.id),
+    ]);
+    const leads = [...approved, ...review];
+    return { ok: true, leads: leads.slice(0, 20), totalCount: leads.length };
   } catch (err: any) {
     return { ok: false, error: err.message, leads: [], totalCount: 0 };
   }

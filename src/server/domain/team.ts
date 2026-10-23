@@ -166,7 +166,7 @@ export const ROLE_PRESETS: Record<TeamRole, RolePresetMeta> = {
     badgeColor: "bg-indigo-500/10 text-indigo-300 border-indigo-500/25",
     description: "Can call approved leads, view scripts, and save call notes and follow-ups.",
     defaultPermissions: {
-      discoverLeads: false,
+      discoverLeads: true,
       approveLeads: false,
       callerWorkbench: true,
       editContacts: true,
