@@ -8,6 +8,14 @@ export interface SendInviteEmailParams {
   inviteUrl: string;
 }
 
+export interface SendOtpEmailParams {
+  to: string;
+  recipientName?: string;
+  code: string;
+  workspaceName?: string;
+  magicLinkUrl?: string;
+}
+
 export interface EmailDispatchResult {
   ok: boolean;
   directSent: boolean;
@@ -26,7 +34,7 @@ export async function sendInviteEmail(
 
   const bodyText = `Hi ${params.recipientName},
 
-${params.inviterName} has invited you to join the ${params.workspaceName} workspace on Astraventa Lead Intelligence Platform as a ${params.roleLabel}.
+${params.inviterName} has invited you to join the ${params.workspaceName} workspace on Astraventa Lead Intelligence CRM as a ${params.roleLabel}.
 
 Assigned Access: ${params.nicheScopeLabel}
 
@@ -54,7 +62,6 @@ The Astraventa Team`;
     };
   }
 
-  // Attempt direct delivery via Resend API
   try {
     const fromAddress =
       process.env.EMAIL_FROM?.trim() || "Astraventa <onboarding@resend.dev>";
@@ -65,63 +72,63 @@ The Astraventa Team`;
   <title>${subject}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 </head>
-<body style="margin: 0; padding: 0; background-color: #020617; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #f8fafc;">
-  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #020617; padding: 40px 20px;">
+<body style="margin: 0; padding: 0; background-color: #09090b; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #f4f4f5;">
+  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #09090b; padding: 48px 20px;">
     <tr>
       <td align="center">
-        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 540px; background-color: #0f172a; border: 1px solid #1e293b; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);">
+        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 520px; background-color: #121215; border: 1px solid #27272a; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);">
           <tr>
-            <td style="padding: 32px 32px 24px 32px; border-bottom: 1px solid #1e293b; text-align: left;">
-              <div style="display: inline-block; padding: 4px 10px; background-color: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3); border-radius: 20px; font-size: 11px; font-weight: 700; color: #22d3ee; letter-spacing: 0.05em; text-transform: uppercase;">
-                Team Invitation
+            <td style="padding: 32px 32px 24px 32px; border-bottom: 1px solid #1f1f23; text-align: left;">
+              <div style="font-size: 13px; font-weight: 800; letter-spacing: 0.12em; color: #a1a1aa; text-transform: uppercase; margin-bottom: 12px;">
+                ASTRAVENTA &bull; CRM
               </div>
-              <h1 style="margin: 16px 0 0 0; font-size: 22px; font-weight: 800; color: #ffffff; letter-spacing: -0.02em;">
+              <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff; letter-spacing: -0.02em;">
                 Join ${params.workspaceName}
               </h1>
-              <p style="margin: 6px 0 0 0; font-size: 13px; color: #94a3b8;">
-                Invited by <strong style="color: #e2e8f0;">${params.inviterName}</strong>
+              <p style="margin: 6px 0 0 0; font-size: 13px; color: #71717a;">
+                Invited by <strong style="color: #e4e4e7;">${params.inviterName}</strong>
               </p>
             </td>
           </tr>
           <tr>
             <td style="padding: 28px 32px; text-align: left;">
-              <p style="margin: 0 0 16px 0; font-size: 14px; line-height: 1.6; color: #cbd5e1;">
+              <p style="margin: 0 0 16px 0; font-size: 14px; line-height: 1.6; color: #d4d4d8;">
                 Hi <strong>${params.recipientName}</strong>,
               </p>
-              <p style="margin: 0 0 24px 0; font-size: 14px; line-height: 1.6; color: #cbd5e1;">
-                You've been invited to join the <strong>${params.workspaceName}</strong> workspace on Astraventa Lead Intelligence Platform.
+              <p style="margin: 0 0 24px 0; font-size: 14px; line-height: 1.6; color: #a1a1aa;">
+                You've been invited to join the <strong>${params.workspaceName}</strong> workspace on Astraventa Lead Intelligence CRM.
               </p>
-              <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #020617; border: 1px solid #1e293b; border-radius: 12px; margin-bottom: 28px;">
+              <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #09090b; border: 1px solid #27272a; border-radius: 12px; margin-bottom: 28px;">
                 <tr>
-                  <td style="padding: 16px;">
-                    <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; font-weight: 600; margin-bottom: 4px;">Assigned Role</div>
-                    <div style="font-size: 15px; font-weight: 700; color: #38bdf8; margin-bottom: 8px;">${params.roleLabel}</div>
-                    <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; font-weight: 600; margin-bottom: 4px;">Niche Access</div>
-                    <div style="font-size: 13px; color: #e2e8f0;">${params.nicheScopeLabel}</div>
+                  <td style="padding: 16px 20px;">
+                    <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #71717a; font-weight: 600; margin-bottom: 4px;">Assigned Role</div>
+                    <div style="font-size: 15px; font-weight: 700; color: #ffffff; margin-bottom: 12px;">${params.roleLabel}</div>
+                    <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #71717a; font-weight: 600; margin-bottom: 4px;">Niche Access</div>
+                    <div style="font-size: 13px; color: #d4d4d8;">${params.nicheScopeLabel}</div>
                   </td>
                 </tr>
               </table>
               <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 28px;">
                 <tr>
                   <td align="center">
-                    <a href="${params.inviteUrl}" target="_blank" style="display: inline-block; padding: 14px 28px; background-color: #ffffff; color: #020617; text-decoration: none; font-size: 14px; font-weight: 700; border-radius: 10px; box-shadow: 0 4px 12px rgba(255, 255, 255, 0.15);">
+                    <a href="${params.inviteUrl}" target="_blank" style="display: block; width: 100%; box-sizing: border-box; text-align: center; padding: 14px 24px; background-color: #ffffff; color: #09090b; text-decoration: none; font-size: 14px; font-weight: 700; border-radius: 10px;">
                       Accept Invitation &amp; Open Workspace &rarr;
                     </a>
                   </td>
                 </tr>
               </table>
-              <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748b; line-height: 1.5;">
+              <p style="margin: 0 0 8px 0; font-size: 12px; color: #71717a; line-height: 1.5;">
                 Or copy and paste this link into your browser:
               </p>
-              <p style="margin: 0; font-size: 11px; font-family: monospace; word-break: break-all; color: #38bdf8;">
-                <a href="${params.inviteUrl}" style="color: #38bdf8; text-decoration: underline;">${params.inviteUrl}</a>
+              <p style="margin: 0; font-size: 11px; font-family: monospace; word-break: break-all; color: #a1a1aa;">
+                <a href="${params.inviteUrl}" style="color: #a1a1aa; text-decoration: underline;">${params.inviteUrl}</a>
               </p>
             </td>
           </tr>
           <tr>
-            <td style="padding: 20px 32px; background-color: #020617; border-top: 1px solid #1e293b; text-align: center;">
-              <p style="margin: 0; font-size: 11px; color: #475569;">
-                Astraventa Lead Intelligence Platform &bull; Automated B2B Lead Engine
+            <td style="padding: 20px 32px; background-color: #09090b; border-top: 1px solid #1f1f23; text-align: center;">
+              <p style="margin: 0; font-size: 11px; color: #52525b;">
+                Astraventa Lead Intelligence CRM &bull; High-Velocity B2B Calling Platform
               </p>
             </td>
           </tr>
@@ -178,6 +185,141 @@ The Astraventa Team`;
       subject,
       bodyText,
       mailtoUrl,
+    };
+  }
+}
+
+export async function sendOtpEmail(params: SendOtpEmailParams): Promise<{
+  ok: boolean;
+  directSent: boolean;
+  code: string;
+  error?: string;
+}> {
+  const workspaceName = params.workspaceName || "Astraventa";
+  const subject = `${params.code} is your ${workspaceName} verification code`;
+
+  const bodyText = `Hi ${params.recipientName || "there"},
+
+Your single-use sign-in verification code for Astraventa is:
+
+${params.code}
+
+This code will expire in 10 minutes.
+
+If you did not request this verification code, please ignore this email.
+
+Best regards,
+The Astraventa Team`;
+
+  const resendApiKey = process.env.RESEND_API_KEY?.trim();
+  if (!resendApiKey) {
+    return {
+      ok: true,
+      directSent: false,
+      code: params.code,
+    };
+  }
+
+  try {
+    const fromAddress =
+      process.env.EMAIL_FROM?.trim() || "Astraventa <security@resend.dev>";
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${subject}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; background-color: #09090b; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #f4f4f5;">
+  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #09090b; padding: 48px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 480px; background-color: #121215; border: 1px solid #27272a; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);">
+          <tr>
+            <td style="padding: 32px 32px 20px 32px; border-bottom: 1px solid #1f1f23; text-align: left;">
+              <div style="font-size: 13px; font-weight: 800; letter-spacing: 0.12em; color: #a1a1aa; text-transform: uppercase; margin-bottom: 8px;">
+                ASTRAVENTA
+              </div>
+              <h1 style="margin: 0; font-size: 20px; font-weight: 700; color: #ffffff; letter-spacing: -0.02em;">
+                Verification Code
+              </h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 28px 32px; text-align: left;">
+              <p style="margin: 0 0 20px 0; font-size: 14px; line-height: 1.6; color: #d4d4d8;">
+                Use the following 6-digit verification code to complete your sign-in:
+              </p>
+              
+              <!-- OTP Box -->
+              <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 24px;">
+                <tr>
+                  <td align="center" style="background-color: #09090b; border: 1px solid #27272a; border-radius: 12px; padding: 22px 16px;">
+                    <span style="font-family: 'Courier New', Courier, monospace, monospace; font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #ffffff; display: inline-block;">
+                      ${params.code}
+                    </span>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin: 0 0 8px 0; font-size: 12px; color: #71717a; line-height: 1.5;">
+                &bull; This code is single-use and expires in <strong>10 minutes</strong>.
+              </p>
+              <p style="margin: 0; font-size: 12px; color: #71717a; line-height: 1.5;">
+                &bull; Never share this code with anyone. Astraventa staff will never ask for it.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 20px 32px; background-color: #09090b; border-top: 1px solid #1f1f23; text-align: center;">
+              <p style="margin: 0; font-size: 11px; color: #52525b;">
+                Astraventa Lead Intelligence CRM &bull; Security &amp; Authentication
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: [params.to],
+        subject,
+        html,
+        text: bodyText,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: true,
+        directSent: false,
+        code: params.code,
+        error: (data as any)?.message || `Resend returned HTTP ${res.status}`,
+      };
+    }
+
+    return {
+      ok: true,
+      directSent: true,
+      code: params.code,
+    };
+  } catch (err: any) {
+    return {
+      ok: true,
+      directSent: false,
+      code: params.code,
+      error: err.message || "Failed to contact Resend API",
     };
   }
 }

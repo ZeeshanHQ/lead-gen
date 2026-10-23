@@ -396,7 +396,7 @@ function AppShellInner({
   const ownerMember = allMembers.find((m) => m.role === "OWNER") || allMembers[0];
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#09090b] text-zinc-100">
       {/* Global Switching Indicator Toast */}
       {isPending && (
         <div className="fixed top-4 right-4 z-[100] flex items-center gap-2.5 px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 font-medium text-xs shadow-xl">
@@ -418,28 +418,26 @@ function AppShellInner({
       {/* ============================================================ */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col bg-slate-950/95 border-r border-slate-800/80 backdrop-blur-xl transition-all duration-300 ease-in-out lg:static",
+          "fixed inset-y-0 left-0 z-50 flex flex-col bg-[#0c0c0e] border-r border-[#1f1f23] backdrop-blur-xl transition-all duration-300 ease-in-out lg:static",
           collapsed ? "w-20" : "w-64 xl:w-72",
           mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
         {/* Brand Header */}
-        <div className="flex h-16 shrink-0 items-center justify-between border-b border-slate-800/80 px-4">
+        <div className="flex h-16 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
           <Link href="/" className="flex items-center gap-3 overflow-hidden group">
-            <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg overflow-hidden bg-slate-900 border border-slate-800 p-1">
-              <img
-                src="/logo.png"
-                alt="Astraventa Logo"
-                className="h-full w-full object-contain"
-              />
-            </div>
+            <img
+              src="/logo.png"
+              alt="Astraventa"
+              className="h-8 w-8 object-contain shrink-0"
+            />
             {!collapsed && (
               <div className="min-w-0">
                 <div className="text-sm font-bold tracking-tight text-white">
                   ASTRAVENTA
                 </div>
-                <div className="text-[11px] text-slate-400 truncate">
-                  Lead Intelligence Engine
+                <div className="text-[10px] tracking-wider uppercase text-zinc-500 font-semibold">
+                  Lead Engine CRM
                 </div>
               </div>
             )}
@@ -455,7 +453,7 @@ function AppShellInner({
 
         {/* Workspace & Niche Selector */}
         {!collapsed && (
-          <div className="p-3 border-b border-slate-800/80 space-y-2 bg-slate-900/30">
+          <div className="p-3 border-b border-[#1f1f23] space-y-2 bg-slate-900/30">
             {/* Workspace Selector */}
             <div className="relative">
               <button
@@ -648,7 +646,7 @@ function AppShellInner({
                   {group.group}
                 </div>
               ) : (
-                <div className="h-2 border-t border-slate-800/80 mx-2" />
+                <div className="h-2 border-t border-[#1f1f23] mx-2" />
               )}
 
               <div className="space-y-0.5">
@@ -713,13 +711,13 @@ function AppShellInner({
         </div>
 
         {/* Sidebar Footer */}
-        <div className="shrink-0 border-t border-slate-800/80 p-3 bg-slate-950/90">
+        <div className="shrink-0 border-t border-[#1f1f23] p-3 bg-slate-950/90">
           {!collapsed ? (
             <div className="space-y-2">
               {activeMember && (
                 <Link
                   href="/settings"
-                  className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg bg-slate-900/70 hover:bg-slate-900 border border-slate-800/80 transition-colors"
+                  className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg bg-slate-900/70 hover:bg-slate-900 border border-[#1f1f23] transition-colors"
                   title="Open Team & Settings"
                 >
                   <div className="flex items-center gap-2 min-w-0">
@@ -766,56 +764,110 @@ function AppShellInner({
       {/* ============================================================ */}
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         {/* Top Header Bar */}
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-800/80 bg-slate-950/80 px-4 sm:px-6 backdrop-blur-md z-30">
-          <div className="flex items-center gap-3 min-w-0">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#1f1f23] bg-[#09090b]/85 px-4 sm:px-6 backdrop-blur-xl z-30">
+          <div className="flex items-center gap-3.5 min-w-0">
             <button
               type="button"
               onClick={() => setMobileOpen(true)}
-              className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-900 hover:text-white lg:hidden"
+              className="p-1.5 rounded-lg text-zinc-400 hover:bg-[#18181b] hover:text-white lg:hidden"
             >
               <Menu className="h-5 w-5" />
             </button>
 
             <div>
-              <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                <span className="truncate max-w-[180px]">{currentTenantName}</span>
-                <span>/</span>
-                <span className="text-slate-200 font-medium truncate">{currentNicheName}</span>
+              <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+                <span className="truncate max-w-[160px] text-zinc-400 font-medium">{currentTenantName}</span>
+                <span className="text-zinc-600">/</span>
+                <span className="text-zinc-300 font-medium truncate">{currentNicheName}</span>
               </div>
-              <h1 className="text-sm sm:text-base font-semibold text-white tracking-tight truncate">
+              <h1 className="text-sm sm:text-base font-bold text-white tracking-tight truncate">
                 {getPageTitle()}
               </h1>
             </div>
           </div>
 
-          {/* Right Header Actions: Team Switcher, Scale, Niche, Find Leads */}
-          <div className="flex items-center gap-2.5">
-            {/* Team Member Live Switcher & Status */}
+          {/* Right Header: Niche Selector & User Menu */}
+          <div className="flex items-center gap-3">
+            {/* Clean Niche Switcher Button */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setNicheDropdownOpen(!nicheDropdownOpen);
+                  setMemberDropdownOpen(false);
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#141418] hover:bg-[#1a1a20] border border-zinc-800 text-xs text-zinc-300 hover:text-white transition shadow-sm"
+                title="Active niche"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                <span className="font-medium text-white max-w-[130px] sm:max-w-[180px] truncate">{currentNicheName}</span>
+                <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+              </button>
+
+              {nicheDropdownOpen && (
+                <div className="absolute right-0 top-full mt-1.5 w-64 z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-2 space-y-1 max-h-80 overflow-y-auto">
+                  <div className="px-2 py-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center justify-between">
+                    <span>Switch Niche</span>
+                    <Zap className="w-3 h-3 text-zinc-400" />
+                  </div>
+                  {displayedMarkets.map((n) => {
+                    const isCurrent = activeMarket ? activeMarket.id === n.id : currentNicheName === n.name;
+                    return (
+                      <button
+                        key={n.id}
+                        type="button"
+                        onClick={() => {
+                          handleSwitchNiche(n.id);
+                          setNicheDropdownOpen(false);
+                        }}
+                        className={cn(
+                          "w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left text-xs transition",
+                          isCurrent
+                            ? "bg-zinc-800 text-white font-medium"
+                            : "text-zinc-300 hover:bg-zinc-800/60"
+                        )}
+                      >
+                        <span className="truncate pr-2">{n.name}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-400 shrink-0">
+                          {n.leadCount}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* User Profile Avatar & Dropdown */}
             {activeMember && (
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setMemberDropdownOpen(!memberDropdownOpen)}
-                  className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/90 px-3 py-1.5 text-xs hover:border-slate-700 transition"
-                  title="Switch active team member view or check team status"
+                  onClick={() => {
+                    setMemberDropdownOpen(!memberDropdownOpen);
+                    setNicheDropdownOpen(false);
+                  }}
+                  className="flex items-center gap-2 rounded-full pl-1 pr-2.5 py-1 bg-[#141418] hover:bg-[#1a1a20] border border-zinc-800 text-xs transition shadow-sm"
+                  title="Account profile"
                 >
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span className="hidden md:inline text-slate-400">User:</span>
-                  <span className="font-medium text-white truncate max-w-[130px]">
+                  <div className="w-6 h-6 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-[11px] font-bold text-white shrink-0">
+                    {activeMember.name?.charAt(0).toUpperCase() || "U"}
+                  </div>
+                  <span className="font-semibold text-white max-w-[110px] truncate hidden sm:inline">
                     {activeMember.name.replace(/\s*\(You\)/i, "")}
                   </span>
-                  <span className="hidden sm:inline rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
+                  <span className="text-[10px] text-zinc-400 hidden md:inline">
                     {ROLE_PRESETS[activeMember.role]?.label || activeMember.role}
                   </span>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                  <ChevronDown className="w-3 h-3 text-zinc-400" />
                 </button>
 
                 {memberDropdownOpen && (
-                  <div className="absolute right-0 top-full mt-1.5 w-60 z-50 rounded-xl border border-slate-800 bg-slate-900 p-3 shadow-2xl space-y-2.5">
-                    <div className="border-b border-slate-800/80 pb-2">
+                  <div className="absolute right-0 top-full mt-1.5 w-60 z-50 rounded-xl border border-zinc-800 bg-[#121215] p-3 shadow-2xl space-y-2.5">
+                    <div className="border-b border-zinc-800/80 pb-2.5">
                       <div className="text-xs font-semibold text-white truncate">{activeMember.name}</div>
-                      <div className="text-[11px] text-slate-400 truncate">{activeMember.email || "Team Account"}</div>
-                      <span className="inline-block mt-1 text-[10px] font-medium px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                      <div className="text-[11px] text-zinc-400 truncate">{activeMember.email || "Workspace Account"}</div>
+                      <span className="inline-block mt-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300">
                         {ROLE_PRESETS[activeMember.role]?.label || activeMember.role}
                       </span>
                     </div>
@@ -824,7 +876,7 @@ function AppShellInner({
                       <Link
                         href="/settings"
                         onClick={() => setMemberDropdownOpen(false)}
-                        className="block rounded-lg px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition"
+                        className="block rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition"
                       >
                         Team &amp; Settings
                       </Link>
@@ -839,72 +891,14 @@ function AppShellInner({
                       </button>
                     </form>
                   </div>
-                )}              </div>
-            )}
-
-            {/* Viewport Zoom Selector */}
-            <div className="hidden xl:flex items-center gap-1 p-1 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-medium text-slate-400">
-              <span className="px-1 text-slate-500">Scale:</span>
-              {[
-                { label: "80%", val: 0.8 },
-                { label: "90%", val: 0.9 },
-                { label: "100%", val: 1.0 },
-              ].map((z) => (
-                <button
-                  key={z.label}
-                  type="button"
-                  onClick={() => handleZoomChange(z.val)}
-                  className={`px-2 py-0.5 rounded transition-colors ${
-                    zoomLevel === z.val
-                      ? "bg-slate-800 text-white font-medium"
-                      : "hover:text-white"
-                  }`}
-                >
-                  {z.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Active Niche Button */}
-            {canManageNiches && (
-              <button
-                type="button"
-                onClick={() => {
-                  setNicheModalTab("create");
-                  setModalError(null);
-                  setModalSuccess(null);
-                  setNicheModalOpen(true);
-                }}
-                className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs transition-all"
-                title="Add or manage niches"
-              >
-                <span className="text-slate-400">Niche:</span>
-                <span className="font-medium text-white">{currentNicheName}</span>
-                <span className="ml-1 px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 text-[10px] font-medium flex items-center gap-0.5">
-                  <Plus className="w-3 h-3" /> New Niche
-                </span>
-              </button>
-            )}
-
-            {/* Quick Discover Button (Only if member can discover leads) */}
-            {canDiscover && (
-              <Link
-                href="/discover"
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-white hover:bg-slate-200 text-slate-950 font-medium text-xs transition-colors"
-              >
-                <Zap className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Find Leads</span>
-                <span className="sm:hidden">Find</span>
-              </Link>
+                )}
+              </div>
             )}
           </div>
         </header>
 
         {/* Main Content Area */}
-        <main
-          className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-5 transition-all"
-          style={{ zoom: zoomLevel } as React.CSSProperties}
-        >
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 transition-all bg-[#09090b]">
           <div className="w-full max-w-[1700px] mx-auto space-y-5">
             {isCurrentRouteRestricted && activeMember ? (
               <div className="mx-auto max-w-lg rounded-xl border border-slate-800 bg-slate-900/60 p-8 text-center space-y-4 mt-10">

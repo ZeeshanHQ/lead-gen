@@ -35,8 +35,20 @@ export async function inviteTeamMemberAction(input: InviteMemberInput) {
     const db = await getDb();
     const actor = await getActor(db);
     const member = await inviteTeamMember(db, input, actor);
+
+    // Automatically send invitation email
+    let emailSent = false;
+    let emailError: string | null = null;
+    try {
+      const emailResult = await sendTeamInviteEmailAction({ memberId: member.id });
+      emailSent = Boolean(emailResult.directSent);
+      if (!emailResult.ok) emailError = emailResult.error || null;
+    } catch (e: any) {
+      emailError = e.message;
+    }
+
     revalidatePath("/", "layout");
-    return { ok: true, member };
+    return { ok: true, member, emailSent, emailError };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to invite team member" };
   }
