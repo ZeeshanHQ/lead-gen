@@ -72,6 +72,7 @@ export async function GET() {
           hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
           hasTavilyKey: Boolean(process.env.TAVILY_API_KEY),
           hasLlmKey: Boolean(process.env.LLM_API_KEY),
+          hasResendKey: Boolean(process.env.RESEND_API_KEY),
         },
         timestamp: new Date().toISOString(),
       },

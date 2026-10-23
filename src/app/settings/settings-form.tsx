@@ -9,6 +9,7 @@ import {
   regenerateInviteTokenAction,
   removeTeamMemberAction,
   switchActiveMemberAction,
+  sendTeamInviteEmailAction,
 } from "./actions";
 import {
   saveDialerConfigAction,
@@ -75,10 +76,17 @@ export function SettingsForm({
   const [invitePerms, setInvitePerms] = useState<TeamPermissions>(getPermissionsForRole("REVIEWER"));
   const [inviteAutoActive, setInviteAutoActive] = useState(true);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedRowMemberId, setCopiedRowMemberId] = useState<string | null>(null);
   const [createdInviteLink, setCreatedInviteLink] = useState<{
+    memberId: string;
     name: string;
+    role: string;
     email: string;
     link: string;
+    sentDirectly?: boolean;
+    mailtoUrl?: string;
   } | null>(null);
 
   // Edit access drawer state
@@ -210,10 +218,12 @@ export function SettingsForm({
       }
 
       const origin =
-        typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
-      const inviteUrl = `${origin}/settings?invite=${res.member.inviteToken || res.member.id}`;
+        typeof window !== "undefined" ? window.location.origin : "https://leads.astraventa.com";
+      const inviteUrl = `${origin}/invite/${res.member.inviteToken || res.member.id}`;
       setCreatedInviteLink({
+        memberId: res.member.id,
         name: res.member.name,
+        role: res.member.role,
         email: res.member.email,
         link: inviteUrl,
       });
@@ -279,14 +289,51 @@ export function SettingsForm({
         return;
       }
       const origin =
-        typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
-      const url = `${origin}/settings?invite=${res.inviteToken}`;
+        typeof window !== "undefined" ? window.location.origin : "https://leads.astraventa.com";
+      const url = `${origin}/invite/${res.inviteToken}`;
       if (typeof navigator !== "undefined" && navigator.clipboard) {
         await navigator.clipboard.writeText(url);
       }
+      setCopiedRowMemberId(member.id);
+      setTimeout(() => setCopiedRowMemberId(null), 2500);
       showToast(`Invite link copied for ${member.name}.`);
       router.refresh();
     });
+  }
+
+  async function handleSendInviteEmail(memberId: string, customOrigin?: string) {
+    setIsSendingEmail(true);
+    try {
+      const origin =
+        customOrigin || (typeof window !== "undefined" ? window.location.origin : "https://leads.astraventa.com");
+      const res = await sendTeamInviteEmailAction({ memberId, origin });
+      if (res.ok) {
+        if (res.directSent) {
+          showToast(`Invitation email dispatched directly to ${res.member?.email}!`);
+          setCreatedInviteLink((prev) =>
+            prev && prev.memberId === memberId
+              ? { ...prev, sentDirectly: true }
+              : prev
+          );
+        } else {
+          if (res.mailtoUrl && typeof window !== "undefined") {
+            window.open(res.mailtoUrl, "_blank");
+          }
+          showToast(`Opened email draft for ${res.member?.name}.`);
+          setCreatedInviteLink((prev) =>
+            prev && prev.memberId === memberId
+              ? { ...prev, sentDirectly: false, mailtoUrl: res.mailtoUrl }
+              : prev
+          );
+        }
+      } else {
+        showToast(res.error || "Failed to dispatch email");
+      }
+    } catch (err: any) {
+      showToast(err.message || "Failed to dispatch email");
+    } finally {
+      setIsSendingEmail(false);
+    }
   }
 
   function handleRemoveMember(member: TeamMember) {
@@ -773,17 +820,28 @@ export function SettingsForm({
                           )}
                           {member.status === "INVITED" && (
                             <div className="flex flex-col items-start gap-1">
-                              <span className="inline-flex items-center gap-1.5 text-xs text-amber-300">
+                              <span className="inline-flex items-center gap-1.5 text-xs text-amber-300 font-medium">
                                 <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
                                 Pending Invite
                               </span>
-                              <button
-                                type="button"
-                                onClick={() => handleCopyInviteLink(member)}
-                                className="text-[11px] text-slate-400 underline hover:text-white"
-                              >
-                                Copy invite link
-                              </button>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyInviteLink(member)}
+                                  className="text-[11px] text-slate-400 hover:text-white underline"
+                                >
+                                  {copiedRowMemberId === member.id ? "✓ Copied!" : "Copy link"}
+                                </button>
+                                <span className="text-[10px] text-slate-600">•</span>
+                                <button
+                                  type="button"
+                                  disabled={isSendingEmail}
+                                  onClick={() => handleSendInviteEmail(member.id)}
+                                  className="text-[11px] text-sky-400 hover:text-sky-300 underline font-medium disabled:opacity-50"
+                                >
+                                  Send email
+                                </button>
+                              </div>
                             </div>
                           )}
                           {member.status === "SUSPENDED" && (
@@ -1348,43 +1406,89 @@ export function SettingsForm({
 
             {createdInviteLink ? (
               <div className="mt-5 space-y-4">
-                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4">
-                  <div className="text-sm font-medium text-white">
-                    {createdInviteLink.name} has been added
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5 space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">
+                        ✓
+                      </span>
+                      <div className="text-sm font-semibold text-white">
+                        {createdInviteLink.name} is ready to join
+                      </div>
+                    </div>
+                    <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] font-medium text-slate-300">
+                      {ROLE_PRESETS[createdInviteLink.role as TeamRole]?.label || createdInviteLink.role}
+                    </span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-300">
-                    Share this invite link with{" "}
-                    <span className="text-white">{createdInviteLink.email}</span> so they can open
-                    the workspace:
+
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    An invitation link has been generated for <span className="font-semibold text-white">{createdInviteLink.email}</span>. You can send it directly via email or copy the link below:
                   </p>
-                  <div className="mt-3 flex items-center gap-2">
-                    <input
-                      type="text"
-                      readOnly
-                      value={createdInviteLink.link}
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-200"
-                    />
+
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={isSendingEmail}
+                      onClick={() => handleSendInviteEmail(createdInviteLink.memberId)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 disabled:opacity-50 px-3.5 py-2 text-xs font-semibold text-slate-950 transition shadow-sm"
+                    >
+                      <span>✉️</span>
+                      <span>{isSendingEmail ? "Dispatching..." : "Send Invitation Email"}</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => {
                         if (typeof navigator !== "undefined" && navigator.clipboard) {
                           navigator.clipboard.writeText(createdInviteLink.link);
-                          showToast("Invite link copied.");
+                          setCopiedLink(true);
+                          setTimeout(() => setCopiedLink(false), 2000);
+                          showToast("Invite link copied to clipboard.");
                         }
                       }}
-                      className="shrink-0 rounded-lg bg-white px-3.5 py-2 text-xs font-medium text-slate-950 hover:bg-slate-200"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-white hover:bg-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-950 transition shadow-sm"
                     >
-                      Copy Link
+                      <span>{copiedLink ? "✓" : "🔗"}</span>
+                      <span>{copiedLink ? "Copied to Clipboard!" : "Copy Invite Link"}</span>
                     </button>
+
+                    <a
+                      href={createdInviteLink.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-700 hover:border-slate-600 bg-slate-900 px-3 py-2 text-xs text-slate-300 hover:text-white transition"
+                    >
+                      <span>Preview Acceptance Page ↗</span>
+                    </a>
+                  </div>
+
+                  {createdInviteLink.sentDirectly && (
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/40 p-2.5 text-xs text-emerald-300 flex items-center gap-2">
+                      <span>✓</span>
+                      <span>Direct email delivered to {createdInviteLink.email} via Resend.</span>
+                    </div>
+                  )}
+
+                  <div className="pt-2">
+                    <label className="text-[11px] font-medium text-slate-400 block mb-1">
+                      Direct Workspace Link:
+                    </label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={createdInviteLink.link}
+                      className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-300 select-all"
+                    />
                   </div>
                 </div>
 
-                <div className="flex justify-end gap-2">
+                <div className="flex justify-end gap-2 border-t border-slate-800 pt-3">
                   <button
                     type="button"
                     onClick={() => {
                       setCreatedInviteLink(null);
                       setShowInviteModal(false);
+                      setCopiedLink(false);
                     }}
                     className="rounded-lg bg-slate-800 px-4 py-2 text-xs font-medium text-white hover:bg-slate-700"
                   >

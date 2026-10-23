@@ -11,10 +11,12 @@ import {
   removeTeamMember,
   switchActiveMember,
   acceptTeamInvite,
+  listTeamMembers,
   type InviteMemberInput,
   type UpdateMemberAccessInput,
 } from "@/server/repo/team";
 import { getActiveContext, switchActiveMarket } from "@/server/repo/markets";
+import { ROLE_PRESETS } from "@/server/domain/team";
 
 export async function updateSettingAction(key: string, value: unknown) {
   try {
@@ -148,5 +150,74 @@ export async function acceptTeamInviteAction(token: string) {
     return { ok: true, member };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to accept invitation" };
+  }
+}
+
+export async function sendTeamInviteEmailAction({
+  memberId,
+  origin,
+}: {
+  memberId: string;
+  origin?: string;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const [allMembers, ctx] = await Promise.all([
+      listTeamMembers(db),
+      getActiveContext(db),
+    ]);
+    const member = allMembers.find((m) => m.id === memberId);
+    if (!member) {
+      return { ok: false, error: "Team member not found" };
+    }
+
+    let token = member.inviteToken;
+    if (!token) {
+      const regenerated = await regenerateInviteToken(db, member.id, actor);
+      token = regenerated.inviteToken;
+    }
+
+    const hostOrigin = origin || "https://leads.astraventa.com";
+    const inviteUrl = `${hostOrigin}/invite/${token}`;
+
+    const roleMeta = ROLE_PRESETS[member.role] || ROLE_PRESETS.VIEWER;
+    const nicheScopeLabel =
+      member.nicheScope === "ALL"
+        ? "All Workspace Niches"
+        : `${member.allowedNicheIds.length} Assigned Niches (${ctx.allMarkets
+            .filter((m) => member.allowedNicheIds.includes(m.id))
+            .map((m) => m.name)
+            .join(", ") || "Specific niches"})`;
+
+    const { sendInviteEmail } = await import("@/server/services/email");
+    const result = await sendInviteEmail({
+      to: member.email,
+      recipientName: member.name,
+      inviterName: actor || ctx.tenant.name || "Workspace Admin",
+      workspaceName: ctx.tenant.name,
+      roleLabel: roleMeta.label,
+      nicheScopeLabel,
+      inviteUrl,
+    });
+
+    return {
+      ok: true,
+      directSent: result.directSent,
+      provider: result.provider,
+      messageId: result.messageId,
+      error: result.error,
+      subject: result.subject,
+      bodyText: result.bodyText,
+      mailtoUrl: result.mailtoUrl,
+      member: {
+        id: member.id,
+        name: member.name,
+        email: member.email,
+        inviteUrl,
+      },
+    };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to send email invite" };
   }
 }

@@ -41,6 +41,9 @@ const envSchema = z.object({
   ENRICHMENT_PROVIDER: z.preprocess(emptyToUndefined, z.string().default("none")),
   ENRICHMENT_API_KEY: optionalString,
 
+  RESEND_API_KEY: optionalString,
+  EMAIL_FROM: optionalString,
+
   MAX_RUN_COST: z.preprocess(emptyToUndefined, z.coerce.number().nonnegative().default(5)),
   MAX_REQUESTS_RUN: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(500)),
 });
