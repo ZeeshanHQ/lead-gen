@@ -57,7 +57,23 @@ export class EnvValidationError extends Error {
 }
 
 export function parseEnv(source: Record<string, string | undefined>): Env {
-  const result = envSchema.safeParse(source);
+  // Auto-detect LLM_PROVIDER if LLM_API_KEY is provided without explicit provider
+  const rawProvider = source.LLM_PROVIDER?.trim();
+  const rawKey = source.LLM_API_KEY?.trim();
+  let effectiveProvider = rawProvider;
+  if ((!rawProvider || rawProvider === "none") && rawKey) {
+    if (rawKey.startsWith("AIzaSy")) effectiveProvider = "gemini";
+    else if (rawKey.startsWith("sk-ant-")) effectiveProvider = "anthropic";
+    else if (rawKey.startsWith("sk-")) effectiveProvider = "openai";
+    else effectiveProvider = "gemini";
+  }
+
+  const modifiedSource = {
+    ...source,
+    LLM_PROVIDER: effectiveProvider || source.LLM_PROVIDER,
+  };
+
+  const result = envSchema.safeParse(modifiedSource);
   if (!result.success) {
     throw new EnvValidationError(
       result.error.issues.map((i) => `${i.path.join(".") || "env"}: ${i.message}`),
