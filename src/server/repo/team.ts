@@ -21,7 +21,7 @@ const AVATAR_COLORS = [
 export const DEFAULT_TEAM_MEMBERS: TeamMember[] = [
   {
     id: "member_owner",
-    name: "Workspace Owner (You)",
+    name: "Workspace Owner",
     email: "owner@astraventa.io",
     title: "Owner",
     role: "OWNER",
@@ -34,39 +34,24 @@ export const DEFAULT_TEAM_MEMBERS: TeamMember[] = [
     invitedAt: "2026-01-01T00:00:00.000Z",
     lastActiveAt: new Date().toISOString(),
   },
-  {
-    id: "member_reviewer_1",
-    name: "Sarah Jenkins",
-    email: "sarah.qa@astraventa.io",
-    title: "Lead Manager",
-    role: "REVIEWER",
-    status: "ACTIVE",
-    avatarColor: "bg-sky-500/15 text-sky-300 border border-sky-500/30",
-    nicheScope: "ALL",
-    allowedNicheIds: [],
-    tenantIds: ["tenant_main"],
-    permissions: getPermissionsForRole("REVIEWER"),
-    invitedBy: "Workspace Owner (You)",
-    invitedAt: "2026-02-10T09:30:00.000Z",
-    lastActiveAt: "2026-10-17T08:15:00.000Z",
-  },
-  {
-    id: "member_caller_1",
-    name: "Marcus Vance",
-    email: "marcus.sdr@astraventa.io",
-    title: "Sales Caller",
-    role: "CALLER",
-    status: "ACTIVE",
-    avatarColor: "bg-indigo-500/15 text-indigo-300 border border-indigo-500/30",
-    nicheScope: "ALL",
-    allowedNicheIds: [],
-    tenantIds: ["tenant_main"],
-    permissions: getPermissionsForRole("CALLER"),
-    invitedBy: "Workspace Owner (You)",
-    invitedAt: "2026-03-04T14:00:00.000Z",
-    lastActiveAt: "2026-10-17T10:05:00.000Z",
-  },
 ];
+
+/** Used only when no valid session exists (login screens). Zero permissions. */
+export const GUEST_MEMBER: TeamMember = {
+  id: "guest",
+  name: "Guest",
+  email: "",
+  title: "",
+  role: "VIEWER",
+  status: "INVITED",
+  avatarColor: AVATAR_COLORS[0]!,
+  nicheScope: "SELECTED",
+  allowedNicheIds: [],
+  tenantIds: [],
+  permissions: getPermissionsForRole("VIEWER"),
+  invitedAt: new Date(0).toISOString(),
+  lastActiveAt: null,
+};
 
 async function readSettingRaw<T>(db: Db, key: string, fallback: T): Promise<T> {
   const [row] = await db.select().from(systemSettings).where(eq(systemSettings.key, key)).limit(1);
@@ -84,13 +69,8 @@ async function writeSettingRaw(db: Db, key: string, value: unknown): Promise<voi
 }
 
 async function getMemberCookieId(): Promise<string | undefined> {
-  try {
-    const { cookies } = await import("next/headers");
-    const jar = await cookies();
-    return jar.get("astraventa_member_id")?.value;
-  } catch {
-    return undefined;
-  }
+  const { getSessionMemberId } = await import("../auth");
+  return (await getSessionMemberId()) ?? undefined;
 }
 
 export async function listTeamMembers(db: Db): Promise<TeamMember[]> {
@@ -121,16 +101,9 @@ export async function getActiveTeamMember(db: Db): Promise<{
   allMembers: TeamMember[];
 }> {
   const allMembers = await listTeamMembers(db);
-  const cookieId = await getMemberCookieId();
-  const savedId = await readSettingRaw<string>(db, "active_member_id", "member_owner");
-  const targetId = cookieId || savedId || "member_owner";
-
+  const sessionId = await getMemberCookieId();
   const activeMember =
-    allMembers.find((m) => m.id === targetId) ??
-    allMembers.find((m) => m.role === "OWNER") ??
-    allMembers[0] ??
-    DEFAULT_TEAM_MEMBERS[0]!;
-
+    allMembers.find((m) => m.id === sessionId && m.status !== "SUSPENDED") ?? GUEST_MEMBER;
   return { activeMember, allMembers };
 }
 
@@ -439,3 +412,52 @@ export async function acceptTeamInvite(
   return updatedMember;
 }
 
+
+export async function findMemberByEmail(db: Db, email: string): Promise<TeamMember | null> {
+  const clean = email.trim().toLowerCase();
+  if (!clean) return null;
+  const all = await listTeamMembers(db);
+  return all.find((m) => m.email.toLowerCase() === clean) ?? null;
+}
+
+/**
+ * First-run owner setup: claims the OWNER seat with real name/email and drops
+ * any leftover demo members that never had credentials.
+ */
+export async function setupOwner(
+  db: Db,
+  input: { name: string; email: string }
+): Promise<TeamMember> {
+  const name = input.name.trim();
+  const email = input.email.trim().toLowerCase();
+  if (name.length < 2) throw new Error("Apna naam likhein.");
+  if (!email.includes("@")) throw new Error("Sahi email likhein.");
+
+  const all = await listTeamMembers(db);
+  const owner = all.find((m) => m.role === "OWNER") ?? DEFAULT_TEAM_MEMBERS[0]!;
+  const updated: TeamMember = {
+    ...owner,
+    name,
+    email,
+    status: "ACTIVE",
+    nicheScope: "ALL",
+    allowedNicheIds: [],
+    permissions: getPermissionsForRole("OWNER"),
+    lastActiveAt: new Date().toISOString(),
+  };
+  await writeSettingRaw(db, "team_members_registry", [updated]);
+  await writeSettingRaw(db, "active_member_id", updated.id);
+  await writeSettingRaw(db, "actor_name", `${updated.name} (Owner)`);
+  await audit(db, { actor: name, action: "team.owner_setup", entityType: "team_member", entityId: updated.id });
+  return updated;
+}
+
+/** Marks an invited member active and returns them (used once a password is set). */
+export async function activateMember(db: Db, memberId: string): Promise<TeamMember> {
+  const all = await listTeamMembers(db);
+  const target = all.find((m) => m.id === memberId);
+  if (!target) throw new Error("Team member not found.");
+  const updated: TeamMember = { ...target, status: "ACTIVE", inviteToken: undefined, lastActiveAt: new Date().toISOString() };
+  await writeSettingRaw(db, "team_members_registry", all.map((m) => (m.id === memberId ? updated : m)));
+  return updated;
+}

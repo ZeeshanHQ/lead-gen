@@ -160,3 +160,47 @@ export async function pushLeadsToDialerAction(leads: DialerLeadPayload[]) {
     return { ok: false, error: err.message || "Could not send leads to dialer" };
   }
 }
+
+export async function assignLeadAction(input: {
+  companyId: string;
+  memberId: string | null;
+  memberName: string | null;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { assignLeadToMember } = await import("@/server/repo/caller");
+    await assignLeadToMember(db, input.companyId, input.memberId, input.memberName, actor);
+    revalidatePath("/caller");
+    revalidatePath("/leads");
+    revalidatePath("/");
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to assign lead" };
+  }
+}
+
+export async function autoDistributeLeadsAction(input: { marketId: string }) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { listTeamMembers } = await import("@/server/repo/team");
+    const { autoDistributeLeads } = await import("@/server/repo/caller");
+    const allMembers = await listTeamMembers(db);
+    const activeMembers = allMembers
+      .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+      .map((m) => ({ id: m.id, name: m.name }));
+
+    if (activeMembers.length === 0) {
+      return { ok: false, error: "No active team members available to assign leads to." };
+    }
+
+    const res = await autoDistributeLeads(db, input.marketId, activeMembers, actor);
+    revalidatePath("/caller");
+    revalidatePath("/leads");
+    revalidatePath("/");
+    return { ok: true, distributedCount: res.distributedCount, membersCount: activeMembers.length };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to distribute leads" };
+  }
+}

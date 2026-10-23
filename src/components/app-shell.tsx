@@ -16,6 +16,7 @@ import {
   createTenantWorkspaceAction,
 } from "@/app/actions/tenant";
 import { switchActiveMemberAction } from "@/app/settings/actions";
+import { logoutAction } from "@/app/login/actions";
 import {
   LayoutDashboard,
   SlidersHorizontal,
@@ -61,7 +62,7 @@ interface AppShellProps {
   allMembers?: TeamMember[];
 }
 
-export function AppShell({
+function AppShellInner({
   children,
   reviewCount = 0,
   approvedCount = 0,
@@ -333,51 +334,24 @@ export function AppShell({
     }>;
   }> = [
     {
-      group: "Leads & Calling",
+      group: "Core Pipeline",
       items: [
-        { href: "/", label: "Overview", icon: LayoutDashboard },
+        { href: "/", label: "Dashboard", icon: LayoutDashboard },
         { href: "/discover", label: "Find Leads", icon: Compass, perm: "discoverLeads" },
-        { href: "/runs", label: "Search History", icon: PlaySquare, perm: "discoverLeads" },
-        {
-          href: "/review",
-          label: "Review Queue",
-          icon: Inbox,
-          count: reviewCount,
-          highlight: reviewCount > 0,
-          perm: "approveLeads",
-        },
-        {
-          href: "/approved",
-          label: "Approved Leads",
-          icon: CheckCircle,
-          count: approvedCount,
-          perm: "callerWorkbench",
-        },
         {
           href: "/caller",
-          label: "Caller Queue",
+          label: "Leads CRM",
           icon: PhoneCall,
           count: callerCount,
+          highlight: callerCount > 0,
           perm: "callerWorkbench",
         },
-        { href: "/sheets", label: "Google Sheets", icon: Sheet, perm: "exportAndSync" },
       ],
     },
     {
-      group: "Setup & Contacts",
-      items: [
-        { href: "/contacts", label: "Contacts", icon: Users, perm: "editContacts" },
-        { href: "/rules", label: "Scoring Rules", icon: SlidersHorizontal, perm: "editRules" },
-        { href: "/exclusions", label: "Exclusions", icon: ShieldAlert, perm: "editRules" },
-        { href: "/sources", label: "Data Sources", icon: Radio, perm: "manageTeamAndSettings" },
-      ],
-    },
-    {
-      group: "Team & Settings",
+      group: "Administration",
       items: [
         { href: "/settings", label: "Team & Settings", icon: Settings, perm: "manageTeamAndSettings" },
-        { href: "/usage", label: "Usage & Costs", icon: Coins, perm: "manageTeamAndSettings" },
-        { href: "/audit", label: "Activity Log", icon: History },
       ],
     },
   ];
@@ -826,7 +800,7 @@ export function AppShell({
                   title="Switch active team member view or check team status"
                 >
                   <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span className="hidden md:inline text-slate-400">Viewing as:</span>
+                  <span className="hidden md:inline text-slate-400">User:</span>
                   <span className="font-medium text-white truncate max-w-[130px]">
                     {activeMember.name.replace(/\s*\(You\)/i, "")}
                   </span>
@@ -837,75 +811,35 @@ export function AppShell({
                 </button>
 
                 {memberDropdownOpen && (
-                  <div className="absolute right-0 top-full mt-1.5 w-72 z-50 rounded-xl border border-slate-800 bg-slate-900 p-2 shadow-2xl space-y-1.5">
-                    <div className="px-2 py-1 text-[10px] font-medium text-slate-400 flex items-center justify-between">
-                      <span>Team Members ({allMembers.length})</span>
+                  <div className="absolute right-0 top-full mt-1.5 w-60 z-50 rounded-xl border border-slate-800 bg-slate-900 p-3 shadow-2xl space-y-2.5">
+                    <div className="border-b border-slate-800/80 pb-2">
+                      <div className="text-xs font-semibold text-white truncate">{activeMember.name}</div>
+                      <div className="text-[11px] text-slate-400 truncate">{activeMember.email || "Team Account"}</div>
+                      <span className="inline-block mt-1 text-[10px] font-medium px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                        {ROLE_PRESETS[activeMember.role]?.label || activeMember.role}
+                      </span>
+                    </div>
+
+                    {canManageNiches && (
                       <Link
                         href="/settings"
                         onClick={() => setMemberDropdownOpen(false)}
-                        className="text-sky-400 hover:underline"
+                        className="block rounded-lg px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition"
                       >
-                        Manage Team
+                        Team &amp; Settings
                       </Link>
-                    </div>
+                    )}
 
-                    <div className="space-y-1 max-h-64 overflow-y-auto">
-                      {allMembers.map((m) => {
-                        const isCurrent = m.id === activeMember.id;
-                        const roleLabel = ROLE_PRESETS[m.role]?.label || m.role;
-                        const isSuspended = m.status === "SUSPENDED";
-                        return (
-                          <button
-                            key={m.id}
-                            type="button"
-                            disabled={isSuspended || isPending}
-                            onClick={() => handleSwitchMember(m.id)}
-                            className={cn(
-                              "w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs transition",
-                              isCurrent
-                                ? "bg-slate-800 text-white font-medium"
-                                : isSuspended
-                                ? "opacity-50 cursor-not-allowed text-slate-500"
-                                : "text-slate-300 hover:bg-slate-800/60"
-                            )}
-                          >
-                            <div className="min-w-0 pr-2">
-                              <div className="flex items-center gap-1.5 truncate">
-                                <span
-                                  className={cn(
-                                    "h-1.5 w-1.5 rounded-full shrink-0",
-                                    m.status === "ACTIVE"
-                                      ? "bg-emerald-400"
-                                      : m.status === "INVITED"
-                                      ? "bg-amber-400"
-                                      : "bg-rose-400"
-                                  )}
-                                />
-                                <span className="truncate">{m.name}</span>
-                              </div>
-                              <div className="text-[10px] text-slate-400 truncate mt-0.5 pl-3">
-                                {roleLabel} •{" "}
-                                {m.nicheScope === "ALL"
-                                  ? "All Niches"
-                                  : `${m.allowedNicheIds.length} Niche(s)`}
-                              </div>
-                            </div>
-                            <span className="text-[10px] text-slate-400 shrink-0">
-                              {isCurrent
-                                ? "Active View"
-                                : m.status === "INVITED"
-                                ? "Invited"
-                                : m.status === "SUSPENDED"
-                                ? "Paused"
-                                : "Switch"}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <form action={logoutAction}>
+                      <button
+                        type="submit"
+                        className="w-full text-left rounded-lg px-2.5 py-1.5 text-xs font-medium text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition"
+                      >
+                        Log Out
+                      </button>
+                    </form>
                   </div>
-                )}
-              </div>
+                )}              </div>
             )}
 
             {/* Viewport Zoom Selector */}
@@ -1459,4 +1393,15 @@ export function AppShell({
       )}
     </div>
   );
+}
+
+const BARE_ROUTES = ["/login", "/invite/"];
+
+/** Login and invite screens render without the workspace chrome. */
+export function AppShell(props: AppShellProps) {
+  const pathname = usePathname();
+  if (BARE_ROUTES.some((r) => pathname === r.replace(/\/$/, "") || pathname.startsWith(r))) {
+    return <>{props.children}</>;
+  }
+  return <AppShellInner {...props} />;
 }

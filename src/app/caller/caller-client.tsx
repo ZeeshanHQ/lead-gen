@@ -3,7 +3,8 @@
 import React, { useState, useTransition } from "react";
 import Link from "next/link";
 import { type CallerLeadView } from "@/server/repo/caller";
-import { logCallFeedbackAction, pushLeadsToDialerAction } from "./actions";
+import { logCallFeedbackAction, pushLeadsToDialerAction, assignLeadAction, autoDistributeLeadsAction } from "./actions";
+import { type TeamMember, ROLE_PRESETS } from "@/server/domain/team";
 import { LifecycleBadge } from "@/components/badges";
 import { CrmLeadSheet, type CrmLeadItem } from "@/components/crm-lead-sheet";
 import {
@@ -30,26 +31,73 @@ import {
   Download,
   Send,
   Settings,
+  Sparkles,
+  Users,
+  UserCheck,
 } from "lucide-react";
 
 interface CallerClientProps {
   initialQueue: CallerLeadView[];
   nicheName?: string;
+  marketId?: string;
   dialerConfig?: DialerConfig;
   activeActorName?: string;
+  activeMember?: TeamMember;
+  allMembers?: TeamMember[];
   permissions?: TeamPermissions;
 }
 
 export function CallerClient({
   initialQueue,
   nicheName = "Active Niche",
+  marketId,
   dialerConfig = DEFAULT_DIALER_CONFIG,
   activeActorName = "Sales Caller",
+  activeMember,
+  allMembers = [],
   permissions,
 }: CallerClientProps) {
   const [queue, setQueue] = useState<CallerLeadView[]>(initialQueue);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [statusFilter, setStatusFilter] = useState<string>(
+    activeMember?.role === "CALLER" ? "MY_LEADS" : "TO_CALL"
+  );
+  const [distributePending, startDistribute] = useTransition();
+  const [assignPendingId, setAssignPendingId] = useState<string | null>(null);
+
+  const handleAutoDistribute = () => {
+    if (!marketId) return;
+    startDistribute(async () => {
+      const res = await autoDistributeLeadsAction({ marketId });
+      if (res.ok) {
+        setDialerToast(`⚡ Distributed ${res.distributedCount} leads evenly across ${res.membersCount} active callers.`);
+        setTimeout(() => setDialerToast(null), 4000);
+        window.location.reload();
+      } else {
+        alert(res.error || "Failed to distribute leads");
+      }
+    });
+  };
+
+  const handleAssignLead = async (leadId: string, memberId: string) => {
+    setAssignPendingId(leadId);
+    const target = allMembers.find((m) => m.id === memberId);
+    const res = await assignLeadAction({
+      companyId: leadId,
+      memberId: memberId || null,
+      memberName: target?.name || null,
+    });
+    setAssignPendingId(null);
+    if (res.ok) {
+      setQueue((prev) =>
+        prev.map((l) =>
+          l.companyId === leadId
+            ? { ...l, assignedMemberId: memberId || null, assignedMemberName: target?.name || null }
+            : l
+        )
+      );
+    }
+  };
   const [selectedLead, setSelectedLead] = useState<CallerLeadView | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"CARDS" | "SHEET">("CARDS");
@@ -82,7 +130,9 @@ export function CallerClient({
 
   // Filtered queue
   const filteredQueue = queue.filter((lead) => {
-    if (statusFilter === "TO_CALL") {
+    if (statusFilter === "MY_LEADS") {
+      if (!activeMember || lead.assignedMemberId !== activeMember.id) return false;
+    } else if (statusFilter === "TO_CALL") {
       if (!["APPROVED", "SYNCED", "CALLING"].includes(lead.status)) return false;
     } else if (statusFilter === "CONNECTED") {
       if (!["CONNECTED", "PAIN_FOUND"].includes(lead.status)) return false;
@@ -91,6 +141,8 @@ export function CallerClient({
     } else if (statusFilter === "FOLLOW_UP") {
       if (!lead.nextFollowUp && !(lead.notes && lead.notes.includes("Follow-up Scheduled")))
         return false;
+    } else if (statusFilter === "NEEDS_REVIEW") {
+      if (lead.status !== "NEEDS_REVIEW") return false;
     } else if (statusFilter !== "ALL") {
       if (lead.status !== statusFilter) return false;
     }
@@ -104,7 +156,8 @@ export function CallerClient({
       (lead.bestContact.name && lead.bestContact.name.toLowerCase().includes(q)) ||
       (lead.phone && lead.phone.includes(q)) ||
       (lead.bestContact.phone && lead.bestContact.phone.includes(q)) ||
-      (lead.notes && lead.notes.toLowerCase().includes(q))
+      (lead.notes && lead.notes.toLowerCase().includes(q)) ||
+      (lead.assignedMemberName && lead.assignedMemberName.toLowerCase().includes(q))
     );
   });
 
@@ -305,6 +358,13 @@ export function CallerClient({
   const followUpCount = queue.filter(
     (l) => l.nextFollowUp || (l.notes && l.notes.includes("Follow-up Scheduled"))
   ).length;
+  const myLeadsCount = queue.filter(
+    (l) => activeMember && l.assignedMemberId === activeMember.id
+  ).length;
+  const needsReviewCount = queue.filter((l) => l.status === "NEEDS_REVIEW").length;
+  const unassignedCount = queue.filter(
+    (l) => !l.assignedMemberId && ["APPROVED", "CALLING", "SYNCED"].includes(l.status)
+  ).length;
 
   return (
     <div className="space-y-5">
@@ -364,6 +424,31 @@ export function CallerClient({
               <span>Table View</span>
             </button>
           </div>
+
+          {canManageSettings && unassignedCount > 0 && (
+            <button
+              type="button"
+              onClick={handleAutoDistribute}
+              disabled={distributePending}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-3.5 py-2 text-xs font-semibold transition disabled:opacity-50 shadow-sm"
+              title={`Distribute ${unassignedCount} unassigned leads evenly among active callers`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>
+                {distributePending
+                  ? "Distributing..."
+                  : `Auto-distribute (${unassignedCount})`}
+              </span>
+            </button>
+          )}
+
+          <Link
+            href="/discover"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 px-3.5 py-2 text-xs font-semibold transition shadow-sm"
+          >
+            <Search className="w-3.5 h-3.5" />
+            <span>+ Find Leads</span>
+          </Link>
 
           <button
             type="button"
@@ -426,11 +511,13 @@ export function CallerClient({
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800/80 bg-slate-900/40 p-3.5">
             <div className="flex flex-wrap items-center gap-1">
               {[
-                { key: "ALL", label: `All (${totalCount})` },
                 { key: "TO_CALL", label: `Ready to Call (${toCallCount})` },
-                { key: "CONNECTED", label: `Connected (${connectedCount})` },
+                { key: "MY_LEADS", label: `My Leads (${myLeadsCount})` },
+                { key: "MEETINGS", label: `Meetings Booked 🎯 (${meetingsCount})` },
                 { key: "FOLLOW_UP", label: `Follow-Ups (${followUpCount})` },
-                { key: "MEETINGS", label: `Meetings Booked (${meetingsCount})` },
+                { key: "CONNECTED", label: `Connected (${connectedCount})` },
+                { key: "NEEDS_REVIEW", label: `Needs a Look (${needsReviewCount})` },
+                { key: "ALL", label: `All Leads (${totalCount})` },
               ].map((tab) => (
                 <button
                   key={tab.key}
@@ -527,6 +614,34 @@ export function CallerClient({
                               </span>
                               <ExternalLink className="w-2.5 h-2.5" />
                             </a>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                            <Users className="w-3 h-3 text-slate-500" />
+                            <span>Assigned Caller:</span>
+                          </span>
+                          {allMembers && allMembers.length > 0 && canManageSettings ? (
+                            <select
+                              value={lead.assignedMemberId || ""}
+                              onChange={(e) => handleAssignLead(lead.companyId, e.target.value)}
+                              disabled={assignPendingId === lead.companyId}
+                              className="rounded border border-slate-800 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 focus:border-sky-500 focus:outline-none"
+                            >
+                              <option value="">Unassigned</option>
+                              {allMembers
+                                .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+                                .map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.name} ({ROLE_PRESETS[m.role]?.shortLabel || m.role})
+                                  </option>
+                                ))}
+                            </select>
+                          ) : (
+                            <span className="text-[11px] font-medium text-slate-300">
+                              {lead.assignedMemberName ? `👤 ${lead.assignedMemberName}` : "Unassigned"}
+                            </span>
                           )}
                         </div>
                       </div>

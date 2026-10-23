@@ -2,7 +2,7 @@
  * Idempotent baseline seed: structural defaults only (market, default rule,
  * settings). It never inserts companies, contacts, evidence or any prospect data.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import { markets, researchRules, systemSettings } from "./schema";
 import { SEEDED_MARKETS } from "../domain/markets";
@@ -94,6 +94,11 @@ export async function bootstrap(db: Db): Promise<void> {
       });
     }
   }
+
+  try {
+    await db.execute(sql`ALTER TABLE "companies" ADD COLUMN IF NOT EXISTS "assigned_member_id" text;`);
+    await db.execute(sql`ALTER TABLE "companies" ADD COLUMN IF NOT EXISTS "assigned_member_name" text;`);
+  } catch {}
 
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     await db.insert(systemSettings).values({ key, value }).onConflictDoNothing({ target: systemSettings.key });

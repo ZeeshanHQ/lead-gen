@@ -74,7 +74,7 @@ export function SettingsForm({
   const [inviteNicheScope, setInviteNicheScope] = useState<"ALL" | "SELECTED">("ALL");
   const [inviteNicheIds, setInviteNicheIds] = useState<string[]>([]);
   const [invitePerms, setInvitePerms] = useState<TeamPermissions>(getPermissionsForRole("REVIEWER"));
-  const [inviteAutoActive, setInviteAutoActive] = useState(true);
+  const [inviteAutoActive, setInviteAutoActive] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -470,27 +470,13 @@ export function SettingsForm({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* View As Selector */}
+            {/* Active User Badge */}
             <div className="flex items-center gap-2.5 rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              <span className="text-xs text-slate-400">Viewing as:</span>
-              <select
-                value={initialActiveMember.id}
-                onChange={(e) => handleSwitchMember(e.target.value)}
-                disabled={isPending}
-                className="bg-transparent text-xs font-medium text-slate-200 focus:outline-none cursor-pointer"
-              >
-                {initialMembers
-                  .filter((m) => m.status !== "SUSPENDED")
-                  .map((m) => {
-                    const roleLabel = ROLE_PRESETS[m.role]?.label || m.role;
-                    return (
-                      <option key={m.id} value={m.id} className="bg-slate-900 text-white">
-                        {m.name} ({roleLabel})
-                      </option>
-                    );
-                  })}
-              </select>
+              <span className="text-xs text-slate-400">Account:</span>
+              <span className="text-xs font-semibold text-white">
+                {initialActiveMember.name} ({ROLE_PRESETS[initialActiveMember.role]?.label || initialActiveMember.role})
+              </span>
             </div>
 
             <button
@@ -863,16 +849,7 @@ export function SettingsForm({
                               Edit Access
                             </button>
 
-                            {!isCurrentOperator && member.status !== "SUSPENDED" && (
-                              <button
-                                type="button"
-                                onClick={() => handleSwitchMember(member.id)}
-                                disabled={isPending}
-                                className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-400 transition hover:border-slate-700 hover:text-slate-200"
-                              >
-                                Switch View
-                              </button>
-                            )}
+
 
                             {member.role !== "OWNER" && (
                               <button

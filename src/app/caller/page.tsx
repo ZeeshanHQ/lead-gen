@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export default async function CallerQueuePage() {
   const db = await getDb();
   const { market } = await getActiveContext(db);
-  const { activeMember } = await getActiveTeamMember(db);
+  const { activeMember, allMembers } = await getActiveTeamMember(db);
   const savedDialer = await getSetting<Partial<DialerConfig>>(
     db,
     "dialer_config"
@@ -31,6 +31,9 @@ export default async function CallerQueuePage() {
       nicheName={market.name}
       dialerConfig={dialerConfig}
       activeActorName={activeMember.name}
+      marketId={market.id}
+      activeMember={activeMember}
+      allMembers={allMembers}
       permissions={activeMember.permissions}
     />
   );

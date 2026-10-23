@@ -32,6 +32,13 @@ export async function getStaleDays(db: Db): Promise<number> {
 }
 
 export async function getActor(db: Db): Promise<string> {
+  const { getSessionMemberId } = await import("../auth");
+  const { listTeamMembers } = await import("./team");
+  const id = await getSessionMemberId();
+  if (id) {
+    const m = (await listTeamMembers(db)).find((x) => x.id === id);
+    if (m) return m.name;
+  }
   const v = await getSetting<string>(db, "actor_name");
-  return typeof v === "string" && v.trim() ? v : "local-user";
+  return typeof v === "string" && v.trim() ? v : "system";
 }

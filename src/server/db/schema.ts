@@ -96,6 +96,8 @@ export const companies = pgTable(
     discoveredVia: text("discovered_via").notNull().default("manual_entry"),
     approvedAt: tz("approved_at"),
     approvedBy: text("approved_by"),
+    assignedMemberId: text("assigned_member_id"),
+    assignedMemberName: text("assigned_member_name"),
     lastResearchedAt: tz("last_researched_at"),
   },
   (t) => [

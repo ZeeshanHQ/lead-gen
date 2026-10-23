@@ -2,7 +2,7 @@
 
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { acceptTeamInviteAction } from "@/app/settings/actions";
+import { acceptInviteWithPasswordAction } from "./actions";
 import type { TeamMember } from "@/server/domain/team";
 import { CheckCircle2, UserCheck, Layers, ArrowRight } from "lucide-react";
 
@@ -26,11 +26,12 @@ export function InviteAcceptClient({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
 
   const handleAccept = () => {
     setError(null);
     startTransition(async () => {
-      const res = await acceptTeamInviteAction(token);
+      const res = await acceptInviteWithPasswordAction(token, password);
       if (!res.ok) {
         setError(res.error || "Could not accept invitation.");
         return;
@@ -123,20 +124,30 @@ export function InviteAcceptClient({
           </div>
         )}
 
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-slate-300">
+            Apna password set karein <span className="text-slate-500">(kam az kam 8 characters)</span>
+          </label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
+            className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+          />
+          <p className="text-[11px] text-slate-500">Email: {member.email}. Agle login par yehi email aur password chalega.</p>
+        </div>
+
         {/* Action Button */}
         <div className="pt-2 border-t border-slate-800/80 flex items-center justify-end gap-3">
           <button
             onClick={handleAccept}
-            disabled={isPending}
+            disabled={isPending || password.length < 8}
             className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-white hover:bg-slate-200 disabled:opacity-50 text-slate-950 font-semibold text-xs transition-colors"
           >
             <UserCheck className="w-4 h-4" />
             <span>
-              {isPending
-                ? "Activating Account..."
-                : member.status === "ACTIVE"
-                  ? `Continue as ${member.name}`
-                  : "Accept Invitation & Open Dashboard"}
+              {isPending ? "Account ban raha hai..." : "Accept & Open Dashboard"}
             </span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>

@@ -102,7 +102,7 @@ export interface ResearchResult {
   companyId: string;
   companyName: string;
   domain: string;
-  status: "NEEDS_REVIEW" | "DISQUALIFIED" | "FAILED";
+  status: "NEEDS_REVIEW" | "DISQUALIFIED" | "FAILED" | "APPROVED";
   pagesCrawled: number;
   factsRecorded: number;
   contactsDiscovered: number;
@@ -232,7 +232,10 @@ export async function researchCompany(
 
     const evaluation = evaluateRule(evalCompany, activeRule);
     const scoreBreakdown = calculateLeadScore(evalCompany, activeRule);
-    const finalStatus = evaluation.verdict === "FAIL" ? "DISQUALIFIED" : "NEEDS_REVIEW";
+    const hasPhone = Boolean(company.phoneDisplay || company.phoneE164);
+    const minScore = activeRule?.scoring?.minScore ?? 50;
+    const isAutoQualified = evaluation.verdict !== "FAIL" && hasPhone && scoreBreakdown.icpScore >= minScore;
+    const finalStatus = evaluation.verdict === "FAIL" ? "DISQUALIFIED" : isAutoQualified ? "APPROVED" : "NEEDS_REVIEW";
 
     await db
       .update(companies)
@@ -377,11 +380,20 @@ export async function researchCompany(
   const scoreBreakdown = calculateLeadScore(evalCompany, activeRule);
 
   // Status transition: FAIL -> DISQUALIFIED, else NEEDS_REVIEW
-  const finalStatus = evaluation.verdict === "FAIL" ? "DISQUALIFIED" : "NEEDS_REVIEW";
+
+  const primaryDm = currentContacts.find((c) => c.verified && isDecisionMaker(c.roleClass as any)) || currentContacts[0];
+  const hasPhone = Boolean(refreshed.phoneDisplay || refreshed.phoneE164 || primaryDm?.phoneDisplay || primaryDm?.phoneE164);
+  const minScore = activeRule?.scoring?.minScore ?? 50;
+  const isAutoQualified = evaluation.verdict !== "FAIL" && hasPhone && scoreBreakdown.icpScore >= minScore;
+  const finalStatus = evaluation.verdict === "FAIL" ? "DISQUALIFIED" : isAutoQualified ? "APPROVED" : "NEEDS_REVIEW";
+  if (isAutoQualified) {
+    updates.approvedAt = new Date();
+    updates.approvedBy = "AI Engine (Auto-Qualified)";
+  }
   updates.status = finalStatus;
 
   // Synthesize Cold Caller Battlecard & 15-second opening pitch hook
-  const primaryDm = currentContacts.find((c) => c.verified && isDecisionMaker(c.roleClass as any)) || currentContacts[0];
+
   const battlecard = buildColdCallerBattlecard({
     companyName: refreshed.name,
     city: refreshed.city,

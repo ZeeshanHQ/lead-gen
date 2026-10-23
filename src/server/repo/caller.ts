@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { companies, leadScores } from "../db/schema";
 import { type LifecycleStatus } from "../domain/lifecycle";
@@ -34,6 +34,8 @@ export interface CallerLeadView {
   researchSummary: string | null;
   notes: string | null;
   nextFollowUp: string | null;
+  assignedMemberId: string | null;
+  assignedMemberName: string | null;
 }
 
 export interface CallFeedbackInput {
@@ -56,6 +58,7 @@ export async function getCallerQueue(db: Db, marketId?: string): Promise<CallerL
     "MEETING_BOOKED",
     "QUALIFIED",
     "NURTURE",
+    "NEEDS_REVIEW",
   ];
 
   const whereClause = marketId
@@ -112,6 +115,8 @@ export async function getCallerQueue(db: Db, marketId?: string): Promise<CallerL
       researchSummary: c.researchSummary,
       notes: c.notes,
       nextFollowUp: c.notes?.match(/\[Next Follow-up Scheduled:\s*([^\]]+)\]/i)?.[1] || null,
+      assignedMemberId: c.assignedMemberId ?? null,
+      assignedMemberName: c.assignedMemberName ?? null,
     });
   }
 
@@ -204,4 +209,75 @@ export async function recordCallFeedback(
   });
 
   return { ok: true, nextStatus };
+}
+
+export async function assignLeadToMember(
+  db: Db,
+  companyId: string,
+  memberId: string | null,
+  memberName: string | null,
+  actor: string
+): Promise<void> {
+  await db
+    .update(companies)
+    .set({
+      assignedMemberId: memberId,
+      assignedMemberName: memberName,
+      updatedAt: new Date(),
+    })
+    .where(eq(companies.id, companyId));
+
+  await audit(db, {
+    actor,
+    action: "lead.assigned",
+    entityType: "company",
+    entityId: companyId,
+    details: { assignedMemberId: memberId, assignedMemberName: memberName },
+  });
+}
+
+export async function autoDistributeLeads(
+  db: Db,
+  marketId: string,
+  members: Array<{ id: string; name: string }>,
+  actor: string
+): Promise<{ distributedCount: number }> {
+  if (members.length === 0) return { distributedCount: 0 };
+
+  const unassigned = await db
+    .select({ id: companies.id })
+    .from(companies)
+    .where(
+      and(
+        eq(companies.marketId, marketId),
+        inArray(companies.status, ["APPROVED", "CALLING", "SYNCED"]),
+        sql`(${companies.assignedMemberId} IS NULL OR ${companies.assignedMemberId} = '')`
+      )
+    );
+
+  if (unassigned.length === 0) return { distributedCount: 0 };
+
+  let idx = 0;
+  for (const row of unassigned) {
+    const targetMember = members[idx % members.length]!;
+    await db
+      .update(companies)
+      .set({
+        assignedMemberId: targetMember.id,
+        assignedMemberName: targetMember.name,
+        updatedAt: new Date(),
+      })
+      .where(eq(companies.id, row.id));
+    idx++;
+  }
+
+  await audit(db, {
+    actor,
+    action: "lead.auto_distributed",
+    entityType: "market",
+    entityId: marketId,
+    details: { distributedCount: unassigned.length, membersCount: members.length },
+  });
+
+  return { distributedCount: unassigned.length };
 }
