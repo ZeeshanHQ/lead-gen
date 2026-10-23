@@ -5,6 +5,40 @@ import { listTeamMembers } from "@/server/repo/team";
 
 export const dynamic = "force-dynamic";
 
+/** Never exposes credentials: only host/port/user of DATABASE_URL are reported. */
+function describeDatabaseUrl(): Record<string, unknown> {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) return { configured: false, note: "DATABASE_URL missing, falling back to embedded PGlite" };
+  try {
+    const u = new URL(raw);
+    return {
+      configured: true,
+      protocol: u.protocol.replace(":", ""),
+      host: u.hostname,
+      port: u.port || "(default)",
+      user: u.username,
+    };
+  } catch {
+    return { configured: true, parseable: false };
+  }
+}
+
+function rootCause(err: unknown): string {
+  let cur: unknown = err;
+  let last = "";
+  for (let i = 0; i < 6 && cur; i++) {
+    if (cur instanceof Error) {
+      const code = (cur as { code?: string }).code;
+      last = code ? `${code}: ${cur.message}` : cur.message;
+      cur = (cur as { cause?: unknown }).cause;
+    } else {
+      last = String(cur);
+      break;
+    }
+  }
+  return last;
+}
+
 export async function GET() {
   const startedAt = Date.now();
   try {
@@ -49,7 +83,13 @@ export async function GET() {
       {
         ok: false,
         status: "unhealthy",
-        error: message,
+        error: message.split("\n")[0],
+        rootCause: rootCause(err),
+        databaseUrl: describeDatabaseUrl(),
+        environment: {
+          vercel: Boolean(process.env.VERCEL),
+          nodeEnv: process.env.NODE_ENV || "development",
+        },
         timestamp: new Date().toISOString(),
       },
       { status: 500 }
