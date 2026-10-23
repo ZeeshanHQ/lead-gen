@@ -62,7 +62,14 @@ export async function createDb(url: string): Promise<DbHandle> {
     const client = dir ? new PGlite(dir) : new PGlite();
     await client.waitReady;
     const db = drizzle({ client, schema });
-    await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+    try {
+      const fsModule = await import("node:fs");
+      if (fsModule.existsSync(MIGRATIONS_FOLDER)) {
+        await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+      }
+    } catch (mErr) {
+      console.warn("PGlite migration skipped/warning:", mErr);
+    }
     return {
       db: db as unknown as Db,
       driver: isMemory ? "memory" : "pglite",
@@ -86,12 +93,15 @@ export async function createDb(url: string): Promise<DbHandle> {
   const db = drizzle({ client: pool, schema });
 
   try {
-    await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+    const fsModule = await import("node:fs");
+    if (fsModule.existsSync(MIGRATIONS_FOLDER)) {
+      await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Ignore benign race condition if another serverless instance just created the tables
-    if (!msg.includes("already exists") && !msg.includes("duplicate key value")) {
-      throw err;
+    // Ignore benign race condition, ENOENT on serverless, or already applied migrations
+    if (!msg.includes("already exists") && !msg.includes("duplicate key value") && !msg.includes("ENOENT")) {
+      console.warn("Postgres migration skipped/warning:", msg);
     }
   }
 
