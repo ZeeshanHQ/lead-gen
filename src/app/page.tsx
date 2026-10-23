@@ -97,6 +97,11 @@ export default async function OverviewPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                 Viewing as {activeMember.name} ({ROLE_PRESETS[activeMember.role]?.label})
               </span>
+              <span>•</span>
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
+                Vercel Connected
+              </span>
             </div>
 
             <h1 className="text-xl font-semibold tracking-tight text-white sm:text-2xl">

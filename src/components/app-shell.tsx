@@ -461,11 +461,15 @@ export function AppShell({
             </div>
             {!collapsed && (
               <div className="min-w-0">
-                <div className="text-sm font-bold tracking-tight text-white">
-                  ASTRAVENTA
+                <div className="text-sm font-bold tracking-tight text-white flex items-center gap-2">
+                  <span>ASTRAVENTA</span>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-400 border border-emerald-500/20">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    v1.0 Active
+                  </span>
                 </div>
                 <div className="text-[11px] text-slate-400 truncate">
-                  Lead Workspace
+                  Lead Intelligence Engine
                 </div>
               </div>
             )}
@@ -808,9 +812,15 @@ export function AppShell({
                 <span>/</span>
                 <span className="text-slate-200 font-medium truncate">{currentNicheName}</span>
               </div>
-              <h1 className="text-sm sm:text-base font-semibold text-white tracking-tight truncate">
-                {getPageTitle()}
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm sm:text-base font-semibold text-white tracking-tight truncate">
+                  {getPageTitle()}
+                </h1>
+                <span className="hidden sm:inline-flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Live Sync
+                </span>
+              </div>
             </div>
           </div>
 
