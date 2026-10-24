@@ -5,6 +5,30 @@ import { getDb } from "@/server/db/client";
 import { createCandidate, type CandidateInput } from "@/server/repo/companies";
 import { getActor } from "@/server/repo/settings";
 import { getActiveContext } from "@/server/repo/markets";
+import { resolveGate, type LeadGate } from "@/server/domain/gate";
+import type { LeadRow } from "@/server/repo/queue";
+
+function passesLeadRowGate(lead: LeadRow, gate: LeadGate): boolean {
+  if (gate.requirePhone) {
+    const phone = lead.best?.phone || lead.phoneDisplay || "";
+    const digits = phone.replace(/\D/g, "");
+    const national = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+    if (national.length < 10) return false;
+  }
+  if (gate.requireWebsite) {
+    if (!lead.website || !lead.website.trim()) return false;
+  }
+  if (gate.requireDecisionMaker) {
+    if (!lead.owner?.name && !lead.hasDecisionMaker) return false;
+  }
+  if (gate.requireEmail) {
+    if (!lead.best?.email || !lead.best.email.includes("@")) return false;
+  }
+  if (gate.requireLocation) {
+    if (!lead.city || !lead.state) return false;
+  }
+  return true;
+}
 
 export async function addCandidateAction(input: CandidateInput, force = false) {
   try {
@@ -32,7 +56,6 @@ export async function batchUrlsAction(urls: string[]) {
     for (const rawUrl of urls) {
       const clean = rawUrl.trim();
       if (!clean) continue;
-      // Derive initial display name from host until website research agent runs
       let initialName = `${market.name} Prospect`;
       try {
         const u = new URL(clean.startsWith("http") ? clean : `https://${clean}`);
@@ -52,6 +75,8 @@ export async function batchUrlsAction(urls: string[]) {
       results.push({ url: clean, res });
     }
 
+    revalidatePath("/caller");
+    revalidatePath("/leads");
     revalidatePath("/review");
     revalidatePath("/discover");
     revalidatePath("/");
@@ -83,7 +108,7 @@ export async function runBulkDiscoveryAction(options: {
     const { market, rule } = await getActiveContext(db);
     const { createResearchRun, executeRun } = await import("@/server/research/runner");
 
-    const targetCount = Math.max(Math.min(options.targetCount || 100, 200), 3);
+    const targetCount = Math.max(Math.min(options.targetCount || 100, 200), 1);
     const concurrency = Math.max(Math.min(options.concurrency || 4, 6), 1);
     const mode = options.mode || (targetCount <= 20 ? "test" : "full");
 
@@ -100,6 +125,8 @@ export async function runBulkDiscoveryAction(options: {
 
     const counters = await executeRun(db, runId, { timeoutMs: 5000, autoEnrich: true });
 
+    revalidatePath("/caller");
+    revalidatePath("/leads");
     revalidatePath("/review");
     revalidatePath("/discover");
     revalidatePath("/runs");
@@ -123,25 +150,33 @@ export async function runLeadDiscoveryAction(options: {
   states?: string[];
   keywords?: string[];
   minScore?: number;
+  gate?: Partial<LeadGate>;
 } = {}) {
   try {
     const db = await getDb();
     const actor = await getActor(db);
     const { market, rule: defaultRule } = await getActiveContext(db);
-    const { saveRule } = await import("@/server/repo/rules");
+    const { saveRule, reEvaluateLeadsWithRule } = await import("@/server/repo/rules");
     const { createResearchRun, executeRun } = await import("@/server/research/runner");
     const { loadLeadRows } = await import("@/server/repo/queue");
 
     let ruleConfig = defaultRule.config as any;
+    const mergedGate = resolveGate(options.gate ?? ruleConfig?.gate);
 
-    // If custom targeting overrides are provided, update rule config
-    if ((options.cities && options.cities.length > 0) || (options.states && options.states.length > 0) || options.minScore !== undefined || (options.keywords && options.keywords.length > 0)) {
+    // If custom targeting or gate overrides are provided, update rule config
+    if (
+      options.cities !== undefined ||
+      (options.states && options.states.length > 0) ||
+      options.minScore !== undefined ||
+      (options.keywords && options.keywords.length > 0) ||
+      options.gate !== undefined
+    ) {
       ruleConfig = {
         ...ruleConfig,
         geography: {
           ...ruleConfig.geography,
           states: options.states && options.states.length > 0 ? options.states : ruleConfig.geography.states,
-          cities: options.cities && options.cities.length > 0 ? options.cities : ruleConfig.geography.cities,
+          cities: options.cities !== undefined ? options.cities : ruleConfig.geography.cities,
         },
         discovery: {
           ...ruleConfig.discovery,
@@ -151,11 +186,16 @@ export async function runLeadDiscoveryAction(options: {
           ...ruleConfig.scoring,
           minScore: options.minScore !== undefined ? options.minScore : ruleConfig.scoring.minScore,
         },
+        gate: mergedGate,
       };
       await saveRule(db, defaultRule.id, { name: defaultRule.name, config: ruleConfig }, actor);
+      await reEvaluateLeadsWithRule(db, defaultRule.id, actor);
     }
 
-    const targetCount = Math.max(Math.min(options.targetCount || 25, 100), 5);
+    const requestedCount = Number(options.targetCount);
+    const targetCount = Number.isFinite(requestedCount)
+      ? Math.max(Math.min(Math.round(requestedCount), 200), 1)
+      : 25;
     const mode = targetCount <= 25 ? "test" : "full";
 
     const runId = await createResearchRun(db, {
@@ -171,14 +211,16 @@ export async function runLeadDiscoveryAction(options: {
 
     const counters = await executeRun(db, runId, { timeoutMs: 6500, autoEnrich: true });
 
-    // Fetch freshly qualified review leads for this active niche
+    // Fetch qualified leads for this active niche that strictly pass the owner's gate
     const [approved, review] = await Promise.all([
       loadLeadRows(db, "approved", market.id),
       loadLeadRows(db, "review", market.id),
     ]);
-    const allLeads = [...approved, ...review];
-    const topLeads = allLeads.slice(0, 20);
+    const qualifiedLeads = [...approved, ...review].filter((l) => passesLeadRowGate(l, mergedGate));
+    const topLeads = qualifiedLeads.slice(0, 30);
 
+    revalidatePath("/caller");
+    revalidatePath("/leads");
     revalidatePath("/review");
     revalidatePath("/discover");
     revalidatePath("/runs");
@@ -190,8 +232,10 @@ export async function runLeadDiscoveryAction(options: {
       runId,
       counters,
       targetCount,
+      gate: mergedGate,
       leads: topLeads,
-      totalReviewCount: allLeads.length,
+      totalReviewCount: qualifiedLeads.length,
+      crmReadyCount: approved.filter((l) => passesLeadRowGate(l, mergedGate)).length,
     };
   } catch (err: any) {
     return { ok: false, error: err.message || "Lead discovery failed" };
@@ -201,16 +245,23 @@ export async function runLeadDiscoveryAction(options: {
 export async function getLatestReviewLeadsAction() {
   try {
     const db = await getDb();
-    const { market } = await getActiveContext(db);
+    const { market, rule } = await getActiveContext(db);
     const { loadLeadRows } = await import("@/server/repo/queue");
+    const activeGate = resolveGate((rule.config as any)?.gate);
     const [approved, review] = await Promise.all([
       loadLeadRows(db, "approved", market.id),
       loadLeadRows(db, "review", market.id),
     ]);
-    const leads = [...approved, ...review];
-    return { ok: true, leads: leads.slice(0, 20), totalCount: leads.length };
+    const leads = [...approved, ...review].filter((l) => passesLeadRowGate(l, activeGate));
+    return {
+      ok: true,
+      leads: leads.slice(0, 30),
+      totalCount: leads.length,
+      crmReadyCount: approved.filter((l) => passesLeadRowGate(l, activeGate)).length,
+      gate: activeGate,
+    };
   } catch (err: any) {
-    return { ok: false, error: err.message, leads: [], totalCount: 0 };
+    return { ok: false, error: err.message, leads: [], totalCount: 0, crmReadyCount: 0 };
   }
 }
 
@@ -225,6 +276,7 @@ export async function quickApproveLeadAction(companyId: string) {
     revalidatePath("/discover");
     revalidatePath("/approved");
     revalidatePath("/caller");
+    revalidatePath("/leads");
     revalidatePath("/");
     return { ok: true };
   } catch (err: any) {
@@ -241,6 +293,8 @@ export async function quickRejectLeadAction(companyId: string, reason?: string) 
 
     revalidatePath("/review");
     revalidatePath("/discover");
+    revalidatePath("/caller");
+    revalidatePath("/leads");
     revalidatePath("/");
     return { ok: true };
   } catch (err: any) {
@@ -253,6 +307,7 @@ export async function updateRuleTargetingAction(params: {
   cities: string[];
   minScore: number;
   keywords?: string[];
+  gate?: Partial<LeadGate>;
 }) {
   try {
     const db = await getDb();
@@ -260,6 +315,7 @@ export async function updateRuleTargetingAction(params: {
     const { rule: defaultRule } = await getActiveContext(db);
     const { saveRule, reEvaluateLeadsWithRule } = await import("@/server/repo/rules");
     const cfg = defaultRule.config as any;
+    const mergedGate = resolveGate(params.gate ?? cfg?.gate);
 
     const newCfg = {
       ...cfg,
@@ -276,11 +332,14 @@ export async function updateRuleTargetingAction(params: {
         ...cfg.scoring,
         minScore: params.minScore,
       },
+      gate: mergedGate,
     };
 
     const updated = await saveRule(db, defaultRule.id, { name: defaultRule.name, config: newCfg }, actor);
     const reScore = await reEvaluateLeadsWithRule(db, updated.id, actor);
 
+    revalidatePath("/caller");
+    revalidatePath("/leads");
     revalidatePath("/rules");
     revalidatePath("/discover");
     revalidatePath("/review");
@@ -292,5 +351,3 @@ export async function updateRuleTargetingAction(params: {
 
 // Backward-compatible alias for legacy references
 export const runTavilyTestDiscoveryAction = runLeadDiscoveryAction;
-
-

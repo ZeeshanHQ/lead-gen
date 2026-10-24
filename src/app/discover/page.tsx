@@ -4,6 +4,7 @@ import { getActiveContext } from "@/server/repo/markets";
 import { LeadProspector } from "./lead-prospector";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export default async function DiscoverPage() {
   const db = await getDb();

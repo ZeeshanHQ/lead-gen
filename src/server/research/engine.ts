@@ -17,6 +17,7 @@ import { crawlWebsite, type CrawledPage } from "./crawler";
 import { extractAllFacts } from "./extractors";
 import type { FactMap } from "../domain/facts";
 import { isDecisionMaker } from "../domain/contact";
+import { evaluateGate } from "../domain/gate";
 
 export interface ResearchOptions {
   actor?: string;
@@ -111,6 +112,9 @@ export interface ResearchResult {
   grade: string;
   scoreBreakdown: ScoreBreakdown;
   summary: string;
+  /** Must-have fields this lead was missing (empty when it passed the gate). */
+  gateMissing?: string[];
+  gateReasons?: string[];
 }
 
 export async function researchCompany(
@@ -232,14 +236,37 @@ export async function researchCompany(
 
     const evaluation = evaluateRule(evalCompany, activeRule);
     const scoreBreakdown = calculateLeadScore(evalCompany, activeRule);
-    const hasPhone = Boolean(company.phoneDisplay || company.phoneE164);
+    const earlyGate = evaluateGate(activeRule?.gate, {
+      phone: refreshed.phoneDisplay || refreshed.phoneE164,
+      website: refreshed.website,
+      websiteAlive: false,
+      city: refreshed.city,
+      state: refreshed.state,
+      contacts: evalCompany.contacts,
+    });
     const minScore = activeRule?.scoring?.minScore ?? 50;
-    const isAutoQualified = evaluation.verdict !== "FAIL" && hasPhone && scoreBreakdown.icpScore >= minScore;
-    const finalStatus = evaluation.verdict === "FAIL" ? "DISQUALIFIED" : isAutoQualified ? "APPROVED" : "NEEDS_REVIEW";
+    const isAutoQualified = earlyGate.passed && evaluation.verdict !== "FAIL" && scoreBreakdown.icpScore >= minScore;
+    const finalStatus =
+      evaluation.verdict === "FAIL" || !earlyGate.passed
+        ? "DISQUALIFIED"
+        : isAutoQualified
+          ? "APPROVED"
+          : "NEEDS_REVIEW";
 
     await db
       .update(companies)
-      .set({ status: finalStatus, updatedAt: new Date() })
+      .set({
+        status: finalStatus,
+        updatedAt: new Date(),
+        ...(isAutoQualified ? { approvedAt: new Date(), approvedBy: "AI Engine (Auto-Qualified)" } : {}),
+        ...(finalStatus === "DISQUALIFIED"
+          ? {
+              researchSummary: earlyGate.passed
+                ? "Not added to CRM — website could not be reached."
+                : `Not added to CRM — missing required: ${earlyGate.reasons.join(", ")}`,
+            }
+          : {}),
+      })
       .where(eq(companies.id, companyId));
 
     // Record score
@@ -265,6 +292,8 @@ export async function researchCompany(
       grade: scoreBreakdown.grade,
       scoreBreakdown,
       summary: `Research finished with 0 pages crawled. Website unreachable. Verdict: ${evaluation.verdict}`,
+      gateMissing: earlyGate.missing,
+      gateReasons: earlyGate.reasons,
     };
   }
 
@@ -382,10 +411,22 @@ export async function researchCompany(
   // Status transition: FAIL -> DISQUALIFIED, else NEEDS_REVIEW
 
   const primaryDm = currentContacts.find((c) => c.verified && isDecisionMaker(c.roleClass as any)) || currentContacts[0];
-  const hasPhone = Boolean(refreshed.phoneDisplay || refreshed.phoneE164 || primaryDm?.phoneDisplay || primaryDm?.phoneE164);
+  const gateResult = evaluateGate(activeRule?.gate, {
+    phone: updates.phoneDisplay || refreshed.phoneDisplay || refreshed.phoneE164,
+    website: refreshed.website,
+    websiteAlive: true,
+    city: updates.city || refreshed.city,
+    state: updates.state || refreshed.state,
+    contacts: evalCompany.contacts,
+  });
   const minScore = activeRule?.scoring?.minScore ?? 50;
-  const isAutoQualified = evaluation.verdict !== "FAIL" && hasPhone && scoreBreakdown.icpScore >= minScore;
-  const finalStatus = evaluation.verdict === "FAIL" ? "DISQUALIFIED" : isAutoQualified ? "APPROVED" : "NEEDS_REVIEW";
+  const isAutoQualified = gateResult.passed && evaluation.verdict !== "FAIL" && scoreBreakdown.icpScore >= minScore;
+  const finalStatus =
+    evaluation.verdict === "FAIL" || !gateResult.passed
+      ? "DISQUALIFIED"
+      : isAutoQualified
+        ? "APPROVED"
+        : "NEEDS_REVIEW";
   if (isAutoQualified) {
     updates.approvedAt = new Date();
     updates.approvedBy = "AI Engine (Auto-Qualified)";
@@ -407,6 +448,9 @@ export async function researchCompany(
   updates.researchSummary = battlecard.summary;
   updates.researchSummaryAt = new Date();
   updates.notes = battlecard.notes;
+  if (!gateResult.passed) {
+    updates.researchSummary = `Not added to CRM — missing required: ${gateResult.reasons.join(", ")}`;
+  }
 
   await db.update(companies).set(updates).where(eq(companies.id, companyId));
 
@@ -432,6 +476,7 @@ export async function researchCompany(
       contactsDiscovered,
       verdict: evaluation.verdict,
       finalStatus,
+      gateMissing: gateResult.missing,
       icpScore: scoreBreakdown.icpScore,
       researchConfidence: scoreBreakdown.researchConfidence,
     },
@@ -450,5 +495,7 @@ export async function researchCompany(
     grade: scoreBreakdown.grade,
     scoreBreakdown,
     summary: `Research completed. ${pages.length} pages crawled, ${factsRecorded} facts recorded, ${contactsDiscovered} contacts found. ICP Score: ${scoreBreakdown.icpScore}/100 (Grade ${scoreBreakdown.grade}). Verdict: ${evaluation.verdict}.`,
+    gateMissing: gateResult.missing,
+    gateReasons: gateResult.reasons,
   };
 }

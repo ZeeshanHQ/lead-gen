@@ -461,11 +461,10 @@ export function SettingsForm({
           <div>
             <div className="text-xs font-medium text-slate-400">{activeTenantName}</div>
             <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-white sm:text-2xl">
-              Team, Access &amp; Dialer Settings
+              Team, Roles &amp; Workspace Settings
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-400">
-              Invite your team, control which dashboard pages and niches each member can see, and
-              connect your dialing platform.
+              Invite your team members via email, control which dashboard pages and niches each member can access, and manage workspace preferences.
             </p>
           </div>
 
@@ -520,19 +519,6 @@ export function SettingsForm({
             }`}
           >
             <span>Roles &amp; Permissions</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab("dialer")}
-            className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-medium transition ${
-              activeTab === "dialer"
-                ? "bg-slate-800 text-white"
-                : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"
-            }`}
-          >
-            <span>Dialer Integration</span>
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
           </button>
 
           <button

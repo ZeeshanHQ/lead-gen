@@ -3,17 +3,14 @@
 import React, { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import {
-  Sparkles,
   Zap,
   MapPin,
-  Flame,
   ShieldCheck,
   Search,
   ExternalLink,
   Phone,
   User,
   CheckCircle,
-  XCircle,
   SlidersHorizontal,
   ChevronDown,
   ChevronUp,
@@ -24,7 +21,9 @@ import {
   Building,
   FileText,
   AlertCircle,
-  HelpCircle,
+  Users,
+  Mail,
+  Globe,
 } from "lucide-react";
 import {
   runLeadDiscoveryAction,
@@ -34,8 +33,10 @@ import {
   updateRuleTargetingAction,
   getActiveRulesForDiscoveryAction,
 } from "./actions";
+import { autoDistributeLeadsAction } from "@/app/caller/actions";
 import { CandidateForm } from "./candidate-form";
 import { EvidenceDrawer } from "@/components/evidence-drawer";
+import { defaultGate, GATE_FIELDS, GATE_META, resolveGate, type GateField, type LeadGate } from "@/server/domain/gate";
 
 interface LeadItem {
   id: string;
@@ -44,16 +45,27 @@ interface LeadItem {
   state: string | null;
   website: string | null;
   phoneDisplay: string | null;
+  status?: string;
   icpScore: number | null;
   owner: { name: string | null; title: string | null; verified: boolean } | null;
-  facts: {
-    residentialFocus?: { value: string };
-    replacement?: { value: string };
-    financing?: { value: string };
+  best?: {
+    name: string | null;
+    title: string | null;
+    phone: string | null;
+    email: string | null;
+    grade: string;
   };
+  facts: Record<string, { value: string } | undefined>;
   evidenceCount: number;
   researchSummary?: string | null;
   notes?: string | null;
+}
+
+interface RunSummary {
+  totalScanned: number;
+  qualifiedCount: number;
+  rejectedCount: number;
+  crmReadyCount: number;
 }
 
 export function LeadProspector({
@@ -69,13 +81,18 @@ export function LeadProspector({
 }) {
   const [isPending, startTransition] = useTransition();
   const [targetCount, setTargetCount] = useState<number>(25);
+  const [customCountInput, setCustomCountInput] = useState<string>("25");
   const [activeRule, setActiveRule] = useState<any>(null);
   const [nicheInfo, setNicheInfo] = useState(activeMarket);
+  const [gate, setGate] = useState<LeadGate>(() => defaultGate());
   const [leads, setLeads] = useState<LeadItem[]>([]);
   const [totalReviewCount, setTotalReviewCount] = useState<number>(0);
+  const [crmReadyCount, setCrmReadyCount] = useState<number>(0);
   const [copiedPhoneId, setCopiedPhoneId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
+  const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
+  const [distributing, setDistributing] = useState(false);
   const [evidenceCompanyId, setEvidenceCompanyId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
@@ -87,8 +104,8 @@ export function LeadProspector({
     activeMarket?.keywords?.length
       ? activeMarket.keywords.join(", ")
       : activeMarket?.name
-      ? `${activeMarket.name} services, local companies`
-      : "Commercial services, local companies"
+      ? `${activeMarket.name} companies, local specialists`
+      : "Local businesses, official website"
   );
   const [editMinScore, setEditMinScore] = useState<number>(60);
   const [savingFilters, setSavingFilters] = useState(false);
@@ -96,7 +113,7 @@ export function LeadProspector({
   // Manual URL accordion toggle
   const [showManualIntake, setShowManualIntake] = useState(false);
 
-  // Load active rule & existing review leads on mount
+  // Load active rule & existing qualified leads on mount
   useEffect(() => {
     getActiveRulesForDiscoveryAction().then((res) => {
       if (res.ok && res.rule) {
@@ -104,14 +121,17 @@ export function LeadProspector({
         if ((res as any).market) {
           setNicheInfo((res as any).market);
         }
-        setEditStates((res.rule.geography?.states || ["TX"]).join(", "));
-        setEditCities((res.rule.geography?.cities || ["Dallas", "Houston", "Austin", "Fort Worth"]).join(", "));
+        const savedStates = res.rule.geography?.states || ["TX"];
+        const savedCities = res.rule.geography?.cities || [];
+        setEditStates(savedStates.join(", "));
+        setEditCities(savedCities.join(", "));
         if (res.rule.discovery?.keywords && res.rule.discovery.keywords.length > 0) {
           setEditKeywords(res.rule.discovery.keywords.join(", "));
         } else if ((res as any).market?.keywords?.length > 0) {
           setEditKeywords((res as any).market.keywords.join(", "));
         }
         setEditMinScore(res.rule.scoring?.minScore ?? 60);
+        setGate(resolveGate((res.rule as any).gate));
       }
     });
 
@@ -119,35 +139,120 @@ export function LeadProspector({
       if (res.ok && res.leads) {
         setLeads(res.leads as any);
         setTotalReviewCount(res.totalCount || res.leads.length);
+        setCrmReadyCount((res as any).crmReadyCount ?? res.leads.length);
+        if ((res as any).gate) {
+          setGate(resolveGate((res as any).gate));
+        }
       }
     });
   }, [activeMarket?.id]);
+
+  // Toggle a Must-Have Quality Gate field and immediately save + re-filter
+  const handleToggleGateField = async (field: GateField) => {
+    const nextGate: LeadGate = { ...gate, [field]: !gate[field] };
+    setGate(nextGate);
+
+    const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+    const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+
+    const res = await updateRuleTargetingAction({
+      states: statesArr.length > 0 ? statesArr : ["TX"],
+      cities: citiesArr,
+      minScore: editMinScore,
+      keywords: kwsArr,
+      gate: nextGate,
+    });
+
+    if (res.ok) {
+      const refreshed = await getLatestReviewLeadsAction();
+      if (refreshed.ok && refreshed.leads) {
+        setLeads(refreshed.leads as any);
+        setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
+        setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+      }
+    }
+  };
+
+  const handlePresetCount = (count: number) => {
+    setTargetCount(count);
+    setCustomCountInput(String(count));
+  };
+
+  const handleCustomCountChange = (val: string) => {
+    setCustomCountInput(val);
+    const parsed = parseInt(val, 10);
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      setTargetCount(Math.min(Math.max(parsed, 1), 200));
+    }
+  };
 
   // Primary 1-Click Discovery Action
   const handleStartDiscovery = () => {
     setErrorMsg(null);
     setSuccessBanner(null);
+    setRunSummary(null);
+
+    const finalCount = Math.min(Math.max(parseInt(customCountInput, 10) || targetCount || 25, 1), 200);
+    setTargetCount(finalCount);
+    setCustomCountInput(String(finalCount));
 
     startTransition(async () => {
       const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+      const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+      const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+
       const res = await runLeadDiscoveryAction({
-        targetCount,
+        targetCount: finalCount,
         keywords: kwsArr,
+        states: statesArr.length > 0 ? statesArr : ["TX"],
+        cities: citiesArr,
+        minScore: editMinScore,
+        gate,
       });
 
       if (res.ok) {
-        if (res.leads && res.leads.length > 0) {
-          setLeads(res.leads as any);
-        }
-        setTotalReviewCount(res.totalReviewCount ?? leads.length);
-        const count = res.counters?.createdCompanies || res.leads?.length || 0;
+        const returnedLeads = (res.leads as any[]) || [];
+        setLeads(returnedLeads);
+        const totalQualified = res.totalReviewCount ?? returnedLeads.length;
+        const readyInCrm = (res as any).crmReadyCount ?? totalQualified;
+        setTotalReviewCount(totalQualified);
+        setCrmReadyCount(readyInCrm);
+
+        const scanned = res.counters?.totalCandidates || finalCount;
+        const approvedNew = (res.counters as any)?.approvedCount ?? res.counters?.createdCompanies ?? 0;
+        const rejectedNew = Math.max(0, scanned - approvedNew);
+
+        setRunSummary({
+          totalScanned: scanned,
+          qualifiedCount: approvedNew,
+          rejectedCount: rejectedNew,
+          crmReadyCount: readyInCrm,
+        });
+
         setSuccessBanner(
-          `Discovery Complete! Found and evaluated ${res.counters?.totalCandidates || targetCount} candidates. ${count} verified leads are ready in your pipeline.`
+          `Discovery complete for ${nicheInfo?.name || "Active Niche"}: ${approvedNew} qualified leads passed your Must-Have Quality Gate and are ready in your CRM.`
         );
       } else {
-        setErrorMsg(res.error || "Discovery run failed. Please check your network or API keys in Sources tab.");
+        setErrorMsg(res.error || "Discovery run failed. Please check your network or API keys in the Sources tab.");
       }
     });
+  };
+
+  const handleAutoDistributeFromDiscover = async () => {
+    if (!nicheInfo?.id) return;
+    setDistributing(true);
+    const res = await autoDistributeLeadsAction({ marketId: nicheInfo.id });
+    setDistributing(false);
+    if (res.ok) {
+      setSuccessBanner(
+        res.distributedCount && res.distributedCount > 0
+          ? `Assigned ${res.distributedCount} unassigned leads equally across your callers. Ready to dial in Leads CRM!`
+          : "All qualified leads in this niche are already assigned to callers."
+      );
+    } else {
+      setErrorMsg(res.error || "Failed to distribute leads");
+    }
   };
 
   // Quick Approve Lead from this page
@@ -156,10 +261,12 @@ export function LeadProspector({
     const res = await quickApproveLeadAction(id);
     setActionLoadingId(null);
     if (res.ok) {
-      setLeads((prev) => prev.filter((l) => l.id !== id));
-      setTotalReviewCount((prev) => Math.max(0, prev - 1));
+      setLeads((prev) =>
+        prev.map((l) => (l.id === id ? { ...l, status: "APPROVED" } : l))
+      );
+      setCrmReadyCount((prev) => prev + 1);
     } else {
-      alert(res.error || "Failed to approve lead");
+      setErrorMsg(res.error || "Failed to approve lead");
     }
   };
 
@@ -182,19 +289,26 @@ export function LeadProspector({
     const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
 
     const res = await updateRuleTargetingAction({
-      states: statesArr,
+      states: statesArr.length > 0 ? statesArr : ["TX"],
       cities: citiesArr,
       minScore: editMinScore,
       keywords: kwsArr,
+      gate,
     });
     setSavingFilters(false);
 
     if (res.ok && res.rule) {
       setActiveRule(res.rule);
       setIsEditingFilters(false);
+      const refreshed = await getLatestReviewLeadsAction();
+      if (refreshed.ok && refreshed.leads) {
+        setLeads(refreshed.leads as any);
+        setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
+        setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+      }
       setSuccessBanner(
-        `Active rules updated! Target: ${statesArr.join(", ")} (${citiesArr.join(", ")}), Keywords: ${kwsArr.length} terms, Min Score: ${editMinScore}/100. ${
-          res.reScore ? `Re-scored ${res.reScore.reScoredCount} leads.` : ""
+        `Targeting & Quality Gate updated for ${nicheInfo?.name || "Active Niche"}. ${
+          res.reScore ? `Re-evaluated ${res.reScore.reScoredCount} leads against your rules.` : ""
         }`
       );
     } else {
@@ -208,9 +322,14 @@ export function LeadProspector({
     setTimeout(() => setCopiedPhoneId(null), 2000);
   };
 
-  const states = activeRule?.geography?.states || ["TX"];
-  const cities = activeRule?.geography?.cities || ["Dallas", "Houston", "Austin", "Fort Worth"];
+  const states: string[] = activeRule?.geography?.states?.length ? activeRule.geography.states : ["TX"];
+  const cities: string[] = activeRule?.geography?.cities?.filter(Boolean) || [];
   const minScore = activeRule?.scoring?.minScore ?? 60;
+  const activeNicheName = nicheInfo?.name || "Target Niche";
+  const locationSummary =
+    cities.length > 0
+      ? `${states.join(", ")} • ${cities.slice(0, 3).join(", ")}${cities.length > 3 ? ` +${cities.length - 3}` : ""}`
+      : `${states.join(", ")} (All Major Metro Areas)`;
 
   return (
     <div className="space-y-6">
@@ -230,17 +349,17 @@ export function LeadProspector({
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-zinc-800 text-zinc-200 border border-zinc-700">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                Live Search Active &bull; Tavily AI Engine
+                Live Web Discovery &bull; AI Verification Engine
               </span>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-zinc-900 text-zinc-400 border border-zinc-800">
-                Active Vertical: <strong className="text-zinc-200 ml-1">{nicheInfo?.name || "Active Niche"}</strong>
+                Active Niche: <strong className="text-zinc-100 ml-1">{activeNicheName}</strong>
               </span>
             </div>
             <h1 className="text-xl md:text-2xl font-bold text-white tracking-tight">
-              Lead Discovery &amp; Automated Verification
+              Find &amp; Qualify {activeNicheName} Leads
             </h1>
             <p className="text-xs text-zinc-400 max-w-2xl leading-relaxed">
-              Discovers real companies matching your exact ICP rules &mdash; verifies published phone numbers and decision makers, scores fit, and routes call-ready leads to your CRM.
+              Discovers real {activeNicheName} companies, crawls their live websites to extract verified phone numbers, decision makers, and emails, and strictly blocks any incomplete lead from entering your CRM.
             </p>
           </div>
 
@@ -251,19 +370,73 @@ export function LeadProspector({
               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition shadow-sm"
             >
               <SlidersHorizontal className="w-3.5 h-3.5 text-zinc-400" />
-              <span>{isEditingFilters ? "Close Filters" : "Targeting Settings"}</span>
+              <span>{isEditingFilters ? "Close Targeting" : "Edit Locations & Keywords"}</span>
             </button>
             <Link
               href="/caller"
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition shadow-sm"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white hover:bg-zinc-200 text-black text-xs font-bold transition shadow-sm"
             >
-              <span>Leads CRM</span>
-              {totalReviewCount > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 font-bold text-[10px]">
-                  {totalReviewCount}
-                </span>
-              )}
+              <span>Open Leads CRM</span>
+              <span className="px-1.5 py-0.5 rounded-full bg-zinc-900 text-white font-bold text-[10px]">
+                {crmReadyCount}
+              </span>
+              <ArrowRight className="w-3.5 h-3.5" />
             </Link>
+          </div>
+        </div>
+
+        {/* Owner-Controlled Must-Have Quality Gate */}
+        <div className="p-4 rounded-xl bg-[#09090b] border border-zinc-800/90 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-bold text-white flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>Must-Have Quality Gate (Strict CRM Entry Requirements)</span>
+              </div>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                Select what every lead <strong className="text-zinc-200">must have</strong>. Any company missing a selected item is automatically rejected and never enters your CRM.
+              </p>
+            </div>
+            <span className="text-[11px] text-emerald-400 font-semibold shrink-0">
+              {GATE_FIELDS.filter((f) => gate[f]).length} Mandatory Rules Active
+            </span>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            {GATE_FIELDS.map((field) => {
+              const active = gate[field];
+              const meta = GATE_META[field];
+              return (
+                <button
+                  key={field}
+                  type="button"
+                  disabled={isPending}
+                  onClick={() => handleToggleGateField(field)}
+                  title={meta.description}
+                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                    active
+                      ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm"
+                      : "bg-zinc-900/90 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200"
+                  }`}
+                >
+                  <span
+                    className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${
+                      active
+                        ? "bg-emerald-500 border-emerald-400 text-black"
+                        : "border-zinc-600 bg-zinc-950"
+                    }`}
+                  >
+                    {active && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                  </span>
+                  <span>{meta.label}</span>
+                  {active && (
+                    <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                      Must
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -273,52 +446,54 @@ export function LeadProspector({
             <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2.5">
               <span className="text-xs font-bold text-white flex items-center gap-2">
                 <SlidersHorizontal className="w-3.5 h-3.5 text-zinc-400" />
-                Targeting &amp; ICP Criteria ({nicheInfo?.name || "Active Niche"})
+                Location &amp; Keyword Targeting ({activeNicheName})
               </span>
               <span className="text-[11px] text-zinc-500">
-                Filters take effect immediately on next discovery run.
+                Changes apply immediately to discovery &amp; existing leads.
               </span>
             </div>
 
             <div className="space-y-1.5 text-xs">
               <label className="text-zinc-300 font-medium block">
-                Discovery Keywords &amp; Search Niche (Comma-separated)
+                Target Search Keywords for {activeNicheName} (Comma-separated)
               </label>
               <input
                 type="text"
                 value={editKeywords}
                 onChange={(e) => setEditKeywords(e.target.value)}
-                placeholder="e.g. HVAC contractor, AC repair, residential heating"
+                placeholder={`e.g. ${activeNicheName} company, property management, commercial brokerage`}
                 className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
               />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
               <div className="space-y-1.5">
-                <label className="text-zinc-300 font-medium block">Target States</label>
+                <label className="text-zinc-300 font-medium block">Target States (US State Codes)</label>
                 <input
                   type="text"
                   value={editStates}
                   onChange={(e) => setEditStates(e.target.value)}
-                  placeholder="e.g. TX, FL, GA"
-                  className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-zinc-300 font-medium block">Target Cities</label>
-                <input
-                  type="text"
-                  value={editCities}
-                  onChange={(e) => setEditCities(e.target.value)}
-                  placeholder="e.g. Dallas, Houston, Austin"
+                  placeholder="e.g. TX, FL, GA, CA"
                   className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
                 />
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-zinc-300 font-medium block">
-                  Min ICP Score: <span className="text-white font-bold">{editMinScore} / 100</span>
+                  Target Cities <span className="text-zinc-500 font-normal">(Leave blank for state-wide metros)</span>
+                </label>
+                <input
+                  type="text"
+                  value={editCities}
+                  onChange={(e) => setEditCities(e.target.value)}
+                  placeholder="e.g. Dallas, Houston, Austin, Miami"
+                  className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-zinc-300 font-medium block">
+                  Min ICP Fit Score: <span className="text-white font-bold">{editMinScore} / 100</span>
                 </label>
                 <input
                   type="range"
@@ -331,7 +506,7 @@ export function LeadProspector({
                 />
                 <div className="flex justify-between text-[10px] text-zinc-500">
                   <span>40 (Broad)</span>
-                  <span>60 (Standard)</span>
+                  <span>60 (Balanced)</span>
                   <span>80 (Strict)</span>
                 </div>
               </div>
@@ -365,10 +540,9 @@ export function LeadProspector({
               <MapPin className="w-3.5 h-3.5 text-zinc-400" />
             </div>
             <div className="min-w-0">
-              <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Geography</div>
-              <div className="text-zinc-200 font-medium truncate">
-                {states.join(", ")} &bull; {cities.slice(0, 2).join(", ")}
-                {cities.length > 2 ? ` +${cities.length - 2}` : ""}
+              <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Target Geography</div>
+              <div className="text-zinc-200 font-medium truncate" title={locationSummary}>
+                {locationSummary}
               </div>
             </div>
           </div>
@@ -380,8 +554,10 @@ export function LeadProspector({
             <div className="min-w-0">
               <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Search Keywords</div>
               <div className="text-zinc-200 font-medium truncate" title={editKeywords}>
-                {editKeywords.split(",")[0] || nicheInfo?.name || "Target Niche"}
-                {editKeywords.split(",").length > 1 ? ` +${editKeywords.split(",").length - 1}` : ""}
+                {editKeywords.split(",")[0]?.trim() || activeNicheName}
+                {editKeywords.split(",").filter(Boolean).length > 1
+                  ? ` +${editKeywords.split(",").filter(Boolean).length - 1} more`
+                  : ""}
               </div>
             </div>
           </div>
@@ -391,49 +567,65 @@ export function LeadProspector({
               <Building className="w-3.5 h-3.5 text-zinc-400" />
             </div>
             <div className="min-w-0">
-              <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Vertical</div>
-              <div className="text-zinc-200 font-medium truncate">
-                {nicheInfo?.name || "Active Niche"}
-              </div>
+              <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Active Vertical</div>
+              <div className="text-zinc-200 font-medium truncate">{activeNicheName}</div>
             </div>
           </div>
 
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
-              <ShieldCheck className="w-3.5 h-3.5 text-zinc-400" />
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
             </div>
             <div className="min-w-0">
-              <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Qualification Gate</div>
-              <div className="text-zinc-200 font-medium">
-                Score &ge; <span className="text-white font-semibold">{minScore}/100</span>
+              <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">CRM Quality Gate</div>
+              <div className="text-zinc-200 font-medium truncate">
+                {GATE_FIELDS.filter((f) => gate[f])
+                  .map((f) => GATE_META[f].shortLabel)
+                  .join(" + ") || "Score"}{" "}
+                &bull; &ge;{minScore}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Action Controls: Batch Selector + Primary Launch Button */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
-          {/* Batch Selector */}
+        {/* Action Controls: Presets + Custom Lead Count Input + Primary Launch Button */}
+        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 pt-1">
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-zinc-300 block">
-              Lead Target Quantity:
+              How many candidates should the engine scan &amp; qualify? (Presets or Custom Count)
             </label>
-            <div className="inline-flex rounded-xl bg-[#09090b] p-1 border border-zinc-800">
-              {[25, 50, 100].map((count) => (
-                <button
-                  key={count}
-                  type="button"
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-xl bg-[#09090b] p-1 border border-zinc-800">
+                {[10, 25, 50, 100].map((count) => (
+                  <button
+                    key={count}
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => handlePresetCount(count)}
+                    className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                      targetCount === count
+                        ? "bg-zinc-800 text-white shadow-sm font-bold"
+                        : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {count}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 bg-[#09090b] border border-zinc-800 rounded-xl px-3 py-1.5">
+                <span className="text-[11px] text-zinc-400 font-medium">Custom:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
                   disabled={isPending}
-                  onClick={() => setTargetCount(count)}
-                  className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
-                    targetCount === count
-                      ? "bg-zinc-800 text-white shadow-sm font-bold"
-                      : "text-zinc-400 hover:text-zinc-200"
-                  }`}
-                >
-                  {count === 100 ? `${count}+ Leads` : `${count} Leads`}
-                </button>
-              ))}
+                  value={customCountInput}
+                  onChange={(e) => handleCustomCountChange(e.target.value)}
+                  className="w-16 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1 text-xs font-bold text-white text-center focus:outline-none focus:border-white"
+                />
+                <span className="text-[11px] text-zinc-500">leads (1–200)</span>
+              </div>
             </div>
           </div>
 
@@ -442,7 +634,7 @@ export function LeadProspector({
             type="button"
             disabled={isPending}
             onClick={handleStartDiscovery}
-            className={`w-full sm:w-auto flex items-center justify-center gap-2.5 px-8 py-3 rounded-xl font-bold text-xs tracking-wide shadow-lg transition-all sm:self-end ${
+            className={`w-full lg:w-auto flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-xl font-bold text-xs tracking-wide shadow-lg transition-all ${
               isPending
                 ? "bg-zinc-800 text-zinc-400 cursor-not-allowed border border-zinc-700"
                 : "bg-white hover:bg-zinc-200 text-black shadow-black/40 active:scale-[0.98]"
@@ -451,40 +643,48 @@ export function LeadProspector({
             {isPending ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin text-zinc-400" />
-                <span>Running Lead Discovery Pipeline...</span>
+                <span>Scanning &amp; Verifying {targetCount} {activeNicheName} Leads...</span>
               </>
             ) : (
               <>
                 <Zap className="w-4 h-4 fill-black text-black" />
-                <span>Find &amp; Qualify {targetCount} Leads</span>
+                <span>Find &amp; Qualify {targetCount} {activeNicheName} Leads</span>
               </>
             )}
           </button>
         </div>
 
-        {/* Live Progress Card (Active Execution State) */}
+        {/* Live Progress Card (Active Execution State — 100% Niche-Agnostic) */}
         {isPending && (
-          <div className="p-5 rounded-2xl bg-[#121215] border border-zinc-800 space-y-4 animate-pulse">
-            <div className="flex items-center gap-3 text-zinc-300 text-sm font-bold">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span>AI Lead Engine is actively discovering and vetting contractors...</span>
+          <div className="p-5 rounded-2xl bg-[#09090b] border border-zinc-800 space-y-4 animate-pulse">
+            <div className="flex items-center gap-3 text-zinc-200 text-sm font-bold">
+              <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
+              <span>
+                AI Lead Engine is actively discovering and verifying {activeNicheName} companies...
+              </span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-[11px] text-slate-300">
-              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-zinc-800">
-                <span className="text-zinc-200 font-bold block mb-0.5">1. Live Web Search</span>
-                Querying Tavily across {cities.slice(0, 3).join(", ")} for active contractors.
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-[11px] text-zinc-400">
+              <div className="p-3 rounded-xl bg-[#121215] border border-zinc-800/80">
+                <span className="text-zinc-100 font-bold block mb-1">1. Live Web Search</span>
+                Querying Tavily across{" "}
+                {cities.length > 0 ? cities.slice(0, 3).join(", ") : `${states.join(", ")} markets`} for active{" "}
+                {activeNicheName} businesses.
               </div>
-              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-zinc-800">
-                <span className="text-zinc-200 font-bold block mb-0.5">2. Smart Filtering</span>
-                Excluding aggregators (Yelp, Angi, BBB) &amp; deduplicating against pipeline.
+              <div className="p-3 rounded-xl bg-[#121215] border border-zinc-800/80">
+                <span className="text-zinc-100 font-bold block mb-1">2. Directory &amp; Listicle Filter</span>
+                Excluding aggregators (Yelp, Zillow, BBB, directories) &amp; blog listicles; keeping only real company domains.
               </div>
-              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-zinc-800">
-                <span className="text-zinc-200 font-bold block mb-0.5">3. Deep Web Inspection</span>
-                Extracting published phones, owners, replacement services &amp; financing.
+              <div className="p-3 rounded-xl bg-[#121215] border border-zinc-800/80">
+                <span className="text-zinc-100 font-bold block mb-1">3. Deep Website Inspection</span>
+                Crawling live company pages to extract dialable phone numbers, decision makers, emails &amp; services.
               </div>
-              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-zinc-800">
-                <span className="text-zinc-200 font-bold block mb-0.5">4. ICP Scoring</span>
-                Validating qualification gate and attaching evidence citations.
+              <div className="p-3 rounded-xl bg-[#121215] border border-zinc-800/80">
+                <span className="text-zinc-100 font-bold block mb-1">4. Must-Have Quality Gate</span>
+                Enforcing required fields (
+                {GATE_FIELDS.filter((f) => gate[f])
+                  .map((f) => GATE_META[f].shortLabel)
+                  .join(", ") || "ICP Score"}
+                ) before adding to CRM.
               </div>
             </div>
           </div>
@@ -495,61 +695,113 @@ export function LeadProspector({
           <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-800/80 text-xs text-rose-200 flex items-center gap-3">
             <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
             <div className="flex-1">{errorMsg}</div>
-            <button
-              onClick={() => setErrorMsg(null)}
-              className="text-rose-400 hover:text-white"
-            >
+            <button onClick={() => setErrorMsg(null)} className="text-rose-400 hover:text-white">
               ✕
             </button>
           </div>
         )}
 
-        {/* Success Banner */}
-        {successBanner && (
-          <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/50 text-xs text-emerald-200 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
-              <span>{successBanner}</span>
+        {/* Post-Discovery Summary & CRM Action Flow */}
+        {(runSummary || successBanner) && (
+          <div className="p-5 rounded-xl bg-emerald-950/25 border border-emerald-500/40 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-sm font-bold text-white">
+                    {successBanner || "Lead Discovery Completed"}
+                  </div>
+                  <p className="text-xs text-zinc-300 mt-0.5">
+                    Qualified leads are automatically placed in your <strong className="text-white">Leads CRM (Ready to Call)</strong> queue for your cold callers.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={distributing}
+                  onClick={handleAutoDistributeFromDiscover}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-100 border border-zinc-700 font-semibold text-xs transition"
+                >
+                  {distributing ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Users className="w-3.5 h-3.5 text-emerald-400" />
+                  )}
+                  <span>Auto-Assign to Callers</span>
+                </button>
+
+                <Link
+                  href="/caller"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition shadow-sm"
+                >
+                  <span>Open Leads CRM &amp; Start Calling ({crmReadyCount})</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
             </div>
-            <Link
-              href="/caller"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shrink-0 transition-colors"
-            >
-              <span>Open Leads CRM (Ready to Call)</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
+
+            {runSummary && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-emerald-500/20 text-xs">
+                <div className="p-3 rounded-lg bg-[#09090b]/80 border border-zinc-800">
+                  <div className="text-[10px] uppercase tracking-wider text-zinc-400">Candidates Scanned</div>
+                  <div className="text-lg font-extrabold text-white mt-0.5">{runSummary.totalScanned}</div>
+                </div>
+                <div className="p-3 rounded-lg bg-[#09090b]/80 border border-emerald-500/30">
+                  <div className="text-[10px] uppercase tracking-wider text-emerald-400">
+                    Passed Gate &rarr; Added to CRM
+                  </div>
+                  <div className="text-lg font-extrabold text-emerald-300 mt-0.5">
+                    {runSummary.qualifiedCount} Leads
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-[#09090b]/80 border border-zinc-800">
+                  <div className="text-[10px] uppercase tracking-wider text-zinc-400">
+                    Blocked (Missing Must-Haves / Duplicate)
+                  </div>
+                  <div className="text-lg font-extrabold text-zinc-300 mt-0.5">
+                    {runSummary.rejectedCount} Filtered Out
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* Leads Table / Card Stream (Direct Results for Employees!) */}
+      {/* Qualified Leads Stream */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+          <div className="flex items-center gap-2.5">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <Building className="w-4 h-4 text-zinc-200" />
-              Qualified Leads Stream (Ready to Call)
+              <Building className="w-4 h-4 text-emerald-400" />
+              <span>Qualified {activeNicheName} Leads (Passed Must-Have Gate)</span>
             </h2>
-            <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-xs font-semibold">
-              {leads.length} leads
+            <span className="px-2.5 py-0.5 rounded-full bg-zinc-800 text-zinc-200 text-xs font-semibold">
+              {leads.length} shown
             </span>
           </div>
 
-          <Link
-            href="/caller"
-            className="text-xs font-semibold text-zinc-200 hover:text-zinc-300 flex items-center gap-1 transition-colors"
-          >
-            <span>Open Leads CRM ({totalReviewCount} leads)</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/caller"
+              className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors"
+            >
+              <span>Manage Call Queue, Follow-Ups &amp; Assignments in CRM ({crmReadyCount})</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
         </div>
 
         {leads.length === 0 ? (
           <div className="p-12 rounded-2xl border border-zinc-800 bg-[#121215] text-center space-y-3">
-            <Search className="w-8 h-8 text-slate-600 mx-auto" />
-            <h3 className="text-sm font-semibold text-slate-300">No leads in review queue right now</h3>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              Click &quot;Find &amp; Qualify Leads&quot; above to run a live discovery search across {cities[0] || "Dallas"} and surrounding cities.
+            <Search className="w-8 h-8 text-zinc-600 mx-auto" />
+            <h3 className="text-sm font-semibold text-zinc-200">
+              No qualified {activeNicheName} leads matching your current Must-Have Gate yet
+            </h3>
+            <p className="text-xs text-zinc-500 max-w-md mx-auto">
+              Choose your desired lead quantity above and click &ldquo;Find &amp; Qualify {targetCount} {activeNicheName} Leads&rdquo; to discover verified companies with dialable phone numbers.
             </p>
           </div>
         ) : (
@@ -557,32 +809,39 @@ export function LeadProspector({
             {leads.map((lead) => {
               const score = lead.icpScore ?? 0;
               const isHigh = score >= 75;
-              const hasPhone = Boolean(lead.phoneDisplay);
+              const phone = lead.best?.phone || lead.phoneDisplay;
+              const email = lead.best?.email || null;
+              const decisionMaker = lead.owner?.name || lead.best?.name || null;
+              const isApprovedInCrm = lead.status === "APPROVED" || lead.status === "CALLING" || lead.status === "CONNECTED" || lead.status === "MEETING_BOOKED";
 
               return (
                 <div
                   key={lead.id}
-                  className="rounded-xl border border-zinc-800 hover:border-slate-700 bg-slate-900/70 p-4 space-y-3 shadow-md transition-all flex flex-col justify-between"
+                  className="rounded-xl border border-zinc-800 hover:border-zinc-700 bg-[#121215] p-4 space-y-3 shadow-md transition-all flex flex-col justify-between"
                 >
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     {/* Top Row: Name + Score Badge */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <h4 className="text-sm font-bold text-white truncate" title={lead.name}>
-                          {lead.name}
-                        </h4>
-                        <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="text-sm font-bold text-white truncate" title={lead.name}>
+                            {lead.name}
+                          </h4>
+                        </div>
+                        <div className="text-[11px] text-zinc-400 flex items-center gap-2 mt-0.5">
                           <span className="flex items-center gap-1 truncate">
-                            <MapPin className="w-3 h-3 text-slate-500 shrink-0" />
+                            <MapPin className="w-3 h-3 text-zinc-500 shrink-0" />
                             <span>
-                              {lead.city || "Texas"}, {lead.state || "TX"}
+                              {[lead.city, lead.state].filter(Boolean).join(", ") || states[0] || "US"}
                             </span>
                           </span>
                           <a
-                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lead.name} ${(lead as any).address || ""} ${lead.city || ""} ${lead.state || ""}`)}`}
+                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                              `${lead.name} ${(lead as any).address || ""} ${lead.city || ""} ${lead.state || ""}`
+                            )}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[10px] text-zinc-200 hover:text-zinc-300 hover:underline flex items-center gap-0.5 shrink-0"
+                            className="text-[10px] text-zinc-300 hover:text-white hover:underline flex items-center gap-0.5 shrink-0"
                             title="Verify Google Maps Profile & Reviews"
                           >
                             <span>Maps</span>
@@ -595,7 +854,7 @@ export function LeadProspector({
                         className={`px-2 py-1 rounded-lg text-xs font-extrabold shrink-0 border ${
                           isHigh
                             ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-                            : "bg-cyan-500/15 text-zinc-200 border-cyan-500/30"
+                            : "bg-zinc-800 text-zinc-200 border-zinc-700"
                         }`}
                         title="Deterministic ICP Fit Score"
                       >
@@ -610,28 +869,28 @@ export function LeadProspector({
                           href={lead.website}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-zinc-200 hover:underline flex items-center gap-1 truncate text-[11px]"
+                          className="text-zinc-300 hover:text-white hover:underline flex items-center gap-1.5 truncate text-[11px]"
                         >
-                          <ExternalLink className="w-3 h-3 shrink-0" />
+                          <Globe className="w-3 h-3 text-zinc-500 shrink-0" />
                           <span className="truncate">{lead.website.replace(/^https?:\/\/(www\.)?/, "")}</span>
                         </a>
                       </div>
                     )}
 
-                    {/* Phone Number */}
-                    {hasPhone ? (
-                      <div className="flex items-center justify-between p-2 rounded-lg bg-[#09090b]/70 border border-zinc-800/80 text-xs">
+                    {/* Phone Number (Prominent & Click-to-Call) */}
+                    {phone ? (
+                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#09090b] border border-zinc-800 text-xs">
                         <a
-                          href={`tel:${lead.phoneDisplay}`}
-                          className="font-mono text-slate-200 hover:text-zinc-200 font-semibold flex items-center gap-1.5"
+                          href={`tel:${phone}`}
+                          className="font-mono text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1.5"
                         >
-                          <Phone className="w-3.5 h-3.5 text-zinc-200 shrink-0" />
-                          <span>{lead.phoneDisplay}</span>
+                          <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          <span>{phone}</span>
                         </a>
                         <button
                           type="button"
-                          onClick={() => copyPhone(lead.phoneDisplay!, lead.id)}
-                          className="text-slate-400 hover:text-white p-1 rounded transition-colors"
+                          onClick={() => copyPhone(phone, lead.id)}
+                          className="text-zinc-400 hover:text-white p-1 rounded transition-colors"
                           title="Copy phone number"
                         >
                           {copiedPhoneId === lead.id ? (
@@ -642,49 +901,57 @@ export function LeadProspector({
                         </button>
                       </div>
                     ) : (
-                      <div className="text-[11px] text-slate-500 italic p-1.5 rounded bg-[#09090b]/40">
-                        Phone pending crawler verification
+                      <div className="text-[11px] text-zinc-500 italic p-2 rounded bg-[#09090b]/60 border border-zinc-800/60">
+                        No published phone number found
                       </div>
                     )}
 
-                    {/* Key Signals Verified */}
+                    {/* Verified Signals (Dynamic & Niche-Agnostic) */}
                     <div className="flex flex-wrap gap-1.5 text-[10px]">
-                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/60 font-medium">
-                        Residential ✓
-                      </span>
-                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/60 font-medium">
-                        Replacement ✓
-                      </span>
-                      {lead.facts.financing?.value === "TRUE" && (
+                      {phone && (
                         <span className="px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-medium">
-                          Financing ✓
+                          Phone Verified ✓
                         </span>
                       )}
-                      {lead.owner?.name && (
-                        <span className="px-2 py-0.5 rounded bg-cyan-950/60 text-zinc-300 border border-cyan-800/60 font-medium flex items-center gap-1">
-                          <User className="w-2.5 h-2.5" />
-                          {lead.owner.name}
+                      {lead.website && (
+                        <span className="px-2 py-0.5 rounded bg-zinc-900 text-zinc-300 border border-zinc-800 font-medium">
+                          Website Live ✓
+                        </span>
+                      )}
+                      {decisionMaker && (
+                        <span className="px-2 py-0.5 rounded bg-zinc-900 text-zinc-200 border border-zinc-700 font-medium flex items-center gap-1">
+                          <User className="w-2.5 h-2.5 text-emerald-400" />
+                          {decisionMaker}
+                        </span>
+                      )}
+                      {email && (
+                        <span
+                          className="px-2 py-0.5 rounded bg-zinc-900 text-zinc-300 border border-zinc-800 font-medium flex items-center gap-1 truncate max-w-[180px]"
+                          title={email}
+                        >
+                          <Mail className="w-2.5 h-2.5 text-zinc-400 shrink-0" />
+                          <span className="truncate">{email}</span>
                         </span>
                       )}
                     </div>
 
-                    {/* Cold Caller Intelligence Tip */}
+                    {/* Cold Caller Intelligence Summary */}
                     {lead.researchSummary && (
-                      <div className="text-[11px] text-zinc-300/90 bg-cyan-950/40 p-2 rounded-lg border border-cyan-800/40 line-clamp-2 leading-relaxed">
-                        💡 {lead.researchSummary}
+                      <div className="text-[11px] text-zinc-300 bg-[#09090b] p-2.5 rounded-lg border border-zinc-800/80 line-clamp-2 leading-relaxed">
+                        {lead.researchSummary}
                       </div>
                     )}
                   </div>
 
-                  {/* Actions: Approve / Reject / Evidence */}
-                  <div className="pt-2 border-t border-zinc-800/80 flex items-center justify-between gap-2">
+                  {/* Card Footer: Evidence + CRM Status / Actions */}
+                  <div className="pt-2.5 border-t border-zinc-800/80 flex items-center justify-between gap-2">
                     <button
                       type="button"
                       onClick={() => setEvidenceCompanyId(lead.id)}
-                      className="text-[11px] font-semibold text-slate-400 hover:text-slate-200 flex items-center gap-1 transition-colors"
+                      className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-200 flex items-center gap-1 transition-colors"
                     >
-                      <FileText className="w-3 h-3 text-zinc-200" />
-                      <span>{lead.evidenceCount || 0} Facts</span>
+                      <FileText className="w-3 h-3 text-zinc-400" />
+                      <span>{lead.evidenceCount || 0} Evidence Citations</span>
                     </button>
 
                     <div className="flex items-center gap-1.5">
@@ -692,26 +959,36 @@ export function LeadProspector({
                         type="button"
                         disabled={actionLoadingId === lead.id}
                         onClick={() => handleQuickReject(lead.id)}
-                        className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-slate-700/60 hover:border-rose-800 transition-colors"
-                        title="Reject lead"
+                        className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-zinc-900 hover:bg-rose-950/60 text-zinc-400 hover:text-rose-300 border border-zinc-800 hover:border-rose-800 transition-colors"
+                        title="Remove lead from CRM"
                       >
-                        ✕
+                        Remove
                       </button>
 
-                      <button
-                        type="button"
-                        disabled={actionLoadingId === lead.id}
-                        onClick={() => handleQuickApprove(lead.id)}
-                        className="px-3 py-1 rounded-lg text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-sm transition-colors flex items-center gap-1"
-                        title="Approve lead for caller & Google Sheet sync"
-                      >
-                        {actionLoadingId === lead.id ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
+                      {isApprovedInCrm ? (
+                        <Link
+                          href="/caller"
+                          className="px-3 py-1 rounded-lg text-xs font-bold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-colors flex items-center gap-1"
+                        >
                           <CheckCircle className="w-3 h-3" />
-                        )}
-                        <span>Approve</span>
-                      </button>
+                          <span>In CRM &rarr;</span>
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={actionLoadingId === lead.id}
+                          onClick={() => handleQuickApprove(lead.id)}
+                          className="px-3 py-1 rounded-lg text-xs font-bold bg-white hover:bg-zinc-200 text-black shadow-sm transition-colors flex items-center gap-1"
+                          title="Send lead to Caller CRM"
+                        >
+                          {actionLoadingId === lead.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <CheckCircle className="w-3 h-3" />
+                          )}
+                          <span>Add to CRM</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -721,21 +998,21 @@ export function LeadProspector({
         )}
       </div>
 
-      {/* Optional Manual Intake Accordion (Cleanly Tucked Away) */}
+      {/* Optional Manual Intake Accordion */}
       <div className="pt-4 border-t border-zinc-800/80">
         <button
           type="button"
           onClick={() => setShowManualIntake(!showManualIntake)}
-          className="flex items-center justify-between w-full p-3 rounded-xl bg-slate-900/60 border border-zinc-800 hover:border-slate-700 text-xs text-slate-300 font-semibold transition-colors"
+          className="flex items-center justify-between w-full p-3 rounded-xl bg-[#121215] border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-300 font-semibold transition-colors"
         >
           <span className="flex items-center gap-2">
-            <ExternalLink className="w-3.5 h-3.5 text-zinc-200" />
-            <span>Need to research a custom company URL or paste specific domains?</span>
+            <ExternalLink className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Have specific company websites to inspect? Paste domains or URLs manually</span>
           </span>
           {showManualIntake ? (
-            <ChevronUp className="w-4 h-4 text-slate-400" />
+            <ChevronUp className="w-4 h-4 text-zinc-400" />
           ) : (
-            <ChevronDown className="w-4 h-4 text-slate-400" />
+            <ChevronDown className="w-4 h-4 text-zinc-400" />
           )}
         </button>
 

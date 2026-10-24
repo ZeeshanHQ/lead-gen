@@ -4,6 +4,7 @@ import { companies, leadScores } from "../db/schema";
 import { type LifecycleStatus } from "../domain/lifecycle";
 import { getContactsForCompanies, toContactInput } from "./contacts";
 import { pickBestContact } from "../domain/contact";
+import { evaluateGate, type LeadGate } from "../domain/gate";
 import { type FactMap, factValue } from "../domain/facts";
 import { setFact } from "./facts";
 import { audit } from "./audit";
@@ -48,7 +49,11 @@ export interface CallFeedbackInput {
   callerNotes: string;
 }
 
-export async function getCallerQueue(db: Db, marketId?: string): Promise<CallerLeadView[]> {
+export async function getCallerQueue(
+  db: Db,
+  marketId?: string,
+  gate?: Partial<LeadGate> | null
+): Promise<CallerLeadView[]> {
   const callerStatuses: LifecycleStatus[] = [
     "APPROVED",
     "SYNCED",
@@ -58,7 +63,6 @@ export async function getCallerQueue(db: Db, marketId?: string): Promise<CallerL
     "MEETING_BOOKED",
     "QUALIFIED",
     "NURTURE",
-    "NEEDS_REVIEW",
   ];
 
   const whereClause = marketId
@@ -86,6 +90,20 @@ export async function getCallerQueue(db: Db, marketId?: string): Promise<CallerL
   for (const c of rows) {
     const cs = (contactsMap.get(c.id) ?? []).map(toContactInput);
     const best = pickBestContact(cs, c.phoneDisplay);
+
+    // Enforce the owner's quality gate on untouched CRM leads so leads missing required fields never appear
+    const isUntouched = c.status === "APPROVED" || c.status === "SYNCED";
+    if (isUntouched) {
+      const gateRes = evaluateGate(gate, {
+        phone: c.phoneDisplay,
+        website: c.website,
+        city: c.city,
+        state: c.state,
+        contacts: cs,
+      });
+      if (!gateRes.passed) continue;
+    }
+
     const score = scoreMap.get(c.id);
     const facts = (c.facts as FactMap) || {};
 

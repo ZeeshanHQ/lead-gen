@@ -9,6 +9,7 @@ import {
   calculateLeadScore,
 } from "../domain/rules";
 import { type FactMap } from "../domain/facts";
+import { evaluateGate } from "../domain/gate";
 import { getContactsForCompanies, toContactInput } from "./contacts";
 import { audit } from "./audit";
 
@@ -193,12 +194,27 @@ export async function reEvaluateLeadsWithRule(
     const evaluation = evaluateRule(evalCompany, ruleConfig);
     const scoreBreakdown = calculateLeadScore(evalCompany, ruleConfig);
 
-    const passed = evaluation.verdict !== "FAIL" && scoreBreakdown.icpScore >= ruleConfig.scoring.minScore;
+    const gateResult = evaluateGate(ruleConfig.gate, {
+      phone: c.phoneDisplay || c.phoneE164,
+      website: c.website,
+      websiteAlive: ((c.facts as FactMap) || {}).website_alive?.value === "NO" ? false : null,
+      city: c.city,
+      state: c.state,
+      contacts: contactInputs,
+    });
+    const passed =
+      gateResult.passed && evaluation.verdict !== "FAIL" && scoreBreakdown.icpScore >= ruleConfig.scoring.minScore;
 
-    // Respect human approval: if already APPROVED, keep status; otherwise update
+    // Respect human decisions: only AI-managed statuses are moved. AI auto-approved leads that
+    // no longer satisfy the owner's must-haves are pulled back out of the CRM.
     let nextStatus = c.status;
-    if (c.status === "NEEDS_REVIEW" || c.status === "DISQUALIFIED" || c.status === "RESEARCHED" || c.status === "DISCOVERED") {
-      nextStatus = passed ? "NEEDS_REVIEW" : "DISQUALIFIED";
+    const aiApproved = c.status === "APPROVED" && c.approvedBy === "AI Engine (Auto-Qualified)";
+    if (aiApproved && !gateResult.passed) {
+      nextStatus = "DISQUALIFIED";
+    } else if (c.status === "NEEDS_REVIEW" || c.status === "DISQUALIFIED" || c.status === "RESEARCHED" || c.status === "DISCOVERED") {
+      nextStatus = !gateResult.passed ? "DISQUALIFIED" : passed ? "NEEDS_REVIEW" : "DISQUALIFIED";
+    }
+    {
       if (nextStatus !== c.status) {
         await db
           .update(companies)

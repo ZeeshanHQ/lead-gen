@@ -11,6 +11,7 @@ import {
   isPrimaryDecisionMaker,
 } from "./contact";
 import { COMPLETENESS_FIELDS, defaultCompletenessConfig } from "./completeness";
+import { defaultGate, gateSchema } from "./gate";
 import {
   type FactKey,
   type FactMap,
@@ -138,6 +139,8 @@ export const ruleConfigSchema = z.object({
   /** Technology is a research SIGNAL only. It never disqualifies a lead. */
   technology: z.object({ track: z.array(z.enum(SOFTWARE_KEYS)) }),
   requirements: z.object({ websiteRequired: z.boolean() }),
+  /** Owner-controlled must-haves. A lead missing any enabled one never enters the CRM. */
+  gate: gateSchema.default(() => defaultGate()),
   discovery: z.object({
     keywords: z.array(z.string()),
     serviceIntents: z.array(z.string()),
@@ -193,6 +196,7 @@ export function defaultHvacRuleConfig(): RuleConfig {
     completeness: defaultCompletenessConfig(),
     technology: { track: ["servicetitan", "jobber", "housecall_pro", "other"] },
     requirements: { websiteRequired: true },
+    gate: defaultGate(),
     discovery: {
       keywords: [
         "HVAC contractor",
