@@ -216,8 +216,9 @@ export async function runLeadDiscoveryAction(options: {
       loadLeadRows(db, "approved", market.id),
       loadLeadRows(db, "review", market.id),
     ]);
-    const qualifiedLeads = [...approved, ...review].filter((l) => passesLeadRowGate(l, mergedGate));
-    const topLeads = qualifiedLeads.slice(0, 30);
+    // Put newly extracted review leads first so the user can approve them or bulk-approve them right away
+    const qualifiedLeads = [...review, ...approved].filter((l) => passesLeadRowGate(l, mergedGate));
+    const topLeads = qualifiedLeads.slice(0, 60);
 
     revalidatePath("/caller");
     revalidatePath("/leads");
@@ -252,10 +253,10 @@ export async function getLatestReviewLeadsAction() {
       loadLeadRows(db, "approved", market.id),
       loadLeadRows(db, "review", market.id),
     ]);
-    const leads = [...approved, ...review].filter((l) => passesLeadRowGate(l, activeGate));
+    const leads = [...review, ...approved].filter((l) => passesLeadRowGate(l, activeGate));
     return {
       ok: true,
-      leads: leads.slice(0, 30),
+      leads: leads.slice(0, 60),
       totalCount: leads.length,
       crmReadyCount: approved.filter((l) => passesLeadRowGate(l, activeGate)).length,
       gate: activeGate,
@@ -265,12 +266,21 @@ export async function getLatestReviewLeadsAction() {
   }
 }
 
-export async function quickApproveLeadAction(companyId: string) {
+export async function quickApproveLeadAction(
+  companyId: string,
+  assignTo?: { memberId?: string | null; memberName?: string | null }
+) {
   try {
     const db = await getDb();
     const actor = await getActor(db);
     const { approveCompany } = await import("@/server/repo/approvals");
-    await approveCompany(db, companyId, { actor, note: "Approved via Lead Prospector" });
+    await approveCompany(db, companyId, {
+      actor,
+      note: "Approved via Lead Prospector",
+      acknowledgeUnresearched: true,
+      assignedMemberId: assignTo?.memberId,
+      assignedMemberName: assignTo?.memberName,
+    });
 
     revalidatePath("/review");
     revalidatePath("/discover");
@@ -281,6 +291,49 @@ export async function quickApproveLeadAction(companyId: string) {
     return { ok: true };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to approve lead" };
+  }
+}
+
+export async function approveAllReviewLeadsAction(options?: {
+  leadIds?: string[];
+  assignToMemberId?: string | null;
+  assignToMemberName?: string | null;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { market, rule } = await getActiveContext(db);
+    const { loadLeadRows } = await import("@/server/repo/queue");
+    const { approveCompany } = await import("@/server/repo/approvals");
+    const activeGate = resolveGate((rule.config as any)?.gate);
+
+    const reviewRows = await loadLeadRows(db, "review", market.id);
+    const eligible = reviewRows.filter((l) => {
+      if (options?.leadIds && options.leadIds.length > 0) {
+        return options.leadIds.includes(l.id);
+      }
+      return passesLeadRowGate(l, activeGate);
+    });
+
+    let count = 0;
+    for (const row of eligible) {
+      await approveCompany(db, row.id, {
+        actor,
+        note: "Bulk approved via Lead Prospector",
+        acknowledgeUnresearched: true,
+        assignedMemberId: options?.assignToMemberId,
+        assignedMemberName: options?.assignToMemberName,
+      });
+      count++;
+    }
+
+    revalidatePath("/caller");
+    revalidatePath("/discover");
+    revalidatePath("/review");
+    revalidatePath("/");
+    return { ok: true, approvedCount: count };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to approve leads" };
   }
 }
 

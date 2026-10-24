@@ -79,21 +79,28 @@ export async function listTeamMembers(db: Db): Promise<TeamMember[]> {
     await writeSettingRaw(db, "team_members_registry", DEFAULT_TEAM_MEMBERS);
     return DEFAULT_TEAM_MEMBERS;
   }
-  return raw.map((m, idx) => ({
-    ...m,
-    title:
-      m.title === "Founder & Master Admin"
-        ? "Owner"
-        : m.title === "Lead QA & Research Lead"
-          ? "Lead Manager"
-          : m.title === "Senior Outbound SDR"
-            ? "Sales Caller"
-            : m.title,
-    avatarColor:
-      !m.avatarColor || m.avatarColor.startsWith("from-")
-        ? AVATAR_COLORS[idx % AVATAR_COLORS.length]!
-        : m.avatarColor,
-  }));
+  return raw.map((m, idx) => {
+    const isPrimaryOwner = m.id === "member_owner" || m.role === "OWNER" || idx === 0;
+    return {
+      ...m,
+      role: isPrimaryOwner ? "OWNER" : m.role,
+      status: isPrimaryOwner ? "ACTIVE" : m.status,
+      nicheScope: isPrimaryOwner ? "ALL" : m.nicheScope,
+      permissions: isPrimaryOwner ? getPermissionsForRole("OWNER") : m.permissions,
+      title:
+        m.title === "Founder & Master Admin"
+          ? "Owner"
+          : m.title === "Lead QA & Research Lead"
+            ? "Lead Manager"
+            : m.title === "Senior Outbound SDR"
+              ? "Sales Caller"
+              : m.title,
+      avatarColor:
+        !m.avatarColor || m.avatarColor.startsWith("from-")
+          ? AVATAR_COLORS[idx % AVATAR_COLORS.length]!
+          : m.avatarColor,
+    };
+  });
 }
 
 export async function getActiveTeamMember(db: Db): Promise<{

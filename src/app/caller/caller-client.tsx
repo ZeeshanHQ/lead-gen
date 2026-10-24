@@ -12,9 +12,19 @@ import {
   updateLeadFollowUpAction,
   createManualCrmLeadAction,
   deleteCrmLeadAction,
+  updateLeadSmartFieldAction,
+  addCustomCrmColumnAction,
+  deleteCustomCrmColumnAction,
+  assignBulkLeadsToCallerAction,
 } from "./actions";
 import { type TeamMember, ROLE_PRESETS } from "@/server/domain/team";
 import type { LifecycleStatus } from "@/server/domain/lifecycle";
+import {
+  getSmartFieldsForNiche,
+  resolveSmartFieldValue,
+  type CustomCrmColumn,
+  type NicheSmartField,
+} from "@/server/domain/niche-fields";
 import {
   CrmLeadSheet,
   type CrmLeadItem,
@@ -57,6 +67,8 @@ import {
 interface CallerClientProps {
   initialQueue: CallerLeadView[];
   nicheName?: string;
+  nicheCategory?: string;
+  initialCustomColumns?: CustomCrmColumn[];
   marketId?: string;
   dialerConfig?: DialerConfig;
   activeActorName?: string;
@@ -68,6 +80,8 @@ interface CallerClientProps {
 export function CallerClient({
   initialQueue,
   nicheName = "Active Niche",
+  nicheCategory,
+  initialCustomColumns = [],
   marketId,
   dialerConfig = DEFAULT_DIALER_CONFIG,
   activeActorName = "Sales Caller",
@@ -76,13 +90,21 @@ export function CallerClient({
   permissions,
 }: CallerClientProps) {
   const [queue, setQueue] = useState<CallerLeadView[]>(initialQueue);
+  const [customColumns, setCustomColumns] = useState<CustomCrmColumn[]>(initialCustomColumns);
   const [search, setSearch] = useState("");
+  const [callerFilter, setCallerFilter] = useState<string>("ALL");
+  const [bulkAssignCallerId, setBulkAssignCallerId] = useState<string>("");
 
-  const initialHasAssigned =
-    activeMember && initialQueue.some((l) => l.assignedMemberId === activeMember.id);
-  const [statusFilter, setStatusFilter] = useState<string>(
-    activeMember?.role === "CALLER" && initialHasAssigned ? "MY_LEADS" : "TO_CALL"
+  // Add Custom Column Modal State
+  const [isAddingColumn, setIsAddingColumn] = useState(false);
+  const [newColumnLabel, setNewColumnLabel] = useState("");
+  const [newColumnOptions, setNewColumnOptions] = useState(
+    "Confirmed ✓, Yes, No, Ask on Call"
   );
+
+  const smartFields = getSmartFieldsForNiche(nicheCategory, nicheName, customColumns);
+
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [distributePending, startDistribute] = useTransition();
   const [assignPendingId, setAssignPendingId] = useState<string | null>(null);
   const [crmToast, setCrmToast] = useState<string | null>(null);
@@ -138,6 +160,104 @@ export function CallerClient({
         target ? `Assigned lead to ${target.name}.` : "Lead marked as unassigned."
       );
     }
+  };
+
+  // 1-Click Niche Smart Field / Custom Column Update
+  const handleSmartFieldChange = async (
+    lead: CallerLeadView,
+    field: NicheSmartField,
+    nextValue: string
+  ) => {
+    setQueue((prev) =>
+      prev.map((item) =>
+        item.companyId === lead.companyId
+          ? {
+              ...item,
+              facts: { ...(item.facts || {}), [field.key]: nextValue },
+            }
+          : item
+      )
+    );
+    const res = await updateLeadSmartFieldAction({
+      companyId: lead.companyId,
+      fieldKey: field.key,
+      value: nextValue,
+    });
+    if (res.ok) {
+      showToast(`Updated ${field.shortLabel} for ${lead.name} to "${nextValue}".`);
+    }
+  };
+
+  // Add Custom Column
+  const handleCreateCustomColumn = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!marketId || !newColumnLabel.trim()) return;
+    const opts = newColumnOptions
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean);
+
+    startTransition(async () => {
+      const res = await addCustomCrmColumnAction({
+        marketId,
+        label: newColumnLabel.trim(),
+        options: opts,
+      });
+      if (res.ok && res.columns) {
+        setCustomColumns(res.columns);
+        setIsAddingColumn(false);
+        setNewColumnLabel("");
+        showToast(`Added custom CRM column "${newColumnLabel.trim()}".`);
+      } else {
+        showToast(res.error || "Failed to add custom column");
+      }
+    });
+  };
+
+  // Delete Custom Column
+  const handleDeleteCustomColumn = (columnKey: string) => {
+    if (!marketId) return;
+    startTransition(async () => {
+      const res = await deleteCustomCrmColumnAction({ marketId, columnKey });
+      if (res.ok && res.columns) {
+        setCustomColumns(res.columns);
+        showToast("Removed custom CRM column.");
+      }
+    });
+  };
+
+  // Bulk Assign Unassigned Leads to Selected Caller
+  const handleBulkAssignToCaller = () => {
+    if (!marketId || !bulkAssignCallerId) return;
+    const targetCaller = allMembers.find((m) => m.id === bulkAssignCallerId);
+    if (!targetCaller) return;
+
+    startDistribute(async () => {
+      const res = await assignBulkLeadsToCallerAction({
+        marketId,
+        memberId: targetCaller.id,
+        memberName: targetCaller.name,
+        onlyUnassigned: true,
+      });
+      if (res.ok) {
+        setQueue((prev) =>
+          prev.map((l) =>
+            !l.assignedMemberId
+              ? {
+                  ...l,
+                  assignedMemberId: targetCaller.id,
+                  assignedMemberName: targetCaller.name,
+                }
+              : l
+          )
+        );
+        showToast(
+          `Assigned ${res.assignedCount || 0} unassigned leads to ${targetCaller.name}.`
+        );
+      } else {
+        showToast(res.error || "Failed to assign leads");
+      }
+    });
   };
 
   const [selectedLead, setSelectedLead] = useState<CallerLeadView | null>(null);
@@ -413,10 +533,25 @@ export function CallerClient({
     });
   };
 
-  // Filtered queue
+  // Filtered queue (respects both Caller Filter and Pipeline Stage Filter)
   const activeQueue = queue.filter((l) => l.status !== "REJECTED");
+  const callerScopedQueue = activeQueue.filter((lead) => {
+    if (callerFilter === "ALL") return true;
+    if (callerFilter === "UNASSIGNED") return !lead.assignedMemberId;
+    return lead.assignedMemberId === callerFilter;
+  });
+
   const filteredQueue = queue.filter((lead) => {
     if (lead.status === "REJECTED" && statusFilter !== "REJECTED") return false;
+    if (callerFilter === "UNASSIGNED" && lead.assignedMemberId) return false;
+    if (
+      callerFilter !== "ALL" &&
+      callerFilter !== "UNASSIGNED" &&
+      lead.assignedMemberId !== callerFilter
+    ) {
+      return false;
+    }
+
     if (statusFilter === "MY_LEADS") {
       if (!activeMember || lead.assignedMemberId !== activeMember.id) return false;
     } else if (statusFilter === "TO_CALL") {
@@ -527,8 +662,8 @@ export function CallerClient({
     });
   };
 
-  // Convert queue to CrmLeadItem format for Sheet View
-  const crmLeadsFromQueue: CrmLeadItem[] = queue.map((l) => ({
+  // Convert queue to CrmLeadItem format for Sheet View (respecting Caller filter)
+  const crmLeadsFromQueue: CrmLeadItem[] = callerScopedQueue.map((l) => ({
     id: l.companyId,
     name: l.name,
     address: l.address,
@@ -548,6 +683,10 @@ export function CallerClient({
     replacement: l.replacement,
     financing: l.financing,
     software: l.software,
+    facts: l.facts,
+    financingObserved: l.financingObserved,
+    installSignalObserved: l.installSignalObserved,
+    onlineBookingObserved: l.onlineBookingObserved,
     notes: l.notes,
     nextFollowUp: l.nextFollowUp,
     researchSummary: l.researchSummary,
@@ -555,24 +694,25 @@ export function CallerClient({
     assignedMemberName: l.assignedMemberName,
   }));
 
-  // Counters
-  const totalCount = activeQueue.length;
-  const toCallCount = activeQueue.filter((l) =>
+  // Counters (scoped by active caller filter so Owner can inspect any caller's exact metrics)
+  const totalCount = callerScopedQueue.length;
+  const toCallCount = callerScopedQueue.filter((l) =>
     ["APPROVED", "SYNCED", "CALLING"].includes(l.status)
   ).length;
-  const connectedCount = activeQueue.filter((l) =>
+  const connectedCount = callerScopedQueue.filter((l) =>
     ["CONNECTED", "PAIN_FOUND"].includes(l.status)
   ).length;
-  const meetingsCount = activeQueue.filter((l) => l.status === "MEETING_BOOKED").length;
-  const followUpCount = activeQueue.filter(
+  const meetingsCount = callerScopedQueue.filter((l) => l.status === "MEETING_BOOKED").length;
+  const followUpCount = callerScopedQueue.filter(
     (l) => l.nextFollowUp || (l.notes && l.notes.includes("Follow-up Scheduled"))
   ).length;
   const myLeadsCount = activeQueue.filter(
     (l) => activeMember && l.assignedMemberId === activeMember.id
   ).length;
-  const unassignedCount = activeQueue.filter(
-    (l) => !l.assignedMemberId && ["APPROVED", "CALLING", "SYNCED"].includes(l.status)
-  ).length;
+  const unassignedCount = activeQueue.filter((l) => !l.assignedMemberId).length;
+  const teamCallers = allMembers.filter(
+    (m) => m.status === "ACTIVE" && m.role !== "VIEWER"
+  );
 
   return (
     <div className="space-y-5">
@@ -623,6 +763,17 @@ export function CallerClient({
               <span>Table View</span>
             </button>
           </div>
+
+          {canEditContacts && marketId && (
+            <button
+              type="button"
+              onClick={() => setIsAddingColumn(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 px-3.5 py-2 text-xs font-semibold transition shadow-sm"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>+ Add Column</span>
+            </button>
+          )}
 
           {canEditContacts && marketId && (
             <button
@@ -692,12 +843,179 @@ export function CallerClient({
         </div>
       )}
 
+      {/* Owner Team Callers Overview & Lead Assignment Command Bar */}
+      {canManageSettings && teamCallers.length > 0 ? (
+        <div className="rounded-xl border border-zinc-800/80 bg-[#121215] p-4 space-y-3.5">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-zinc-800/80 pb-3">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs font-bold text-white">
+                Team Callers &amp; Lead Distribution Control (Owner View)
+              </span>
+              <span className="text-[11px] text-zinc-400">
+                — Click any caller below to inspect their assigned leads, follow-ups &amp; call records
+              </span>
+            </div>
+
+            {unassignedCount > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5 bg-[#09090b] border border-zinc-800 rounded-lg px-2.5 py-1 text-xs">
+                  <span className="text-zinc-400">
+                    Assign {unassignedCount} Unassigned To:
+                  </span>
+                  <select
+                    value={bulkAssignCallerId}
+                    onChange={(e) => setBulkAssignCallerId(e.target.value)}
+                    className="bg-zinc-900 border border-zinc-700 rounded px-2 py-0.5 text-xs font-semibold text-white focus:outline-none"
+                  >
+                    <option value="">Select Caller...</option>
+                    {teamCallers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({ROLE_PRESETS[c.role]?.shortLabel || c.role})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!bulkAssignCallerId || distributePending}
+                    onClick={handleBulkAssignToCaller}
+                    className="rounded bg-white hover:bg-zinc-200 disabled:opacity-40 text-black font-bold px-2.5 py-0.5 text-[11px] transition"
+                  >
+                    Assign All
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
+            {/* All Team Leads Card */}
+            <button
+              type="button"
+              onClick={() => setCallerFilter("ALL")}
+              className={`rounded-xl border p-3 text-left transition ${
+                callerFilter === "ALL"
+                  ? "border-white bg-zinc-800/90 shadow-sm"
+                  : "border-zinc-800 bg-[#09090b] hover:border-zinc-700"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white">All Team Leads</span>
+                <span className="rounded-full bg-zinc-900 border border-zinc-700 px-2 py-0.5 text-[11px] font-bold text-emerald-400">
+                  {activeQueue.length}
+                </span>
+              </div>
+              <div className="mt-1.5 flex items-center gap-2 text-[10px] text-zinc-400">
+                <span>Unassigned: {unassignedCount}</span>
+                <span>&bull;</span>
+                <span>Assigned: {activeQueue.length - unassignedCount}</span>
+              </div>
+            </button>
+
+            {/* Unassigned Pool Card */}
+            <button
+              type="button"
+              onClick={() => setCallerFilter("UNASSIGNED")}
+              className={`rounded-xl border p-3 text-left transition ${
+                callerFilter === "UNASSIGNED"
+                  ? "border-amber-400 bg-amber-500/10 shadow-sm"
+                  : "border-zinc-800 bg-[#09090b] hover:border-zinc-700"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-amber-300">Unassigned Pool</span>
+                <span className="rounded-full bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 text-[11px] font-bold text-amber-300">
+                  {unassignedCount}
+                </span>
+              </div>
+              <div className="mt-1.5 text-[10px] text-zinc-400">
+                Waiting to be assigned to callers
+              </div>
+            </button>
+
+            {/* Individual Caller Cards */}
+            {teamCallers.map((caller) => {
+              const cLeads = activeQueue.filter((l) => l.assignedMemberId === caller.id);
+              const cConnected = cLeads.filter((l) =>
+                ["CONNECTED", "PAIN_FOUND"].includes(l.status)
+              ).length;
+              const cFollowUps = cLeads.filter((l) => Boolean(l.nextFollowUp)).length;
+              const cMeetings = cLeads.filter((l) => l.status === "MEETING_BOOKED").length;
+              const isSelected = callerFilter === caller.id;
+
+              return (
+                <button
+                  key={caller.id}
+                  type="button"
+                  onClick={() => setCallerFilter(caller.id)}
+                  className={`rounded-xl border p-3 text-left transition ${
+                    isSelected
+                      ? "border-emerald-400 bg-emerald-500/10 shadow-sm"
+                      : "border-zinc-800 bg-[#09090b] hover:border-zinc-700"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-xs font-bold text-white truncate">
+                      👤 {caller.name}
+                    </span>
+                    <span className="rounded-full bg-zinc-900 border border-zinc-700 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
+                      {cLeads.length} leads
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-zinc-400">
+                    <span>Connected: <strong className="text-zinc-200">{cConnected}</strong></span>
+                    <span>&bull;</span>
+                    <span>Follow-Ups: <strong className="text-amber-300">{cFollowUps}</strong></span>
+                    <span>&bull;</span>
+                    <span>Meetings: <strong className="text-emerald-400">{cMeetings}</strong></span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : activeMember?.role === "CALLER" ? (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/15 p-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+            <div>
+              <div className="text-xs font-bold text-white">
+                {activeMember.name}&apos;s Personal Calling Queue — {nicheName}
+              </div>
+              <div className="text-[11px] text-zinc-400">
+                Showing only leads assigned directly to your account ({totalCount} assigned leads)
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+              Ready to Call: <strong className="text-white">{toCallCount}</strong>
+            </span>
+            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+              Follow-Ups: <strong className="text-amber-300">{followUpCount}</strong>
+            </span>
+            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+              Connected: <strong className="text-indigo-300">{connectedCount}</strong>
+            </span>
+            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+              Meetings Booked: <strong className="text-emerald-400">{meetingsCount}</strong>
+            </span>
+          </div>
+        </div>
+      ) : null}
+
       {viewMode === "SHEET" ? (
         <CrmLeadSheet
           initialLeads={crmLeadsFromQueue}
           nicheName={nicheName}
+          nicheCategory={nicheCategory}
+          customColumns={customColumns}
+          onOpenAddColumn={() => setIsAddingColumn(true)}
+          onDeleteCustomColumn={handleDeleteCustomColumn}
+          allMembers={allMembers}
+          canManageSettings={canManageSettings}
           title={`${nicheName} — Leads CRM Table`}
-          subtitle="Click any stage, follow-up, or lead row to edit details inline."
+          subtitle="Click any stage, qualification column, follow-up, or lead row to edit details inline."
           showCallerLink={false}
           dialerConfig={dialerConfig}
           permissions={permissions}
@@ -716,6 +1034,9 @@ export function CallerClient({
                       status: (updated.status as LifecycleStatus) || item.status,
                       nextFollowUp: updated.nextFollowUp ?? null,
                       notes: updated.notes ?? item.notes,
+                      facts: updated.facts ?? item.facts,
+                      assignedMemberId: updated.assignedMemberId ?? item.assignedMemberId,
+                      assignedMemberName: updated.assignedMemberName ?? item.assignedMemberName,
                       bestContact: {
                         ...item.bestContact,
                         name: updated.bestContact?.name ?? item.bestContact.name,
@@ -1056,6 +1377,87 @@ export function CallerClient({
                           <PhoneCall className="w-3.5 h-3.5" />
                           <span>Log Call &amp; Outcome</span>
                         </button>
+                      </div>
+                    </div>
+
+                    {/* Niche-Specific Smart Qualification Fields & Custom Columns */}
+                    <div className="space-y-2 rounded-xl border border-zinc-800/80 bg-[#09090b]/80 p-3.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                          {nicheName} Qualification Profile (Click any field to update)
+                        </span>
+                        {canEditContacts && marketId && (
+                          <button
+                            type="button"
+                            onClick={() => setIsAddingColumn(true)}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 hover:text-emerald-300"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Add Custom Field</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                        {smartFields.map((field) => {
+                          const currentVal = resolveSmartFieldValue(lead, field);
+                          const isPositive =
+                            currentVal.includes("✓") ||
+                            (currentVal !== "Ask on Call" && currentVal !== "Verify on Call");
+                          const allOpts = field.options.includes(currentVal)
+                            ? field.options
+                            : [currentVal, ...field.options];
+
+                          return (
+                            <div
+                              key={field.key}
+                              className="rounded-lg border border-zinc-800/90 bg-[#121215] p-2.5 flex flex-col justify-between gap-1"
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 truncate">
+                                  {field.label}
+                                </span>
+                                {field.isCustom && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteCustomColumn(field.key)}
+                                    className="text-zinc-500 hover:text-rose-400 transition"
+                                    title={`Remove custom field "${field.label}"`}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                              {canEditContacts ? (
+                                <select
+                                  value={currentVal}
+                                  onChange={(e) =>
+                                    handleSmartFieldChange(lead, field, e.target.value)
+                                  }
+                                  className={`w-full rounded-md border px-2 py-1 text-xs font-semibold focus:outline-none cursor-pointer transition ${
+                                    isPositive
+                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                                      : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-700"
+                                  }`}
+                                >
+                                  {allOpts.map((opt) => (
+                                    <option
+                                      key={opt}
+                                      value={opt}
+                                      className="bg-[#121215] text-white"
+                                    >
+                                      {opt}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="text-xs font-semibold text-zinc-200">
+                                  {currentVal}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -1823,6 +2225,81 @@ export function CallerClient({
                   className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black font-bold text-xs transition"
                 >
                   {isPending ? "Saving..." : "Save Call Outcome"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Custom CRM Column Modal */}
+      {isAddingColumn && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-[#121215] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Plus className="w-4 h-4 text-emerald-400" />
+                  <span>Add Custom CRM Field / Column ({nicheName})</span>
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Create a custom qualification column for all leads in {nicheName}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddingColumn(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCustomColumn} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                  Field / Column Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newColumnLabel}
+                  onChange={(e) => setNewColumnLabel(e.target.value)}
+                  placeholder="e.g. Monthly Ad Spend, Service Area, Roof Age, Deal Size"
+                  className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:border-zinc-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                  Dropdown Options (Comma-separated)
+                </label>
+                <input
+                  type="text"
+                  value={newColumnOptions}
+                  onChange={(e) => setNewColumnOptions(e.target.value)}
+                  placeholder="e.g. Confirmed ✓, Yes, No, Ask on Call"
+                  className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:border-zinc-600 focus:outline-none"
+                />
+                <p className="text-[11px] text-zinc-500 mt-1">
+                  Callers will be able to select any of these options in 1 click on both Cards and Table View.
+                </p>
+              </div>
+
+              <div className="pt-3 border-t border-zinc-800 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddingColumn(false)}
+                  className="px-4 py-2 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white text-xs font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black font-bold text-xs transition"
+                >
+                  {isPending ? "Adding..." : "Add Column to CRM"}
                 </button>
               </div>
             </form>

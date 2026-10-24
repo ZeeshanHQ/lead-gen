@@ -1,12 +1,13 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { companies, contacts, leadScores } from "../db/schema";
+import { companies, contacts, leadScores, systemSettings } from "../db/schema";
 import { type LifecycleStatus } from "../domain/lifecycle";
 import { getContactsForCompanies, toContactInput } from "./contacts";
 import { classifyEmail, classifyTitle, pickBestContact } from "../domain/contact";
 import { cleanPhone, normalizeCompanyName, normalizeWebsite } from "../domain/normalize";
 import { evaluateGate, type LeadGate } from "../domain/gate";
 import { type FactMap, factValue } from "../domain/facts";
+import { type CustomCrmColumn } from "../domain/niche-fields";
 import { setFact } from "./facts";
 import { audit } from "./audit";
 
@@ -47,6 +48,10 @@ export interface CallerLeadView {
   installation: string;
   financing: string;
   software: string;
+  facts: Record<string, string>;
+  financingObserved?: boolean;
+  installSignalObserved?: boolean;
+  onlineBookingObserved?: boolean;
   researchSummary: string | null;
   notes: string | null;
   nextFollowUp: string | null;
@@ -122,6 +127,14 @@ export async function getCallerQueue(
 
     const score = scoreMap.get(c.id);
     const facts = (c.facts as FactMap) || {};
+    const flatFacts: Record<string, string> = {};
+    for (const [k, v] of Object.entries(facts)) {
+      if (v && typeof v === "object" && "value" in v && typeof (v as any).value === "string") {
+        flatFacts[k] = (v as any).value;
+      } else if (typeof v === "string") {
+        flatFacts[k] = v;
+      }
+    }
 
     queue.push({
       companyId: c.id,
@@ -146,6 +159,11 @@ export async function getCallerQueue(
       installation: factValue(facts, "installation"),
       financing: factValue(facts, "financing"),
       software: factValue(facts, "software"),
+      facts: flatFacts,
+      financingObserved: factValue(facts, "financing") === "YES",
+      installSignalObserved:
+        factValue(facts, "installation") === "YES" || factValue(facts, "replacement") === "YES",
+      onlineBookingObserved: flatFacts["onlineBooking"] === "YES",
       researchSummary: c.researchSummary,
       notes: c.notes,
       nextFollowUp: extractLatestFollowUp(c.notes),
@@ -627,6 +645,10 @@ export async function createManualCrmLead(
     installation: "UNKNOWN",
     financing: "UNKNOWN",
     software: "UNKNOWN",
+    facts: {},
+    financingObserved: false,
+    installSignalObserved: false,
+    onlineBookingObserved: false,
     researchSummary: "Added directly to Leads CRM.",
     notes: combinedNotes,
     nextFollowUp: followUp,
@@ -727,4 +749,208 @@ export async function autoDistributeLeads(
   });
 
   return { distributedCount: unassigned.length };
+}
+
+export async function updateLeadSmartField(
+  db: Db,
+  companyId: string,
+  fieldKey: string,
+  value: string,
+  actor: string
+): Promise<void> {
+  const [company] = await db
+    .select({ facts: companies.facts })
+    .from(companies)
+    .where(eq(companies.id, companyId))
+    .limit(1);
+
+  if (!company) throw new Error("Lead not found");
+
+  const currentFacts = ((company.facts as Record<string, any>) || {});
+  const updatedFacts = {
+    ...currentFacts,
+    [fieldKey]: {
+      value: value.trim(),
+      confidence: 1.0,
+      provenance: "HUMAN_CONFIRMED",
+      sourceType: "manual_entry",
+      updatedAt: new Date().toISOString(),
+    },
+  };
+
+  await db
+    .update(companies)
+    .set({
+      facts: updatedFacts as any,
+      updatedAt: new Date(),
+    })
+    .where(eq(companies.id, companyId));
+
+  await audit(db, {
+    actor,
+    action: "crm.smart_field_updated",
+    entityType: "company",
+    entityId: companyId,
+    companyId,
+    details: { fieldKey, value: value.trim() },
+  });
+}
+
+export async function getCustomCrmColumns(
+  db: Db,
+  marketId: string
+): Promise<CustomCrmColumn[]> {
+  const key = `crm_custom_columns_${marketId}`;
+  const [row] = await db
+    .select()
+    .from(systemSettings)
+    .where(eq(systemSettings.key, key))
+    .limit(1);
+
+  if (!row || !Array.isArray(row.value)) return [];
+  return row.value as CustomCrmColumn[];
+}
+
+export async function addCustomCrmColumn(
+  db: Db,
+  marketId: string,
+  label: string,
+  options: string[],
+  actor: string
+): Promise<CustomCrmColumn[]> {
+  const cleanLabel = label.trim();
+  if (!cleanLabel) throw new Error("Column name is required.");
+
+  const existing = await getCustomCrmColumns(db, marketId);
+  const slugKey =
+    "custom_" +
+    cleanLabel
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") +
+    "_" +
+    Date.now().toString(36).slice(-4);
+
+  const nextCol: CustomCrmColumn = {
+    key: slugKey,
+    label: cleanLabel,
+    options: options.map((o) => o.trim()).filter(Boolean),
+  };
+
+  const updated = [...existing, nextCol];
+  const settingKey = `crm_custom_columns_${marketId}`;
+
+  await db
+    .insert(systemSettings)
+    .values({ key: settingKey, value: updated as never })
+    .onConflictDoUpdate({
+      target: systemSettings.key,
+      set: { value: updated as never, updatedAt: new Date() },
+    });
+
+  await audit(db, {
+    actor,
+    action: "crm.custom_column_added",
+    entityType: "market",
+    entityId: marketId,
+    details: nextCol as unknown as Record<string, unknown>,
+  });
+
+  return updated;
+}
+
+export async function deleteCustomCrmColumn(
+  db: Db,
+  marketId: string,
+  columnKey: string,
+  actor: string
+): Promise<CustomCrmColumn[]> {
+  const existing = await getCustomCrmColumns(db, marketId);
+  const updated = existing.filter((c) => c.key !== columnKey);
+  const settingKey = `crm_custom_columns_${marketId}`;
+
+  await db
+    .insert(systemSettings)
+    .values({ key: settingKey, value: updated as never })
+    .onConflictDoUpdate({
+      target: systemSettings.key,
+      set: { value: updated as never, updatedAt: new Date() },
+    });
+
+  await audit(db, {
+    actor,
+    action: "crm.custom_column_deleted",
+    entityType: "market",
+    entityId: marketId,
+    details: { columnKey },
+  });
+
+  return updated;
+}
+
+export async function assignBulkLeadsToCaller(
+  db: Db,
+  params: {
+    marketId: string;
+    memberId: string | null;
+    memberName: string | null;
+    count?: number;
+    onlyUnassigned?: boolean;
+    actor: string;
+  }
+): Promise<{ assignedCount: number }> {
+  const callerStatuses: LifecycleStatus[] = [
+    "APPROVED",
+    "SYNCED",
+    "CALLING",
+    "CONNECTED",
+    "PAIN_FOUND",
+    "MEETING_BOOKED",
+    "QUALIFIED",
+    "NURTURE",
+  ];
+
+  const conditions = [
+    eq(companies.marketId, params.marketId),
+    inArray(companies.status, callerStatuses),
+  ];
+
+  if (params.onlyUnassigned) {
+    conditions.push(
+      sql`(${companies.assignedMemberId} IS NULL OR ${companies.assignedMemberId} = '')`
+    );
+  }
+
+  const rows = await db
+    .select({ id: companies.id })
+    .from(companies)
+    .where(and(...conditions))
+    .orderBy(desc(companies.updatedAt))
+    .limit(params.count && params.count > 0 ? params.count : 200);
+
+  if (rows.length === 0) return { assignedCount: 0 };
+
+  const ids = rows.map((r) => r.id);
+  await db
+    .update(companies)
+    .set({
+      assignedMemberId: params.memberId,
+      assignedMemberName: params.memberName,
+      updatedAt: new Date(),
+    })
+    .where(inArray(companies.id, ids));
+
+  await audit(db, {
+    actor: params.actor,
+    action: "lead.bulk_assigned_to_caller",
+    entityType: "market",
+    entityId: params.marketId,
+    details: {
+      assignedCount: ids.length,
+      memberId: params.memberId,
+      memberName: params.memberName,
+    },
+  });
+
+  return { assignedCount: ids.length };
 }

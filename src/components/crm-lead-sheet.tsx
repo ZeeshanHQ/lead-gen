@@ -8,13 +8,21 @@ import {
   updateLeadFollowUpAction,
   updateLeadStatusQuickAction,
   deleteCrmLeadAction,
+  updateLeadSmartFieldAction,
+  assignLeadAction,
 } from "@/app/caller/actions";
 import { LeadImportModal } from "@/components/lead-import-modal";
 import {
   DEFAULT_DIALER_CONFIG,
   type DialerConfig,
 } from "@/server/domain/dialer";
-import type { TeamPermissions } from "@/server/domain/team";
+import {
+  getSmartFieldsForNiche,
+  resolveSmartFieldValue,
+  type CustomCrmColumn,
+  type NicheSmartField,
+} from "@/server/domain/niche-fields";
+import type { TeamPermissions, TeamMember } from "@/server/domain/team";
 import type { LifecycleStatus } from "@/server/domain/lifecycle";
 import {
   Sheet,
@@ -56,6 +64,10 @@ export interface CrmLeadItem {
   replacement?: string;
   financing?: string;
   software?: string;
+  facts?: Record<string, string>;
+  financingObserved?: boolean;
+  installSignalObserved?: boolean;
+  onlineBookingObserved?: boolean;
   notes?: string | null;
   nextFollowUp?: string | null;
   researchSummary?: string | null;
@@ -67,6 +79,12 @@ export interface CrmLeadItem {
 interface CrmLeadSheetProps {
   initialLeads: CrmLeadItem[];
   nicheName?: string;
+  nicheCategory?: string;
+  customColumns?: CustomCrmColumn[];
+  onOpenAddColumn?: () => void;
+  onDeleteCustomColumn?: (key: string) => void;
+  allMembers?: TeamMember[];
+  canManageSettings?: boolean;
   title?: string;
   subtitle?: string;
   showCallerLink?: boolean;
@@ -167,8 +185,14 @@ export function stripFollowUpTagFromNotes(notes: string | null | undefined): str
 export function CrmLeadSheet({
   initialLeads,
   nicheName,
+  nicheCategory,
+  customColumns = [],
+  onOpenAddColumn,
+  onDeleteCustomColumn,
+  allMembers = [],
+  canManageSettings = false,
   title = "Approved Leads",
-  subtitle = "Click any status, follow-up, or lead row to edit details inline.",
+  subtitle = "Click any status, qualification field, follow-up, or lead row to edit details inline.",
   showCallerLink = true,
   permissions,
   activeActorName = "Team Member",
@@ -179,6 +203,8 @@ export function CrmLeadSheet({
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const smartFields = getSmartFieldsForNiche(nicheCategory, nicheName, customColumns);
 
   React.useEffect(() => {
     setLeads(initialLeads);
@@ -250,6 +276,45 @@ export function CrmLeadSheet({
       setSyncFeedback(res.error || "Could not update status");
     } else {
       setSyncFeedback(`Updated ${lead.name} stage to ${nextStatus.replace(/_/g, " ")}.`);
+      setTimeout(() => setSyncFeedback(null), 2500);
+    }
+  };
+
+  // Inline 1-click smart field / custom column update
+  const handleInlineSmartFieldChange = async (
+    lead: CrmLeadItem,
+    field: NicheSmartField,
+    nextValue: string
+  ) => {
+    const nextFacts = { ...(lead.facts || {}), [field.key]: nextValue };
+    applyLeadPatch(lead.id, { facts: nextFacts });
+    const res = await updateLeadSmartFieldAction({
+      companyId: lead.id,
+      fieldKey: field.key,
+      value: nextValue,
+    });
+    if (res.ok) {
+      setSyncFeedback(`Updated ${field.shortLabel} for ${lead.name} to "${nextValue}".`);
+      setTimeout(() => setSyncFeedback(null), 2500);
+    }
+  };
+
+  // Inline 1-click caller assignment
+  const handleInlineAssignCaller = async (lead: CrmLeadItem, memberId: string) => {
+    const target = allMembers.find((m) => m.id === memberId);
+    applyLeadPatch(lead.id, {
+      assignedMemberId: memberId || null,
+      assignedMemberName: target?.name || null,
+    });
+    const res = await assignLeadAction({
+      companyId: lead.id,
+      memberId: memberId || null,
+      memberName: target?.name || null,
+    });
+    if (res.ok) {
+      setSyncFeedback(
+        target ? `Assigned ${lead.name} to ${target.name}.` : `Unassigned ${lead.name}.`
+      );
       setTimeout(() => setSyncFeedback(null), 2500);
     }
   };
@@ -484,6 +549,17 @@ export function CrmLeadSheet({
 
         {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          {canEdit && onOpenAddColumn && (
+            <button
+              type="button"
+              onClick={onOpenAddColumn}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>+ Add Custom Column</span>
+            </button>
+          )}
+
           {canImport && (
             <button
               type="button"
@@ -604,13 +680,46 @@ export function CrmLeadSheet({
           <table className="w-full text-left text-xs text-zinc-300 divide-y divide-zinc-800/70">
             <thead className="bg-[#09090b] text-[11px] font-medium text-zinc-400">
               <tr>
-                <th className="px-4 py-3">Company &amp; Location</th>
-                <th className="px-3 py-3">Decision Maker</th>
-                <th className="px-3 py-3">Direct Phone</th>
-                <th className="px-3 py-3">Pipeline Stage</th>
-                <th className="px-3 py-3">Next Follow-Up</th>
-                <th className="px-3 py-3">Latest Note</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th className="px-4 py-3 whitespace-nowrap">Company &amp; Location</th>
+                <th className="px-3 py-3 whitespace-nowrap">Decision Maker</th>
+                <th className="px-3 py-3 whitespace-nowrap">Direct Phone</th>
+                <th className="px-3 py-3 whitespace-nowrap">Assigned Caller</th>
+                <th className="px-3 py-3 whitespace-nowrap">Pipeline Stage</th>
+                {smartFields.map((field) => (
+                  <th key={field.key} className="px-3 py-3 whitespace-nowrap">
+                    <div className="flex items-center gap-1.5">
+                      <span>{field.label}</span>
+                      {field.isCustom && onDeleteCustomColumn && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteCustomColumn(field.key)}
+                          className="text-zinc-500 hover:text-rose-400 transition"
+                          title={`Remove custom column "${field.label}"`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </th>
+                ))}
+                <th className="px-3 py-3 whitespace-nowrap">Next Follow-Up</th>
+                <th className="px-3 py-3 whitespace-nowrap">Latest Note</th>
+                <th className="px-4 py-3 text-right whitespace-nowrap">
+                  <div className="flex items-center justify-end gap-2">
+                    {canEdit && onOpenAddColumn && (
+                      <button
+                        type="button"
+                        onClick={onOpenAddColumn}
+                        className="inline-flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold text-emerald-400 transition"
+                        title="Add a custom column to this CRM table"
+                      >
+                        <Plus className="w-2.5 h-2.5" />
+                        <span>Column</span>
+                      </button>
+                    )}
+                    <span>Actions</span>
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
@@ -718,6 +827,30 @@ export function CrmLeadSheet({
                       )}
                     </td>
 
+                    {/* Assigned Caller */}
+                    <td className="px-3 py-3.5 whitespace-nowrap">
+                      {canManageSettings && allMembers.length > 0 ? (
+                        <select
+                          value={lead.assignedMemberId || ""}
+                          onChange={(e) => handleInlineAssignCaller(lead, e.target.value)}
+                          className="rounded-lg border border-zinc-800 bg-[#09090b] px-2 py-1 text-[11px] font-medium text-zinc-200 focus:border-zinc-500 focus:outline-none cursor-pointer"
+                        >
+                          <option value="">Unassigned</option>
+                          {allMembers
+                            .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+                            .map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.name}
+                              </option>
+                            ))}
+                        </select>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-[#09090b] px-2 py-1 text-[11px] font-medium text-zinc-300">
+                          {lead.assignedMemberName || "Unassigned"}
+                        </span>
+                      )}
+                    </td>
+
                     {/* Interactive Status Dropdown */}
                     <td className="px-3 py-3.5 whitespace-nowrap">
                       {canEdit ? (
@@ -738,6 +871,43 @@ export function CrmLeadSheet({
                         <span className="text-xs text-zinc-300">{lead.status}</span>
                       )}
                     </td>
+
+                    {/* Niche-Specific Smart Qualification Fields + Custom Columns */}
+                    {smartFields.map((field) => {
+                      const val = resolveSmartFieldValue(lead, field);
+                      const isPositive =
+                        val.includes("✓") ||
+                        (val !== "Ask on Call" && val !== "Verify on Call");
+                      const allOpts = field.options.includes(val)
+                        ? field.options
+                        : [val, ...field.options];
+
+                      return (
+                        <td key={field.key} className="px-3 py-3.5 whitespace-nowrap">
+                          {canEdit ? (
+                            <select
+                              value={val}
+                              onChange={(e) =>
+                                handleInlineSmartFieldChange(lead, field, e.target.value)
+                              }
+                              className={`rounded-lg border px-2 py-1 text-[11px] font-semibold focus:outline-none cursor-pointer transition ${
+                                isPositive
+                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                                  : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-700"
+                              }`}
+                            >
+                              {allOpts.map((opt) => (
+                                <option key={opt} value={opt} className="bg-[#121215] text-white">
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="text-[11px] text-zinc-300">{val}</span>
+                          )}
+                        </td>
+                      );
+                    })}
 
                     {/* Interactive Follow-Up Column */}
                     <td className="px-3 py-3.5 whitespace-nowrap">

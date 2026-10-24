@@ -202,17 +202,19 @@ export async function reEvaluateLeadsWithRule(
       state: c.state,
       contacts: contactInputs,
     });
-    const passed =
-      gateResult.passed && evaluation.verdict !== "FAIL" && scoreBreakdown.icpScore >= ruleConfig.scoring.minScore;
+    const passed = gateResult.passed && evaluation.verdict !== "FAIL";
 
-    // Respect human decisions: only AI-managed statuses are moved. AI auto-approved leads that
-    // no longer satisfy the owner's must-haves are pulled back out of the CRM.
+    // Never wipe out human-approved or gate-passing leads.
+    // Restore any previously mis-disqualified lead that passes the Owner's Must-Have Gate.
     let nextStatus = c.status;
-    const aiApproved = c.status === "APPROVED" && c.approvedBy === "AI Engine (Auto-Qualified)";
-    if (aiApproved && !gateResult.passed) {
-      nextStatus = "DISQUALIFIED";
-    } else if (c.status === "NEEDS_REVIEW" || c.status === "DISQUALIFIED" || c.status === "RESEARCHED" || c.status === "DISCOVERED") {
-      nextStatus = !gateResult.passed ? "DISQUALIFIED" : passed ? "NEEDS_REVIEW" : "DISQUALIFIED";
+    if (!gateResult.passed) {
+      if (c.status === "DISCOVERED" || c.status === "RESEARCHED" || c.status === "NEEDS_REVIEW") {
+        nextStatus = "DISQUALIFIED";
+      }
+    } else {
+      if (c.status === "DISQUALIFIED" || c.status === "DISCOVERED" || c.status === "RESEARCHED") {
+        nextStatus = "NEEDS_REVIEW";
+      }
     }
     {
       if (nextStatus !== c.status) {

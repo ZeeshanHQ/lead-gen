@@ -419,18 +419,10 @@ export async function researchCompany(
     state: updates.state || refreshed.state,
     contacts: evalCompany.contacts,
   });
-  const minScore = activeRule?.scoring?.minScore ?? 50;
-  const isAutoQualified = gateResult.passed && evaluation.verdict !== "FAIL" && scoreBreakdown.icpScore >= minScore;
   const finalStatus =
-    evaluation.verdict === "FAIL" || !gateResult.passed
+    !gateResult.passed || evaluation.verdict === "FAIL"
       ? "DISQUALIFIED"
-      : isAutoQualified
-        ? "APPROVED"
-        : "NEEDS_REVIEW";
-  if (isAutoQualified) {
-    updates.approvedAt = new Date();
-    updates.approvedBy = "AI Engine (Auto-Qualified)";
-  }
+      : "NEEDS_REVIEW";
   updates.status = finalStatus;
 
   // Synthesize Cold Caller Battlecard & 15-second opening pitch hook

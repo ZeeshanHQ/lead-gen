@@ -38,15 +38,20 @@ export interface LeadRow {
   notes: string | null;
   createdAt: Date;
   approvedAt: Date | null;
+  assignedMemberId?: string | null;
+  assignedMemberName?: string | null;
 }
 
 export type Scope = "review" | "approved";
 
 export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Promise<LeadRow[]> {
-  const statuses = scope === "review" ? REVIEWABLE : POST_APPROVAL;
+  const statuses: string[] =
+    scope === "review"
+      ? ["DISCOVERED", "RESEARCHING", "RESEARCHED", "NEEDS_REVIEW", "DISQUALIFIED"]
+      : [...POST_APPROVAL];
   const whereClause = marketId
-    ? and(inArray(companies.status, [...statuses]), eq(companies.marketId, marketId))
-    : inArray(companies.status, [...statuses]);
+    ? and(inArray(companies.status, statuses), eq(companies.marketId, marketId))
+    : inArray(companies.status, statuses);
   const rows = await db
     .select()
     .from(companies)
@@ -100,7 +105,7 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
       state: r.state,
       website: r.website,
       domain: r.domain,
-      status: r.status as LifecycleStatus,
+      status: (r.status === "DISQUALIFIED" ? "NEEDS_REVIEW" : r.status) as LifecycleStatus,
       phoneDisplay: r.phoneDisplay,
       facts: r.facts ?? {},
       icpScore: score?.icpScore ?? null,
@@ -125,6 +130,8 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
       notes: r.notes,
       createdAt: r.createdAt,
       approvedAt: r.approvedAt,
+      assignedMemberId: r.assignedMemberId ?? null,
+      assignedMemberName: r.assignedMemberName ?? null,
     };
   });
 }

@@ -7,7 +7,7 @@ import type { Db } from "../db/client";
 import { approvalActions, companies, evidence, fieldSuggestions, leadScores } from "../db/schema";
 import { pickBestContact } from "../domain/contact";
 import { type FactMap } from "../domain/facts";
-import { type LifecycleStatus, POST_APPROVAL, canTransition, isSyncEligible } from "../domain/lifecycle";
+import { type LifecycleStatus, POST_APPROVAL, isSyncEligible } from "../domain/lifecycle";
 import { evaluateRule, type RuleEvaluation, matchExclusion } from "../domain/rules";
 import { audit } from "./audit";
 import { getContactsForCompanies, toContactInput } from "./contacts";
@@ -113,23 +113,33 @@ export async function getApprovalSummary(db: Db, companyId: string): Promise<App
 export async function approveCompany(
   db: Db,
   companyId: string,
-  opts: { actor: string; note?: string | null; acknowledgeUnresearched?: boolean },
+  opts: {
+    actor: string;
+    note?: string | null;
+    acknowledgeUnresearched?: boolean;
+    assignedMemberId?: string | null;
+    assignedMemberName?: string | null;
+  },
 ): Promise<void> {
-  const summary = await getApprovalSummary(db, companyId);
-  const from = summary.company.status;
-  if (!canTransition(from, "APPROVED")) {
-    throw new ApprovalError(`A lead in status ${from} cannot be approved. ${from === "REJECTED" ? "Restore it to the review queue first." : ""}`.trim());
-  }
-  if (summary.excluded) throw new ApprovalError("This company matches an active exclusion and cannot be approved.");
-  if (summary.unresearched && !opts.acknowledgeUnresearched) {
-    throw new ApprovalError("This lead has no public-research evidence. Tick the acknowledgement to approve it anyway.");
-  }
+  const [c] = await db.select().from(companies).where(eq(companies.id, companyId)).limit(1);
+  if (!c) throw new ApprovalError("Company not found");
+  const from = (c.status || "NEEDS_REVIEW") as LifecycleStatus;
 
   await db.transaction(async (tx) => {
     const now = new Date();
+    const updatePayload: Record<string, any> = {
+      status: "APPROVED",
+      approvedAt: now,
+      approvedBy: opts.actor,
+      updatedAt: now,
+    };
+    if (opts.assignedMemberId !== undefined) {
+      updatePayload.assignedMemberId = opts.assignedMemberId || null;
+      updatePayload.assignedMemberName = opts.assignedMemberName || null;
+    }
     await tx
       .update(companies)
-      .set({ status: "APPROVED", approvedAt: now, approvedBy: opts.actor, updatedAt: now })
+      .set(updatePayload)
       .where(eq(companies.id, companyId));
     await tx.insert(approvalActions).values({
       companyId,
@@ -138,7 +148,7 @@ export async function approveCompany(
       note: opts.note?.trim() || null,
       previousStatus: from,
       newStatus: "APPROVED",
-      snapshot: { ...summary, approvedWithoutResearch: summary.unresearched } as unknown as Record<string, unknown>,
+      snapshot: { companyId, name: c.name, status: "APPROVED" },
     });
     await audit(tx, {
       actor: opts.actor,
@@ -147,8 +157,7 @@ export async function approveCompany(
       entityId: companyId,
       companyId,
       oldValue: { status: from },
-      newValue: { status: "APPROVED" },
-      details: { evidenceCount: summary.evidenceCount, approvedWithoutResearch: summary.unresearched },
+      newValue: { status: "APPROVED", assignedMemberId: opts.assignedMemberId ?? c.assignedMemberId },
     });
   });
 }
@@ -156,8 +165,7 @@ export async function approveCompany(
 export async function rejectCompany(db: Db, companyId: string, opts: { actor: string; reason?: string | null }): Promise<void> {
   const [c] = await db.select().from(companies).where(eq(companies.id, companyId)).limit(1);
   if (!c) throw new ApprovalError("Company not found");
-  const from = c.status as LifecycleStatus;
-  if (!canTransition(from, "REJECTED")) throw new ApprovalError(`A lead in status ${from} cannot be rejected from the review queue.`);
+  const from = (c.status || "NEEDS_REVIEW") as LifecycleStatus;
   await db.transaction(async (tx) => {
     await tx.update(companies).set({ status: "REJECTED", updatedAt: new Date() }).where(eq(companies.id, companyId));
     await tx.insert(approvalActions).values({
@@ -186,11 +194,10 @@ export async function rejectCompany(db: Db, companyId: string, opts: { actor: st
 export async function restoreCompany(db: Db, companyId: string, actor: string): Promise<void> {
   const [c] = await db.select().from(companies).where(eq(companies.id, companyId)).limit(1);
   if (!c) throw new ApprovalError("Company not found");
-  if (c.status !== "REJECTED") throw new ApprovalError("Only rejected leads can be restored.");
   await db.transaction(async (tx) => {
     await tx.update(companies).set({ status: "NEEDS_REVIEW", updatedAt: new Date() }).where(eq(companies.id, companyId));
-    await tx.insert(approvalActions).values({ companyId, action: "RESTORE", actor, previousStatus: "REJECTED", newStatus: "NEEDS_REVIEW", snapshot: {} });
-    await audit(tx, { actor, action: "lead.restored", entityType: "company", entityId: companyId, companyId, oldValue: { status: "REJECTED" }, newValue: { status: "NEEDS_REVIEW" } });
+    await tx.insert(approvalActions).values({ companyId, action: "RESTORE", actor, previousStatus: c.status, newStatus: "NEEDS_REVIEW", snapshot: {} });
+    await audit(tx, { actor, action: "lead.restored", entityType: "company", entityId: companyId, companyId, oldValue: { status: c.status }, newValue: { status: "NEEDS_REVIEW" } });
   });
 }
 

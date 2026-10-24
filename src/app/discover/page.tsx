@@ -35,7 +35,7 @@ function passesLeadRowGate(lead: LeadRow, gate: LeadGate): boolean {
 
 export default async function DiscoverPage() {
   const db = await getDb();
-  const [ctx, { activeMember }] = await Promise.all([
+  const [ctx, { activeMember, allMembers }] = await Promise.all([
     getActiveContext(db),
     getActiveTeamMember(db),
   ]);
@@ -50,7 +50,7 @@ export default async function DiscoverPage() {
     loadLeadRows(db, "review", ctx.market.id),
   ]);
 
-  const qualifiedLeads = [...approved, ...review].filter((l) => passesLeadRowGate(l, activeGate));
+  const qualifiedLeads = [...review, ...approved].filter((l) => passesLeadRowGate(l, activeGate));
   const crmReadyCount = approved.filter((l) => passesLeadRowGate(l, activeGate)).length;
 
   return (
@@ -60,10 +60,11 @@ export default async function DiscoverPage() {
         activeMarket={ctx.market}
         initialRule={ctx.rule?.config}
         initialGate={activeGate}
-        initialLeads={qualifiedLeads.slice(0, 30) as any}
+        initialLeads={qualifiedLeads.slice(0, 60) as any}
         initialTotalCount={qualifiedLeads.length}
         initialCrmReadyCount={crmReadyCount}
         canEditRules={activeMember.role === "OWNER" || Boolean(activeMember.permissions.editRules)}
+        allMembers={allMembers}
       />
     </div>
   );

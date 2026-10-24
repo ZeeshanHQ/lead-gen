@@ -87,7 +87,8 @@ function AppShellInner({
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [tenantDropdownOpen, setTenantDropdownOpen] = useState(false);
-  const [nicheDropdownOpen, setNicheDropdownOpen] = useState(false);
+  const [sidebarNicheOpen, setSidebarNicheOpen] = useState(false);
+  const [headerNicheOpen, setHeaderNicheOpen] = useState(false);
   const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
 
   // Modals for Multi-Niche & Multi-Tenant Management
@@ -226,7 +227,8 @@ function AppShellInner({
   useEffect(() => {
     setMobileOpen(false);
     setTenantDropdownOpen(false);
-    setNicheDropdownOpen(false);
+    setSidebarNicheOpen(false);
+    setHeaderNicheOpen(false);
     setMemberDropdownOpen(false);
   }, [pathname]);
 
@@ -250,7 +252,8 @@ function AppShellInner({
   };
 
   const handleSwitchNiche = (marketId: string) => {
-    setNicheDropdownOpen(false);
+    setSidebarNicheOpen(false);
+    setHeaderNicheOpen(false);
     startTransition(async () => {
       await switchMarketAction(marketId);
       router.refresh();
@@ -508,107 +511,38 @@ function AppShellInner({
           </button>
         </div>
 
-        {/* Workspace & Niche Selector — ONLY shown if member has permission to switch/manage niches */}
+        {/* Compact Niche Selector — ONLY shown if member has permission to switch/manage niches */}
         {!collapsed && canManageNiches && (
-          <div className="p-3 border-b border-[#1f1f23] space-y-2 bg-[#09090b]/50">
-            {/* Workspace Selector (Owner/Admin only) */}
+          <div className="px-3 py-2.5 border-b border-[#1f1f23] bg-[#09090b]/40">
             <div className="relative">
               <button
                 type="button"
                 onClick={() => {
-                  setTenantDropdownOpen(!tenantDropdownOpen);
-                  setNicheDropdownOpen(false);
-                }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#121215] border border-zinc-800 hover:border-zinc-700 text-left transition-all"
-              >
-                <div className="min-w-0">
-                  <div className="text-[10px] font-medium text-zinc-500">Workspace</div>
-                  <div className="text-xs font-medium text-zinc-200 truncate flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>
-                    <span className="truncate">{currentTenantName}</span>
-                  </div>
-                </div>
-                <ChevronDown className="w-3.5 h-3.5 text-zinc-400 shrink-0 ml-1" />
-              </button>
-
-              {tenantDropdownOpen && (
-                <div className="absolute top-full left-0 mt-1 w-full z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-1.5 space-y-1 max-h-80 overflow-y-auto">
-                  <div className="px-2 py-1 text-[10px] font-medium text-zinc-400 flex items-center justify-between">
-                    <span>Switch Workspace</span>
-                    <Briefcase className="w-3 h-3 text-zinc-400" />
-                  </div>
-                  {displayedTenants.map((t) => {
-                    const isCurrent = activeTenant ? activeTenant.id === t.id : currentTenantName === t.name;
-                    const countForTenant = allMarkets.filter((m) => m.tenantId === t.id).length;
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => handleSwitchTenant(t.id)}
-                        className={cn(
-                          "w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs transition-colors",
-                          isCurrent
-                            ? "bg-zinc-800 text-white font-medium"
-                            : "text-zinc-300 hover:bg-zinc-800/60"
-                        )}
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="truncate">{t.name}</div>
-                          <div className="text-[10px] text-zinc-500 truncate">
-                            {countForTenant || 1} niche{countForTenant === 1 ? "" : "s"}
-                          </div>
-                        </div>
-                        {isCurrent && <Check className="w-3.5 h-3.5 text-white shrink-0" />}
-                      </button>
-                    );
-                  })}
-
-                  <div className="pt-1 mt-1 border-t border-zinc-800">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTenantDropdownOpen(false);
-                        setModalError(null);
-                        setTenantModalOpen(true);
-                      }}
-                      className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition-colors"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>New Workspace</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Niche Selector */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => {
-                  setNicheDropdownOpen(!nicheDropdownOpen);
+                  setSidebarNicheOpen(!sidebarNicheOpen);
+                  setHeaderNicheOpen(false);
                   setTenantDropdownOpen(false);
                 }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#121215] border border-zinc-800 hover:border-zinc-700 text-left transition-all"
+                className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg bg-[#121215] border border-zinc-800/90 hover:border-zinc-700 text-left transition-all shadow-sm"
               >
-                <div className="min-w-0">
-                  <div className="text-[10px] font-medium text-zinc-500 flex items-center justify-between">
-                    <span>Active Niche</span>
-                    <span className="text-zinc-400 ml-1">({allowedMarketsForMember.length})</span>
-                  </div>
-                  <div className="text-xs font-medium text-white truncate flex items-center gap-1.5">
-                    <Building2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <span className="truncate">{currentNicheName}</span>
-                  </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                  <span className="text-xs font-semibold text-white truncate">
+                    {currentNicheName}
+                  </span>
                 </div>
-                <ChevronDown className="w-3.5 h-3.5 text-zinc-400 shrink-0 ml-1" />
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
+                    {allowedMarketsForMember.length}
+                  </span>
+                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+                </div>
               </button>
 
-              {nicheDropdownOpen && (
-                <div className="absolute top-full left-0 mt-1 w-72 z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-2 space-y-1.5 max-h-[420px] overflow-y-auto">
-                  <div className="px-2 py-1 text-[10px] font-medium text-zinc-400 flex items-center justify-between">
+              {sidebarNicheOpen && (
+                <div className="absolute top-full left-0 mt-1.5 w-64 z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-2 space-y-1.5 max-h-[380px] overflow-y-auto">
+                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 flex items-center justify-between">
                     <span>Switch Niche</span>
-                    <span className="text-[10px] text-zinc-500">All niches</span>
+                    <span className="text-[10px] text-zinc-500">{allowedMarketsForMember.length} available</span>
                   </div>
 
                   <div className="space-y-1">
@@ -620,58 +554,53 @@ function AppShellInner({
                           type="button"
                           onClick={() => handleSwitchNiche(n.id)}
                           className={cn(
-                            "w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left text-xs transition-all",
+                            "w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs transition-all",
                             isCurrent
-                              ? "bg-zinc-800 text-white font-medium border border-zinc-700"
+                              ? "bg-zinc-800 text-white font-semibold border border-zinc-700"
                               : "text-zinc-300 hover:bg-zinc-800/60 border border-transparent"
                           )}
                         >
-                          <div className="min-w-0 pr-2">
-                            <div className="truncate flex items-center gap-1.5">
-                              {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />}
-                              <span className="truncate">{n.name}</span>
-                            </div>
-                            <div className="text-[10px] text-zinc-400 truncate mt-0.5">
-                              {n.description || "Custom niche"}
-                            </div>
+                          <div className="min-w-0 pr-2 flex items-center gap-1.5">
+                            {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />}
+                            <span className="truncate">{n.name}</span>
                           </div>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-300 shrink-0">
-                            {n.leadCount} leads
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-400 shrink-0">
+                            {n.leadCount}
                           </span>
                         </button>
                       );
                     })}
                   </div>
 
-                  <div className="pt-1.5 mt-1.5 border-t border-zinc-800 flex flex-col gap-1">
+                  <div className="pt-1.5 mt-1 border-t border-zinc-800 flex items-center gap-1.5">
                     <button
                       type="button"
                       onClick={() => {
-                        setNicheDropdownOpen(false);
+                        setSidebarNicheOpen(false);
                         setNicheModalTab("create");
                         setModalError(null);
                         setModalSuccess(null);
                         setNicheModalOpen(true);
                       }}
-                      className="w-full flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-xs font-bold transition-colors"
+                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-white hover:bg-zinc-200 text-black text-[11px] font-bold transition-colors"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add New Niche</span>
+                      <Plus className="w-3 h-3" />
+                      <span>New Niche</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => {
-                        setNicheDropdownOpen(false);
+                        setSidebarNicheOpen(false);
                         setNicheModalTab("manage");
                         setModalError(null);
                         setModalSuccess(null);
                         setNicheModalOpen(true);
                       }}
-                      className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs font-medium transition-colors"
+                      className="px-2.5 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 hover:text-white text-[11px] font-medium transition-colors"
+                      title="Manage Niches"
                     >
                       <Edit3 className="w-3 h-3" />
-                      <span>Manage Niches ({allMarkets.length})</span>
                     </button>
                   </div>
                 </div>
@@ -839,7 +768,8 @@ function AppShellInner({
                 <button
                   type="button"
                   onClick={() => {
-                    setNicheDropdownOpen(!nicheDropdownOpen);
+                    setHeaderNicheOpen(!headerNicheOpen);
+                    setSidebarNicheOpen(false);
                     setMemberDropdownOpen(false);
                   }}
                   className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#141418] hover:bg-[#1a1a20] border border-zinc-800 text-xs text-zinc-300 hover:text-white transition shadow-sm"
@@ -850,7 +780,7 @@ function AppShellInner({
                   <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
                 </button>
 
-                {nicheDropdownOpen && (
+                {headerNicheOpen && (
                   <div className="absolute right-0 top-full mt-1.5 w-64 z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-2 space-y-1 max-h-80 overflow-y-auto">
                     <div className="px-2 py-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center justify-between">
                       <span>Switch Niche</span>
@@ -864,7 +794,7 @@ function AppShellInner({
                           type="button"
                           onClick={() => {
                             handleSwitchNiche(n.id);
-                            setNicheDropdownOpen(false);
+                            setHeaderNicheOpen(false);
                           }}
                           className={cn(
                             "w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left text-xs transition",
@@ -892,7 +822,8 @@ function AppShellInner({
                   type="button"
                   onClick={() => {
                     setMemberDropdownOpen(!memberDropdownOpen);
-                    setNicheDropdownOpen(false);
+                    setHeaderNicheOpen(false);
+                    setSidebarNicheOpen(false);
                   }}
                   className="flex items-center gap-2 rounded-full pl-1 pr-2.5 py-1 bg-[#141418] hover:bg-[#1a1a20] border border-zinc-800 text-xs transition shadow-sm"
                   title="Account profile"

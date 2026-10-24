@@ -34,6 +34,7 @@ import type { ProviderRequirement } from "@/server/env";
 type SettingsTab = "team" | "roles" | "dialer" | "general" | "apps";
 
 const ROLE_LIST = Object.values(ROLE_PRESETS);
+const ASSIGNABLE_ROLES = ROLE_LIST.filter((r) => r.role !== "OWNER");
 
 function countEnabledPermissions(perms: TeamPermissions): number {
   return PERMISSION_DEFINITIONS.filter((p) => perms[p.key]).length;
@@ -70,10 +71,10 @@ export function SettingsForm({
   const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteTitle, setInviteTitle] = useState("");
-  const [inviteRole, setInviteRole] = useState<TeamRole>("REVIEWER");
+  const [inviteRole, setInviteRole] = useState<TeamRole>("CALLER");
   const [inviteNicheScope, setInviteNicheScope] = useState<"ALL" | "SELECTED">("ALL");
   const [inviteNicheIds, setInviteNicheIds] = useState<string[]>([]);
-  const [invitePerms, setInvitePerms] = useState<TeamPermissions>(getPermissionsForRole("REVIEWER"));
+  const [invitePerms, setInvitePerms] = useState<TeamPermissions>(getPermissionsForRole("CALLER"));
   const [inviteAutoActive, setInviteAutoActive] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
@@ -708,31 +709,38 @@ export function SettingsForm({
 
                         {/* Role */}
                         <td className="px-4 py-4">
-                          <div className="flex flex-col items-start gap-1">
-                            <select
-                              value={member.role}
-                              onChange={(e) =>
-                                handleQuickRoleChange(member, e.target.value as TeamRole)
-                              }
-                              disabled={isPending}
-                              className={`rounded-md border px-2.5 py-1 text-xs font-medium focus:outline-none cursor-pointer ${roleMeta.badgeColor}`}
-                            >
-                              {ROLE_LIST.map((r) => (
-                                <option
-                                  key={r.role}
-                                  value={r.role}
-                                  className="bg-slate-900 text-white"
-                                >
-                                  {r.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
+                          {member.role === "OWNER" ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-xs font-bold text-amber-300">
+                              <span>👑</span>
+                              <span>Workspace Owner</span>
+                            </span>
+                          ) : (
+                            <div className="flex flex-col items-start gap-1">
+                              <select
+                                value={member.role}
+                                onChange={(e) =>
+                                  handleQuickRoleChange(member, e.target.value as TeamRole)
+                                }
+                                disabled={isPending}
+                                className={`rounded-md border px-2.5 py-1 text-xs font-medium focus:outline-none cursor-pointer ${roleMeta.badgeColor}`}
+                              >
+                                {ASSIGNABLE_ROLES.map((r) => (
+                                  <option
+                                    key={r.role}
+                                    value={r.role}
+                                    className="bg-slate-900 text-white"
+                                  >
+                                    {r.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
                         </td>
 
                         {/* Allowed Niches */}
                         <td className="px-4 py-4">
-                          {member.nicheScope === "ALL" ? (
+                          {member.role === "OWNER" || member.nicheScope === "ALL" ? (
                             <span className="inline-flex items-center rounded-md border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-xs text-slate-300">
                               All Niches ({allMarkets.length})
                             </span>
@@ -756,30 +764,44 @@ export function SettingsForm({
 
                         {/* Access Summary */}
                         <td className="px-4 py-4">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-slate-200">
-                              {enabledCount} of {totalPerms} options shown
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => openEditDrawer(member)}
-                              className="text-xs text-sky-400 hover:text-sky-300 underline underline-offset-2"
-                            >
-                              Customize
-                            </button>
-                          </div>
-                          <div className="mt-1.5 flex flex-wrap gap-1">
-                            {PERMISSION_DEFINITIONS.filter((p) => member.permissions[p.key])
-                              .slice(0, 3)
-                              .map((p) => (
-                                <span
-                                  key={p.key}
-                                  className="rounded bg-slate-950 border border-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400"
-                                >
-                                  {p.shortLabel}
+                          {member.role === "OWNER" ? (
+                            <div className="space-y-1">
+                              <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-400 text-xs">
+                                <span>✓</span>
+                                <span>Full Workspace Control (All Options)</span>
+                              </span>
+                              <div className="text-[11px] text-slate-400">
+                                Master administrator across all niches &amp; callers
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-slate-200">
+                                  {enabledCount} of {totalPerms} options shown
                                 </span>
-                              ))}
-                          </div>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditDrawer(member)}
+                                  className="text-xs text-sky-400 hover:text-sky-300 underline underline-offset-2"
+                                >
+                                  Customize
+                                </button>
+                              </div>
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {PERMISSION_DEFINITIONS.filter((p) => member.permissions[p.key])
+                                  .slice(0, 3)
+                                  .map((p) => (
+                                    <span
+                                      key={p.key}
+                                      className="rounded bg-slate-950 border border-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400"
+                                    >
+                                      {p.shortLabel}
+                                    </span>
+                                  ))}
+                              </div>
+                            </>
+                          )}
                         </td>
 
                         {/* Status */}
@@ -826,18 +848,20 @@ export function SettingsForm({
 
                         {/* Actions */}
                         <td className="px-5 py-4 text-right">
-                          <div className="inline-flex items-center justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openEditDrawer(member)}
-                              className="rounded-lg border border-slate-700/80 bg-slate-800/60 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-slate-800 hover:text-white"
-                            >
-                              Edit Access
-                            </button>
+                          {member.role === "OWNER" ? (
+                            <span className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-1.5 text-xs font-medium text-slate-400">
+                              🔒 Workspace Owner
+                            </span>
+                          ) : (
+                            <div className="inline-flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openEditDrawer(member)}
+                                className="rounded-lg border border-slate-700/80 bg-slate-800/60 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-slate-800 hover:text-white"
+                              >
+                                Edit Access
+                              </button>
 
-
-
-                            {member.role !== "OWNER" && (
                               <button
                                 type="button"
                                 onClick={() => handleRemoveMember(member)}
@@ -846,8 +870,8 @@ export function SettingsForm({
                               >
                                 Remove
                               </button>
-                            )}
-                          </div>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
@@ -1512,7 +1536,7 @@ export function SettingsForm({
                 <div>
                   <label className="block text-xs font-medium text-slate-300">Choose a Role</label>
                   <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {ROLE_LIST.map((r) => {
+                    {ASSIGNABLE_ROLES.map((r) => {
                       const active = inviteRole === r.role;
                       return (
                         <button
@@ -1776,7 +1800,7 @@ export function SettingsForm({
               <div>
                 <label className="block text-xs font-medium text-slate-300">Role</label>
                 <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {ROLE_LIST.map((r) => {
+                  {ASSIGNABLE_ROLES.map((r) => {
                     const active = editRole === r.role;
                     return (
                       <button

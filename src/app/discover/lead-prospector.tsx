@@ -29,6 +29,7 @@ import {
   runLeadDiscoveryAction,
   getLatestReviewLeadsAction,
   quickApproveLeadAction,
+  approveAllReviewLeadsAction,
   quickRejectLeadAction,
   updateRuleTargetingAction,
   getActiveRulesForDiscoveryAction,
@@ -37,6 +38,7 @@ import { autoDistributeLeadsAction } from "@/app/caller/actions";
 import { CandidateForm } from "./candidate-form";
 import { EvidenceDrawer } from "@/components/evidence-drawer";
 import { defaultGate, GATE_FIELDS, GATE_META, resolveGate, type GateField, type LeadGate } from "@/server/domain/gate";
+import type { TeamMember } from "@/server/domain/team";
 
 interface LeadItem {
   id: string;
@@ -59,6 +61,8 @@ interface LeadItem {
   evidenceCount: number;
   researchSummary?: string | null;
   notes?: string | null;
+  assignedMemberId?: string | null;
+  assignedMemberName?: string | null;
 }
 
 interface RunSummary {
@@ -76,6 +80,7 @@ export function LeadProspector({
   initialTotalCount = 0,
   initialCrmReadyCount = 0,
   canEditRules = true,
+  allMembers = [],
 }: {
   activeMarket?: {
     id: string;
@@ -90,6 +95,7 @@ export function LeadProspector({
   initialTotalCount?: number;
   initialCrmReadyCount?: number;
   canEditRules?: boolean;
+  allMembers?: TeamMember[];
 }) {
   const [isPending, startTransition] = useTransition();
   const [targetCount, setTargetCount] = useState<number>(25);
@@ -104,13 +110,15 @@ export function LeadProspector({
     initialTotalCount || initialLeads.length
   );
   const [crmReadyCount, setCrmReadyCount] = useState<number>(
-    initialCrmReadyCount || initialLeads.length
+    initialCrmReadyCount || 0
   );
   const [copiedPhoneId, setCopiedPhoneId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
   const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
   const [distributing, setDistributing] = useState(false);
+  const [bulkApproving, setBulkApproving] = useState(false);
+  const [selectedCallerId, setSelectedCallerId] = useState<string>("");
   const [evidenceCompanyId, setEvidenceCompanyId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
@@ -124,7 +132,7 @@ export function LeadProspector({
   const [editCities, setEditCities] = useState<string>(
     initialRule?.geography?.cities?.length
       ? initialRule.geography.cities.join(", ")
-      : "Dallas, Houston, Austin, Fort Worth"
+      : ""
   );
   const [editKeywords, setEditKeywords] = useState<string>(
     initialRule?.discovery?.keywords?.length
@@ -316,15 +324,61 @@ export function LeadProspector({
   // Quick Approve Lead from this page
   const handleQuickApprove = async (id: string) => {
     setActionLoadingId(id);
-    const res = await quickApproveLeadAction(id);
+    const caller = allMembers.find((m) => m.id === selectedCallerId);
+    const res = await quickApproveLeadAction(id, {
+      memberId: caller ? caller.id : null,
+      memberName: caller ? caller.name : null,
+    });
     setActionLoadingId(null);
     if (res.ok) {
       setLeads((prev) =>
-        prev.map((l) => (l.id === id ? { ...l, status: "APPROVED" } : l))
+        prev.map((l) =>
+          l.id === id
+            ? ({
+                ...l,
+                status: "APPROVED",
+                assignedMemberId: caller ? caller.id : (l as any).assignedMemberId,
+                assignedMemberName: caller ? caller.name : (l as any).assignedMemberName,
+              } as any)
+            : l
+        )
       );
       setCrmReadyCount((prev) => prev + 1);
     } else {
       setErrorMsg(res.error || "Failed to approve lead");
+    }
+  };
+
+  // Bulk Approve All Pending Leads into CRM
+  const handleBulkApproveAll = async () => {
+    setBulkApproving(true);
+    const caller = allMembers.find((m) => m.id === selectedCallerId);
+    const res = await approveAllReviewLeadsAction({
+      assignToMemberId: caller ? caller.id : null,
+      assignToMemberName: caller ? caller.name : null,
+    });
+    setBulkApproving(false);
+    if (res.ok) {
+      setLeads((prev) =>
+        prev.map((l) =>
+          l.status === "APPROVED" || l.status === "CALLING" || l.status === "CONNECTED" || l.status === "MEETING_BOOKED"
+            ? l
+            : ({
+                ...l,
+                status: "APPROVED",
+                assignedMemberId: caller ? caller.id : (l as any).assignedMemberId,
+                assignedMemberName: caller ? caller.name : (l as any).assignedMemberName,
+              } as any)
+        )
+      );
+      setCrmReadyCount((prev) => prev + (res.approvedCount || 0));
+      setSuccessBanner(
+        caller
+          ? `Approved ${res.approvedCount || 0} leads into CRM and assigned them to ${caller.name}!`
+          : `Approved ${res.approvedCount || 0} leads into your Leads CRM queue!`
+      );
+    } else {
+      setErrorMsg(res.error || "Failed to bulk approve leads");
     }
   };
 
@@ -830,8 +884,8 @@ export function LeadProspector({
 
       {/* Qualified Leads Stream */}
       <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
-          <div className="flex items-center gap-2.5">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-zinc-800 pb-3">
+          <div className="flex flex-wrap items-center gap-2.5">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Building className="w-4 h-4 text-emerald-400" />
               <span>Qualified {activeNicheName} Leads (Passed Must-Have Gate)</span>
@@ -841,12 +895,65 @@ export function LeadProspector({
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {allMembers.length > 0 && (
+              <div className="flex items-center gap-1.5 bg-[#09090b] border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs">
+                <Users className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                <span className="text-zinc-400 font-medium">Assign Approved To:</span>
+                <select
+                  value={selectedCallerId}
+                  onChange={(e) => setSelectedCallerId(e.target.value)}
+                  className="bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1 text-xs font-semibold text-white focus:outline-none focus:border-zinc-500"
+                >
+                  <option value="">Unassigned Pool (Auto-Distribute Later)</option>
+                  {allMembers.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.role})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {leads.some(
+              (l) =>
+                l.status !== "APPROVED" &&
+                l.status !== "CALLING" &&
+                l.status !== "CONNECTED" &&
+                l.status !== "MEETING_BOOKED"
+            ) && (
+              <button
+                type="button"
+                disabled={bulkApproving}
+                onClick={handleBulkApproveAll}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition shadow-sm"
+              >
+                {bulkApproving ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  Approve All Pending &amp; Move to CRM (
+                  {
+                    leads.filter(
+                      (l) =>
+                        l.status !== "APPROVED" &&
+                        l.status !== "CALLING" &&
+                        l.status !== "CONNECTED" &&
+                        l.status !== "MEETING_BOOKED"
+                    ).length
+                  }
+                  )
+                </span>
+              </button>
+            )}
+
             <Link
               href="/caller"
-              className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors"
+              className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors px-2 py-1"
             >
-              <span>Manage Call Queue, Follow-Ups &amp; Assignments in CRM ({crmReadyCount})</span>
+              <span>Open Leads CRM ({crmReadyCount})</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>
@@ -870,7 +977,12 @@ export function LeadProspector({
               const phone = lead.best?.phone || lead.phoneDisplay;
               const email = lead.best?.email || null;
               const decisionMaker = lead.owner?.name || lead.best?.name || null;
-              const isApprovedInCrm = lead.status === "APPROVED" || lead.status === "CALLING" || lead.status === "CONNECTED" || lead.status === "MEETING_BOOKED";
+              const isApprovedInCrm =
+                lead.status === "APPROVED" ||
+                lead.status === "CALLING" ||
+                lead.status === "CONNECTED" ||
+                lead.status === "MEETING_BOOKED";
+              const assignedName = (lead as any).assignedMemberName || null;
 
               return (
                 <div
@@ -991,6 +1103,12 @@ export function LeadProspector({
                           <span className="truncate">{email}</span>
                         </span>
                       )}
+                      {assignedName && (
+                        <span className="px-2 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800/60 font-semibold flex items-center gap-1">
+                          <Users className="w-2.5 h-2.5 text-indigo-400" />
+                          Assigned: {assignedName}
+                        </span>
+                      )}
                     </div>
 
                     {/* Cold Caller Intelligence Summary */}
@@ -1037,14 +1155,14 @@ export function LeadProspector({
                           disabled={actionLoadingId === lead.id}
                           onClick={() => handleQuickApprove(lead.id)}
                           className="px-3 py-1 rounded-lg text-xs font-bold bg-white hover:bg-zinc-200 text-black shadow-sm transition-colors flex items-center gap-1"
-                          title="Send lead to Caller CRM"
+                          title="Approve and move lead into Caller CRM"
                         >
                           {actionLoadingId === lead.id ? (
                             <Loader2 className="w-3 h-3 animate-spin" />
                           ) : (
                             <CheckCircle className="w-3 h-3" />
                           )}
-                          <span>Add to CRM</span>
+                          <span>Approve &rarr; CRM</span>
                         </button>
                       )}
                     </div>

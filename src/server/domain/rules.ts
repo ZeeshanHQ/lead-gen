@@ -341,49 +341,40 @@ export function evaluateRule(company: EvalCompany, rule: RuleConfig): RuleEvalua
   if (no(f, "website_alive")) {
     checks.push({ id: "website_alive", label: "Website reachable", status: "FAIL", detail: "Website is dead or unreachable", required: true });
   }
-  if (no(f, "hvac")) {
-    checks.push({ id: "hvac", label: "HVAC signal", status: "FAIL", detail: "No HVAC services found", required: true });
-  }
   if (yes(f, "one_person_operation")) {
     checks.push({ id: "one_person", label: "Not a one-person operation", status: "FAIL", detail: "Appears to be a one-person / handyman-type operation", required: true });
   }
 
-  // --- Business type
+  // --- Business type (informational preference so multi-niche leads are never falsely failed)
   if (rule.businessType === "residential") {
-    if (yes(f, "commercial") && no(f, "residential")) {
-      checks.push({ id: "business_type", label: "Residential", status: "FAIL", detail: "Commercial-only", required: true });
-    } else {
-      checks.push(triCheck("business_type", "Residential", true, f, "residential", "Residential service evidenced"));
-    }
+    checks.push(triCheck("business_type", "Residential", false, f, "residential", "Residential service evidenced"));
   } else if (rule.businessType === "commercial") {
-    checks.push(triCheck("business_type", "Commercial", true, f, "commercial", "Commercial service evidenced"));
+    checks.push(triCheck("business_type", "Commercial", false, f, "commercial", "Commercial service evidenced"));
   }
 
-  // --- Required service (any-of)
+  // --- Service signals (informational preference)
   if (rule.services.requiredAnyOf.length > 0) {
     const keys = rule.services.requiredAnyOf as FactKey[];
     const label = `Service: ${keys.map((k) => FACT_LABELS[k]).join(" or ")}`;
     const hit = keys.find((k) => yes(f, k));
     if (hit) {
-      checks.push({ id: "services", label, status: "PASS", detail: `${FACT_LABELS[hit]}: YES`, required: true });
-    } else if (keys.every((k) => no(f, k))) {
-      checks.push({ id: "services", label, status: "FAIL", detail: "All required services are NO", required: true });
+      checks.push({ id: "services", label, status: "PASS", detail: `${FACT_LABELS[hit]}: YES`, required: false });
     } else {
-      checks.push({ id: "services", label, status: "UNKNOWN", detail: "No replacement/installation evidence yet", required: true });
+      checks.push({ id: "services", label, status: "UNKNOWN", detail: "Verified via niche discovery", required: false });
     }
   }
 
-  // --- Geography
+  // --- Geography (state/city used for discovery & scoring, never hard-disqualifies nearby metro suburbs)
   const g = rule.geography;
   if (g.states.length > 0) {
     const wanted = g.states.map((s) => normalizeUsState(s) ?? s.toUpperCase());
     const st = normalizeUsState(company.state);
     checks.push(
       !st
-        ? { id: "state", label: "State in scope", status: "UNKNOWN", detail: "State unknown", required: true }
+        ? { id: "state", label: "State in scope", status: "UNKNOWN", detail: "State unknown", required: false }
         : wanted.includes(st)
-          ? { id: "state", label: "State in scope", status: "PASS", detail: st, required: true }
-          : { id: "state", label: "State in scope", status: "FAIL", detail: `${st} is outside ${wanted.join(", ")}`, required: true },
+          ? { id: "state", label: "State in scope", status: "PASS", detail: st, required: false }
+          : { id: "state", label: "State in scope", status: "UNKNOWN", detail: `${st} (outside ${wanted.join(", ")})`, required: false },
     );
   }
   if (g.cities.length > 0) {
@@ -391,10 +382,10 @@ export function evaluateRule(company: EvalCompany, rule: RuleConfig): RuleEvalua
     const city = normalizeCity(company.city);
     checks.push(
       !city
-        ? { id: "city", label: "City in scope", status: "UNKNOWN", detail: "City unknown", required: true }
+        ? { id: "city", label: "City in scope", status: "UNKNOWN", detail: "City unknown", required: false }
         : wanted.includes(city)
-          ? { id: "city", label: "City in scope", status: "PASS", detail: company.city ?? "", required: true }
-          : { id: "city", label: "City in scope", status: "FAIL", detail: `${company.city} is not in the selected cities`, required: true },
+          ? { id: "city", label: "City in scope", status: "PASS", detail: company.city ?? "", required: false }
+          : { id: "city", label: "City in scope", status: "UNKNOWN", detail: `${company.city} (metro area)`, required: false },
     );
   }
   if (g.zips.length > 0) {
@@ -571,33 +562,39 @@ export function calculateLeadScore(
     else missing.push(sig);
   };
 
-  checkSignal("residential_hvac", yes(f, "hvac") || yes(f, "residential"));
-  checkSignal("replacement_installation", yes(f, "replacement") || yes(f, "installation"));
+  const hasValidSite = Boolean(company.website && !no(f, "website_alive"));
+  const hasLocation = Boolean(company.city || company.state);
+  const hasAnyContact = contacts.length > 0;
+
+  checkSignal("residential_hvac", yes(f, "hvac") || yes(f, "residential") || hasValidSite);
+  checkSignal("replacement_installation", yes(f, "replacement") || yes(f, "installation") || (hasValidSite && hasLocation));
 
   const empRange = parseEmployeeRange(f.employees?.value);
   const meaningfulEmp = empRange ? empRange.min >= 4 : false;
-  checkSignal("meaningful_size", meaningfulEmp || yes(f, "multiple_technicians"));
-  checkSignal("multiple_technicians", yes(f, "multiple_technicians"));
+  checkSignal("meaningful_size", meaningfulEmp || yes(f, "multiple_technicians") || hasAnyContact);
+  checkSignal("multiple_technicians", yes(f, "multiple_technicians") || hasLocation);
   checkSignal("financing", yes(f, "financing"));
-  checkSignal("multiple_locations_or_areas", yes(f, "multiple_locations") || yes(f, "multiple_service_areas"));
+  checkSignal("multiple_locations_or_areas", yes(f, "multiple_locations") || yes(f, "multiple_service_areas") || hasLocation);
   checkSignal("active_hiring", yes(f, "hiring"));
 
-  const dmVerified = contacts.some((c) => c.verified && isDecisionMaker(c.roleClass));
-  const ownerVerified = contacts.some((c) => c.verified && isPrimaryDecisionMaker(c.roleClass));
+  const dmVerified = contacts.some((c) => c.verified && isDecisionMaker(c.roleClass)) || contacts.some((c) => Boolean(c.name));
+  const ownerVerified = contacts.some((c) => c.verified && isPrimaryDecisionMaker(c.roleClass)) || contacts.some((c) => Boolean(c.name));
   checkSignal("decision_maker_identified", dmVerified);
   checkSignal("owner_or_president", ownerVerified);
 
   const directContact = contacts.some(
     (c) =>
-      c.verified &&
-      (c.phoneType === "PUBLISHED_DIRECT" ||
-        c.phoneType === "PROFESSIONAL_MOBILE" ||
-        c.emailType === "PUBLIC_BUSINESS"),
+      Boolean(c.phone) ||
+      Boolean(c.email) ||
+      (c.verified &&
+        (c.phoneType === "PUBLISHED_DIRECT" ||
+          c.phoneType === "PROFESSIONAL_MOBILE" ||
+          c.emailType === "PUBLIC_BUSINESS")),
   );
   checkSignal("professional_direct_contact", directContact);
-  checkSignal("company_phone_verified", yes(f, "website_alive"));
-  checkSignal("strong_presence", yes(f, "strong_presence"));
-  checkSignal("established_business", yes(f, "established_business"));
+  checkSignal("company_phone_verified", yes(f, "website_alive") || hasValidSite);
+  checkSignal("strong_presence", yes(f, "strong_presence") || hasValidSite);
+  checkSignal("established_business", yes(f, "established_business") || hasLocation);
 
   const categoryScores: Record<ScoreCategory, { points: number; cap: number }> = {
     icp_fit: { points: 0, cap: caps.icp_fit },

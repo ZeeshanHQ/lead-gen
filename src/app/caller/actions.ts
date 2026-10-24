@@ -186,9 +186,12 @@ export async function autoDistributeLeadsAction(input: { marketId: string }) {
     const { listTeamMembers } = await import("@/server/repo/team");
     const { autoDistributeLeads } = await import("@/server/repo/caller");
     const allMembers = await listTeamMembers(db);
-    const activeMembers = allMembers
-      .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
-      .map((m) => ({ id: m.id, name: m.name }));
+    const callerOnly = allMembers.filter((m) => m.status === "ACTIVE" && m.role === "CALLER");
+    const targetPool =
+      callerOnly.length > 0
+        ? callerOnly
+        : allMembers.filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER");
+    const activeMembers = targetPool.map((m) => ({ id: m.id, name: m.name }));
 
     if (activeMembers.length === 0) {
       return { ok: false, error: "No active team members available to assign leads to." };
@@ -296,5 +299,86 @@ export async function deleteCrmLeadAction(input: { companyId: string }) {
     return { ok: true };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to remove lead" };
+  }
+}
+
+export async function updateLeadSmartFieldAction(input: {
+  companyId: string;
+  fieldKey: string;
+  value: string;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { updateLeadSmartField } = await import("@/server/repo/caller");
+    await updateLeadSmartField(db, input.companyId, input.fieldKey, input.value, actor);
+    revalidatePath("/caller");
+    revalidatePath(`/company/${input.companyId}`);
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to update field" };
+  }
+}
+
+export async function addCustomCrmColumnAction(input: {
+  marketId: string;
+  label: string;
+  options: string[];
+}) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { addCustomCrmColumn } = await import("@/server/repo/caller");
+    const columns = await addCustomCrmColumn(
+      db,
+      input.marketId,
+      input.label,
+      input.options,
+      actor
+    );
+    revalidatePath("/caller");
+    return { ok: true, columns };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to add custom column" };
+  }
+}
+
+export async function deleteCustomCrmColumnAction(input: {
+  marketId: string;
+  columnKey: string;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { deleteCustomCrmColumn } = await import("@/server/repo/caller");
+    const columns = await deleteCustomCrmColumn(db, input.marketId, input.columnKey, actor);
+    revalidatePath("/caller");
+    return { ok: true, columns };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to delete custom column" };
+  }
+}
+
+export async function assignBulkLeadsToCallerAction(input: {
+  marketId: string;
+  memberId: string | null;
+  memberName: string | null;
+  count?: number;
+  onlyUnassigned?: boolean;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { assignBulkLeadsToCaller } = await import("@/server/repo/caller");
+    const res = await assignBulkLeadsToCaller(db, {
+      ...input,
+      actor,
+    });
+    revalidatePath("/caller");
+    revalidatePath("/discover");
+    revalidatePath("/");
+    return { ok: true, assignedCount: res.assignedCount };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to bulk assign leads" };
   }
 }
