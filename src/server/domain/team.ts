@@ -166,7 +166,7 @@ export const ROLE_PRESETS: Record<TeamRole, RolePresetMeta> = {
     badgeColor: "bg-indigo-500/10 text-indigo-300 border-indigo-500/25",
     description: "Focused CRM workspace: dial assigned leads, edit CRM records, schedule follow-ups, and log calls.",
     defaultPermissions: {
-      discoverLeads: false,
+      discoverLeads: true,
       approveLeads: false,
       callerWorkbench: true,
       editContacts: true,
@@ -200,7 +200,7 @@ export function getPermissionsForRole(role: TeamRole): TeamPermissions {
 }
 
 export function getDefaultRouteForMember(member?: TeamMember | null): string {
-  if (!member) return "/login";
+  if (!member || member.id === "guest") return "/login";
   if (member.role === "OWNER" || member.permissions.approveLeads) return "/";
   if (member.permissions.callerWorkbench) return "/caller";
   if (member.permissions.discoverLeads) return "/discover";
@@ -209,7 +209,7 @@ export function getDefaultRouteForMember(member?: TeamMember | null): string {
 }
 
 export function canMemberAccessPath(member: TeamMember | null | undefined, pathname: string): boolean {
-  if (!member) return false;
+  if (!member || member.id === "guest") return pathname === "/login" || pathname.startsWith("/invite");
   if (member.role === "OWNER") return true;
   if (pathname === "/login" || pathname.startsWith("/invite")) return true;
 
@@ -217,7 +217,11 @@ export function canMemberAccessPath(member: TeamMember | null | undefined, pathn
     return Boolean(member.permissions.approveLeads);
   }
   if (pathname.startsWith("/discover")) {
-    return Boolean(member.permissions.discoverLeads);
+    return Boolean(
+      member.permissions.discoverLeads ||
+      member.permissions.callerWorkbench ||
+      member.role === "CALLER"
+    );
   }
   if (pathname.startsWith("/caller") || pathname.startsWith("/company/") || pathname.startsWith("/leads") || pathname.startsWith("/approved")) {
     return Boolean(member.permissions.callerWorkbench);

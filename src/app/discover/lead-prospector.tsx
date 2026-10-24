@@ -340,43 +340,47 @@ export function LeadProspector({
     setCustomCountInput(String(finalCount));
 
     startTransition(async () => {
-      const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
-      const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-      const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+      try {
+        const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+        const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+        const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
 
-      const res = await runLeadDiscoveryAction({
-        targetCount: finalCount,
-        keywords: kwsArr,
-        states: statesArr.length > 0 ? statesArr : ["TX"],
-        cities: citiesArr,
-        minScore: editMinScore,
-        gate,
-      });
-
-      if (res.ok) {
-        const returnedLeads = (res.leads as any[]) || [];
-        setLeads(returnedLeads);
-        const totalQualified = res.totalReviewCount ?? returnedLeads.length;
-        const readyInCrm = (res as any).crmReadyCount ?? totalQualified;
-        setTotalReviewCount(totalQualified);
-        setCrmReadyCount(readyInCrm);
-
-        const scanned = res.counters?.totalCandidates || finalCount;
-        const approvedNew = (res.counters as any)?.approvedCount ?? res.counters?.createdCompanies ?? 0;
-        const rejectedNew = Math.max(0, scanned - approvedNew);
-
-        setRunSummary({
-          totalScanned: scanned,
-          qualifiedCount: approvedNew,
-          rejectedCount: rejectedNew,
-          crmReadyCount: readyInCrm,
+        const res = await runLeadDiscoveryAction({
+          targetCount: finalCount,
+          keywords: kwsArr,
+          states: statesArr.length > 0 ? statesArr : ["TX"],
+          cities: citiesArr,
+          minScore: editMinScore,
+          gate,
         });
 
-        setSuccessBanner(
-          `Discovery complete for ${nicheInfo?.name || "Active Niche"}: ${approvedNew} qualified leads passed your Must-Have Quality Gate and are ready in your CRM.`
-        );
-      } else {
-        setErrorMsg(res.error || "Discovery run failed. Please check your network or API keys in the Sources tab.");
+        if (res.ok) {
+          const returnedLeads = (res.leads as any[]) || [];
+          setLeads(returnedLeads);
+          const totalQualified = res.totalReviewCount ?? returnedLeads.length;
+          const readyInCrm = (res as any).crmReadyCount ?? totalQualified;
+          setTotalReviewCount(totalQualified);
+          setCrmReadyCount(readyInCrm);
+
+          const scanned = res.counters?.totalCandidates || finalCount;
+          const approvedNew = (res.counters as any)?.approvedCount ?? res.counters?.createdCompanies ?? 0;
+          const rejectedNew = Math.max(0, scanned - approvedNew);
+
+          setRunSummary({
+            totalScanned: scanned,
+            qualifiedCount: approvedNew,
+            rejectedCount: rejectedNew,
+            crmReadyCount: readyInCrm,
+          });
+
+          setSuccessBanner(
+            `Discovery complete for ${nicheInfo?.name || "Active Niche"}: ${approvedNew} qualified leads passed your Must-Have Quality Gate and are ready in your CRM.`
+          );
+        } else {
+          setErrorMsg(res.error || "Discovery run encountered an issue. Please try again.");
+        }
+      } catch (err: any) {
+        setErrorMsg(err?.message || "Discovery run was interrupted. Please retry in a moment.");
       }
     });
   };

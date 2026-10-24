@@ -2,7 +2,7 @@
  * Company lifecycle writes: candidate intake (with exclusions + dedupe),
  * human edits, notes. Reads for lists live in queue.ts.
  */
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { companies, companySourceRefs, evidence, markets } from "../db/schema";
 import { type CandidateIdentity, type MatchReason, findMatches, identityKeys } from "../domain/dedupe";
@@ -194,9 +194,13 @@ export async function createCandidate(
     })
     .from(companies)
     .where(eq(companies.marketId, marketId));
-  const refs = await db
-    .select({ companyId: companySourceRefs.companyId, provider: companySourceRefs.provider, ref: companySourceRefs.providerRef })
-    .from(companySourceRefs);
+  const refs =
+    input.providerRef && rows.length > 0
+      ? await db
+          .select({ companyId: companySourceRefs.companyId, provider: companySourceRefs.provider, ref: companySourceRefs.providerRef })
+          .from(companySourceRefs)
+          .where(inArray(companySourceRefs.companyId, rows.map((r) => r.id)))
+      : [];
   const existing = rows.map((r) => ({
     id: r.id,
     nameKey: r.nameKey,

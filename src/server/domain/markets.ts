@@ -105,7 +105,14 @@ export const REAL_ESTATE_MARKET: MarketDefinition = {
     "residential realtors",
     "commercial real estate firm",
   ],
-  serviceKeys: ["replacement", "installation", "maintenance"],
+  serviceKeys: [
+    "residential_sales",
+    "commercial_sales",
+    "property_management",
+    "leasing",
+    "buyer_representation",
+    "seller_representation",
+  ],
   pageHints: [
     "listings",
     "properties",
@@ -151,7 +158,13 @@ export const MEDICAL_MARKET: MarketDefinition = {
     "orthopedic physical therapy clinic",
     "family medicine center",
   ],
-  serviceKeys: ["replacement", "installation", "maintenance", "emergency"],
+  serviceKeys: [
+    "patient_care",
+    "consultations",
+    "specialty_treatments",
+    "preventative_care",
+    "clinical_procedures",
+  ],
   pageHints: [
     "services",
     "treatments",

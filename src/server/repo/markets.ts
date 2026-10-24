@@ -39,8 +39,8 @@ export async function ensureMarketsSeeded(db: Db): Promise<void> {
   if (seededInProcess) return;
   try {
     // Fast check: if markets already exist in DB, skip full seeding loop
-    const existingRows = await db.select({ id: markets.id }).from(markets).limit(3);
-    if (existingRows.length >= 3) {
+    const existingRows = await db.select({ id: markets.id }).from(markets).limit(1);
+    if (existingRows.length >= 1) {
       seededInProcess = true;
       return;
     }

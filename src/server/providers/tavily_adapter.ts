@@ -135,8 +135,8 @@ export class TavilyAdapter implements DiscoveryAdapter {
       states: query.states,
       cities: query.cities,
     });
-    // Return enough queries to satisfy the requested limit (up to 12 queries for large runs)
-    const maxQueries = Math.min(Math.max(Math.ceil((query.limit || 25) / 6), 3), 12);
+    // Return enough queries to satisfy the requested limit (up to 6 queries for discovery)
+    const maxQueries = Math.min(Math.max(Math.ceil((query.limit || 25) / 6), 3), 6);
     return plan.slice(0, maxQueries);
   }
 
@@ -163,7 +163,7 @@ export class TavilyAdapter implements DiscoveryAdapter {
           runPlannedQuery(q, apiKey, {
             maxResults: Math.min(Math.max(query.limit, 12), 20),
             seenDomains,
-            timeoutMs: 5500,
+            timeoutMs: 3200,
           })
         )
       );
