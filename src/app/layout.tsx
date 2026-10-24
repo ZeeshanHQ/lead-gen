@@ -2,11 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { getDb } from "@/server/db/client";
-import { countByStatus } from "@/server/repo/queue";
 import { getActiveContext, type MarketView, type TenantWorkspace } from "@/server/repo/markets";
 import { getActiveTeamMember } from "@/server/repo/team";
 import type { TeamMember } from "@/server/domain/team";
-import { REVIEWABLE, POST_APPROVAL } from "@/server/domain/lifecycle";
 
 export const dynamic = "force-dynamic";
 
@@ -38,30 +36,30 @@ export default async function RootLayout({
 
   try {
     const db = await getDb();
-    const ctx = await getActiveContext(db);
+    const [ctx, teamCtx] = await Promise.all([
+      getActiveContext(db),
+      getActiveTeamMember(db),
+    ]);
+
     activeTenant = ctx.tenant;
     allTenants = ctx.allTenants;
     activeMarket = ctx.market;
     tenantMarkets = ctx.tenantMarkets;
     allMarkets = ctx.allMarkets;
 
-    const teamCtx = await getActiveTeamMember(db);
     activeMember = teamCtx.activeMember;
     allMembers = teamCtx.allMembers;
 
-    const counts = await countByStatus(db, ctx.market.id);
-    for (const [st, n] of Object.entries(counts)) {
-      if (REVIEWABLE.includes(st as any)) reviewCount += n;
-      if (POST_APPROVAL.includes(st as any)) approvedCount += n;
-      if (["APPROVED", "SYNCED", "CALLING", "CONNECTED", "PAIN_FOUND", "MEETING_BOOKED", "QUALIFIED"].includes(st)) callerCount += n;
-    }
-  } catch (err) {
-    // If DB is initializing or empty, safe fallback
+    reviewCount = ctx.market.reviewCount || 0;
+    approvedCount = ctx.market.approvedCount || 0;
+    callerCount = ctx.market.approvedCount || 0;
+  } catch {
+    // Safe fallback if DB is initializing
   }
 
   return (
     <html lang="en" className="dark">
-      <body className="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-slate-700 selection:text-white">
+      <body className="min-h-screen bg-[#09090b] text-zinc-100 antialiased selection:bg-zinc-700 selection:text-white">
         <AppShell
           reviewCount={reviewCount}
           approvedCount={approvedCount}

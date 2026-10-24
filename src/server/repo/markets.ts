@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { companies, markets, researchRules, systemSettings } from "../db/schema";
 import { DEFAULT_TENANTS } from "../db/bootstrap";
@@ -37,6 +37,13 @@ let seededInProcess = false;
 export async function ensureMarketsSeeded(db: Db): Promise<void> {
   if (seededInProcess) return;
   try {
+    // Fast check: if markets already exist in DB, skip full seeding loop
+    const existingRows = await db.select({ id: markets.id }).from(markets).limit(3);
+    if (existingRows.length >= 3) {
+      seededInProcess = true;
+      return;
+    }
+
     for (const m of SEEDED_MARKETS) {
       try {
         await db
@@ -55,8 +62,8 @@ export async function ensureMarketsSeeded(db: Db): Promise<void> {
             },
           })
           .onConflictDoNothing({ target: markets.key });
-      } catch (err) {
-        // Ignore duplicate key or existing record
+      } catch {
+        // Ignore duplicate key
       }
 
       const [market] = await db.select().from(markets).where(eq(markets.key, m.key)).limit(1);
@@ -107,20 +114,17 @@ export async function listTenants(db: Db): Promise<TenantWorkspace[]> {
 export async function listMarkets(db: Db, tenantId?: string): Promise<MarketView[]> {
   await ensureMarketsSeeded(db);
 
-  const rows = await db
-    .select()
-    .from(markets)
-    .where(eq(markets.status, "ACTIVE"))
-    .orderBy(asc(markets.createdAt));
-
-  const statusCounts = await db
-    .select({
-      marketId: companies.marketId,
-      status: companies.status,
-      n: sql<number>`count(*)::int`,
-    })
-    .from(companies)
-    .groupBy(companies.marketId, companies.status);
+  const [rows, statusCounts] = await Promise.all([
+    db.select().from(markets).where(eq(markets.status, "ACTIVE")).orderBy(asc(markets.createdAt)),
+    db
+      .select({
+        marketId: companies.marketId,
+        status: companies.status,
+        n: sql<number>`count(*)::int`,
+      })
+      .from(companies)
+      .groupBy(companies.marketId, companies.status),
+  ]);
 
   const countMap = new Map<string, { total: number; review: number; approved: number }>();
   for (const sc of statusCounts) {
@@ -178,12 +182,20 @@ async function getCookieIds(): Promise<{ marketId?: string; tenantId?: string }>
 export async function getActiveContext(db: Db) {
   await ensureMarketsSeeded(db);
 
-  const allTenants = await listTenants(db);
-  const allMarkets = await listMarkets(db);
+  const [allMarkets, settingsRows, cookieIds] = await Promise.all([
+    listMarkets(db),
+    db
+      .select()
+      .from(systemSettings)
+      .where(inArray(systemSettings.key, ["tenants_registry", "active_tenant_id", "active_market_id"])),
+    getCookieIds(),
+  ]);
 
-  const cookieIds = await getCookieIds();
-  const savedTenantId = await readSettingRaw<string>(db, "active_tenant_id", "tenant_main");
-  const savedMarketId = await readSettingRaw<string>(db, "active_market_id", "");
+  const settingsMap = new Map(settingsRows.map((r) => [r.key, r.value]));
+  const rawTenants = settingsMap.get("tenants_registry") as TenantWorkspace[] | undefined;
+  const allTenants = Array.isArray(rawTenants) && rawTenants.length > 0 ? rawTenants : DEFAULT_TENANTS;
+  const savedTenantId = (settingsMap.get("active_tenant_id") as string) || "tenant_main";
+  const savedMarketId = (settingsMap.get("active_market_id") as string) || "";
 
   const targetTenantId = cookieIds.tenantId || savedTenantId || "tenant_main";
   const tenant = allTenants.find((t) => t.id === targetTenantId) ?? allTenants[0] ?? DEFAULT_TENANTS[0]!;
@@ -198,7 +210,6 @@ export async function getActiveContext(db: Db) {
     allMarkets[0];
 
   if (!market) {
-    // Fallback if database has no active markets at all
     const [inserted] = await db
       .insert(markets)
       .values({
@@ -230,21 +241,14 @@ export async function getActiveContext(db: Db) {
   }
 
   // Ensure default research rule exists for this market
-  let [rule] = await db
+  const rulesForMarket = await db
     .select()
     .from(researchRules)
-    .where(and(eq(researchRules.marketId, market.id), eq(researchRules.isDefault, true)))
-    .orderBy(desc(researchRules.updatedAt))
+    .where(eq(researchRules.marketId, market.id))
+    .orderBy(desc(researchRules.isDefault), desc(researchRules.updatedAt))
     .limit(1);
 
-  if (!rule) {
-    [rule] = await db
-      .select()
-      .from(researchRules)
-      .where(eq(researchRules.marketId, market.id))
-      .orderBy(desc(researchRules.updatedAt))
-      .limit(1);
-  }
+  let rule = rulesForMarket[0];
 
   if (!rule) {
     const newRuleCfg = createNicheRuleConfig({
@@ -289,8 +293,10 @@ export async function switchActiveMarket(
   const found = allMarkets.find((m) => m.id === marketId || m.key === marketId);
   if (!found) throw new Error("Target niche not found");
 
-  await writeSettingRaw(db, "active_market_id", found.id);
-  await writeSettingRaw(db, "active_tenant_id", found.tenantId);
+  await Promise.all([
+    writeSettingRaw(db, "active_market_id", found.id),
+    writeSettingRaw(db, "active_tenant_id", found.tenantId),
+  ]);
 
   await audit(db, {
     actor,
@@ -314,7 +320,6 @@ export async function switchActiveTenant(
 
   let tenantMarkets = await listMarkets(db, tenant.id);
 
-  // If this tenant doesn't have any niches yet, create a starter niche for it
   if (tenantMarkets.length === 0) {
     const starter = await createMarketNiche(
       db,
@@ -333,8 +338,10 @@ export async function switchActiveTenant(
   }
 
   const firstMarket = tenantMarkets[0]!;
-  await writeSettingRaw(db, "active_tenant_id", tenant.id);
-  await writeSettingRaw(db, "active_market_id", firstMarket.id);
+  await Promise.all([
+    writeSettingRaw(db, "active_tenant_id", tenant.id),
+    writeSettingRaw(db, "active_market_id", firstMarket.id),
+  ]);
 
   await audit(db, {
     actor,
@@ -373,7 +380,6 @@ export async function createMarketNiche(
   const tenantId = input.tenantId || activeCtx.tenant.id;
   const category = (input.category || "custom").toLowerCase();
 
-  // Generate unique slug key
   const slugBase = cleanName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
@@ -439,8 +445,10 @@ export async function createMarketNiche(
     })
     .returning();
 
-  await writeSettingRaw(db, "active_tenant_id", tenantId);
-  await writeSettingRaw(db, "active_market_id", marketRow!.id);
+  await Promise.all([
+    writeSettingRaw(db, "active_tenant_id", tenantId),
+    writeSettingRaw(db, "active_market_id", marketRow!.id),
+  ]);
 
   await audit(db, {
     actor,
@@ -505,7 +513,6 @@ export async function updateMarketNiche(
     })
     .where(eq(markets.id, marketId));
 
-  // Also sync keywords to default research rule for this niche
   const [ruleRow] = await db
     .select()
     .from(researchRules)
@@ -596,7 +603,6 @@ export async function createTenantWorkspace(
   const updatedTenants = [...allTenants, newTenant];
   await writeSettingRaw(db, "tenants_registry", updatedTenants);
 
-  // Create initial niche for this workspace
   const nicheName = input.initialNicheName?.trim() || "US Residential HVAC";
   const { market } = await createMarketNiche(
     db,
@@ -609,8 +615,10 @@ export async function createTenantWorkspace(
     actor
   );
 
-  await writeSettingRaw(db, "active_tenant_id", newTenant.id);
-  await writeSettingRaw(db, "active_market_id", market.id);
+  await Promise.all([
+    writeSettingRaw(db, "active_tenant_id", newTenant.id),
+    writeSettingRaw(db, "active_market_id", market.id),
+  ]);
 
   await audit(db, {
     actor,

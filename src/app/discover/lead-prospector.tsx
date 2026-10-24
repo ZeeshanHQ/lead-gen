@@ -70,6 +70,12 @@ interface RunSummary {
 
 export function LeadProspector({
   activeMarket,
+  initialRule,
+  initialGate,
+  initialLeads = [],
+  initialTotalCount = 0,
+  initialCrmReadyCount = 0,
+  canEditRules = true,
 }: {
   activeMarket?: {
     id: string;
@@ -78,16 +84,28 @@ export function LeadProspector({
     keywords: string[];
     category: string;
   };
+  initialRule?: any;
+  initialGate?: LeadGate;
+  initialLeads?: LeadItem[];
+  initialTotalCount?: number;
+  initialCrmReadyCount?: number;
+  canEditRules?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [targetCount, setTargetCount] = useState<number>(25);
   const [customCountInput, setCustomCountInput] = useState<string>("25");
-  const [activeRule, setActiveRule] = useState<any>(null);
+  const [activeRule, setActiveRule] = useState<any>(initialRule ?? null);
   const [nicheInfo, setNicheInfo] = useState(activeMarket);
-  const [gate, setGate] = useState<LeadGate>(() => defaultGate());
-  const [leads, setLeads] = useState<LeadItem[]>([]);
-  const [totalReviewCount, setTotalReviewCount] = useState<number>(0);
-  const [crmReadyCount, setCrmReadyCount] = useState<number>(0);
+  const [gate, setGate] = useState<LeadGate>(() =>
+    initialGate ? resolveGate(initialGate) : resolveGate(initialRule?.gate)
+  );
+  const [leads, setLeads] = useState<LeadItem[]>(initialLeads);
+  const [totalReviewCount, setTotalReviewCount] = useState<number>(
+    initialTotalCount || initialLeads.length
+  );
+  const [crmReadyCount, setCrmReadyCount] = useState<number>(
+    initialCrmReadyCount || initialLeads.length
+  );
   const [copiedPhoneId, setCopiedPhoneId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
@@ -98,23 +116,62 @@ export function LeadProspector({
 
   // Quick targeting drawer/modal state
   const [isEditingFilters, setIsEditingFilters] = useState(false);
-  const [editStates, setEditStates] = useState<string>("TX");
-  const [editCities, setEditCities] = useState<string>("Dallas, Houston, Austin, Fort Worth");
+  const [editStates, setEditStates] = useState<string>(
+    initialRule?.geography?.states?.length
+      ? initialRule.geography.states.join(", ")
+      : "TX"
+  );
+  const [editCities, setEditCities] = useState<string>(
+    initialRule?.geography?.cities?.length
+      ? initialRule.geography.cities.join(", ")
+      : "Dallas, Houston, Austin, Fort Worth"
+  );
   const [editKeywords, setEditKeywords] = useState<string>(
-    activeMarket?.keywords?.length
+    initialRule?.discovery?.keywords?.length
+      ? initialRule.discovery.keywords.join(", ")
+      : activeMarket?.keywords?.length
       ? activeMarket.keywords.join(", ")
       : activeMarket?.name
       ? `${activeMarket.name} companies, local specialists`
       : "Local businesses, official website"
   );
-  const [editMinScore, setEditMinScore] = useState<number>(60);
+  const [editMinScore, setEditMinScore] = useState<number>(
+    initialRule?.scoring?.minScore ?? 60
+  );
   const [savingFilters, setSavingFilters] = useState(false);
 
   // Manual URL accordion toggle
   const [showManualIntake, setShowManualIntake] = useState(false);
 
-  // Load active rule & existing qualified leads on mount
+  // Sync when server-provided market or leads update, without ever flashing empty
   useEffect(() => {
+    if (activeMarket) {
+      setNicheInfo(activeMarket);
+    }
+    if (initialRule) {
+      setActiveRule(initialRule);
+      const savedStates = initialRule.geography?.states || ["TX"];
+      const savedCities = initialRule.geography?.cities || [];
+      setEditStates(savedStates.join(", "));
+      setEditCities(savedCities.join(", "));
+      if (initialRule.discovery?.keywords?.length > 0) {
+        setEditKeywords(initialRule.discovery.keywords.join(", "));
+      } else if (activeMarket?.keywords?.length) {
+        setEditKeywords(activeMarket.keywords.join(", "));
+      }
+      setEditMinScore(initialRule.scoring?.minScore ?? 60);
+      setGate(resolveGate(initialGate ?? initialRule.gate));
+    }
+    if (initialLeads && initialLeads.length > 0) {
+      setLeads(initialLeads);
+      setTotalReviewCount(initialTotalCount || initialLeads.length);
+      setCrmReadyCount(initialCrmReadyCount || initialLeads.length);
+    }
+  }, [activeMarket?.id, initialRule, initialGate, initialLeads, initialTotalCount, initialCrmReadyCount]);
+
+  // Fallback load only if no initialRule was supplied by the server
+  useEffect(() => {
+    if (initialRule) return;
     getActiveRulesForDiscoveryAction().then((res) => {
       if (res.ok && res.rule) {
         setActiveRule(res.rule);
@@ -145,10 +202,11 @@ export function LeadProspector({
         }
       }
     });
-  }, [activeMarket?.id]);
+  }, [initialRule]);
 
   // Toggle a Must-Have Quality Gate field and immediately save + re-filter
   const handleToggleGateField = async (field: GateField) => {
+    if (!canEditRules) return;
     const nextGate: LeadGate = { ...gate, [field]: !gate[field] };
     setGate(nextGate);
 

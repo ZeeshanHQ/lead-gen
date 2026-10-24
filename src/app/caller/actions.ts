@@ -125,7 +125,6 @@ export async function pushLeadsToDialerAction(leads: DialerLeadPayload[]) {
         });
         remoteDelivered = res.ok;
       } catch {
-        // Even if remote webhook is offline in local dev, record the dialer dispatch cleanly
         remoteDelivered = false;
       }
     }
@@ -202,5 +201,100 @@ export async function autoDistributeLeadsAction(input: { marketId: string }) {
     return { ok: true, distributedCount: res.distributedCount, membersCount: activeMembers.length };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to distribute leads" };
+  }
+}
+
+export async function updateLeadCrmDetailsAction(
+  input: import("@/server/repo/caller").UpdateLeadCrmInput
+) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { updateLeadCrmDetails } = await import("@/server/repo/caller");
+    await updateLeadCrmDetails(db, input, actor);
+    revalidatePath("/caller");
+    revalidatePath("/leads");
+    revalidatePath(`/company/${input.companyId}`);
+    revalidatePath("/");
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to update lead details" };
+  }
+}
+
+export async function updateLeadStatusQuickAction(input: {
+  companyId: string;
+  status: import("@/server/domain/lifecycle").LifecycleStatus;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { updateLeadStatusQuick } = await import("@/server/repo/caller");
+    await updateLeadStatusQuick(db, input.companyId, input.status, actor);
+    revalidatePath("/caller");
+    revalidatePath("/leads");
+    revalidatePath(`/company/${input.companyId}`);
+    revalidatePath("/");
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to update status" };
+  }
+}
+
+export async function updateLeadFollowUpAction(input: {
+  companyId: string;
+  followUpDate: string | null;
+  note?: string | null;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { updateLeadFollowUp } = await import("@/server/repo/caller");
+    const res = await updateLeadFollowUp(
+      db,
+      input.companyId,
+      input.followUpDate,
+      input.note,
+      actor
+    );
+    revalidatePath("/caller");
+    revalidatePath("/leads");
+    revalidatePath(`/company/${input.companyId}`);
+    revalidatePath("/");
+    return { ok: true, updatedNotes: res.updatedNotes, nextFollowUp: res.nextFollowUp };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to update follow-up" };
+  }
+}
+
+export async function createManualCrmLeadAction(
+  input: import("@/server/repo/caller").CreateManualCrmLeadInput
+) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { createManualCrmLead } = await import("@/server/repo/caller");
+    const lead = await createManualCrmLead(db, input, actor);
+    revalidatePath("/caller");
+    revalidatePath("/leads");
+    revalidatePath("/");
+    return { ok: true, lead };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to create lead" };
+  }
+}
+
+export async function deleteCrmLeadAction(input: { companyId: string }) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { deleteCrmLead } = await import("@/server/repo/caller");
+    await deleteCrmLead(db, input.companyId, actor);
+    revalidatePath("/caller");
+    revalidatePath("/leads");
+    revalidatePath("/");
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to remove lead" };
   }
 }

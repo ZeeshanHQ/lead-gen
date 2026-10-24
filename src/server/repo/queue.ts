@@ -1,8 +1,5 @@
 /**
  * Read models for Review Queue, Approved Leads and Caller Queue.
- * Filtering is done in memory over a lightweight projection. This is deliberate:
- * the product targets few, high-quality leads (hundreds to low thousands), and it keeps
- * every filter unit-testable. Revisit with SQL pushdown if volume ever demands it.
  */
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -57,28 +54,29 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
     .orderBy(desc(companies.createdAt));
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
-  const staleDays = await getStaleDays(db);
 
-  const contactMap = await getContactsForCompanies(db, ids);
+  const [staleDays, contactMap, counts, scores, refs] = await Promise.all([
+    getStaleDays(db),
+    getContactsForCompanies(db, ids),
+    db
+      .select({ companyId: evidence.companyId, n: sql<number>`count(*)::int` })
+      .from(evidence)
+      .where(inArray(evidence.companyId, ids))
+      .groupBy(evidence.companyId),
+    db.select().from(leadScores).where(inArray(leadScores.companyId, ids)),
+    db
+      .select({ companyId: companySourceRefs.companyId, provider: companySourceRefs.provider })
+      .from(companySourceRefs)
+      .where(inArray(companySourceRefs.companyId, ids)),
+  ]);
 
-  const counts = await db
-    .select({ companyId: evidence.companyId, n: sql<number>`count(*)::int` })
-    .from(evidence)
-    .where(inArray(evidence.companyId, ids))
-    .groupBy(evidence.companyId);
   const countMap = new Map(counts.map((c) => [c.companyId, Number(c.n)]));
-
-  const scores = await db.select().from(leadScores).where(inArray(leadScores.companyId, ids));
   const scoreMap = new Map<string, (typeof scores)[number]>();
   for (const s of scores) {
     if (s.status !== "CURRENT") continue;
     scoreMap.set(s.companyId, s);
   }
 
-  const refs = await db
-    .select({ companyId: companySourceRefs.companyId, provider: companySourceRefs.provider })
-    .from(companySourceRefs)
-    .where(inArray(companySourceRefs.companyId, ids));
   const refMap = new Map<string, Set<string>>();
   for (const r of refs) {
     const set = refMap.get(r.companyId) ?? new Set<string>();
@@ -110,8 +108,13 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
       grade: score?.grade ?? null,
       owner: ownerC ? { name: ownerC.name, title: ownerC.title, verified: ownerC.verified } : null,
       best,
-      hasDecisionMaker: inputs.some((c) => c.verified && ["owner", "president", "founder", "general_manager", "operations_manager", "sales_manager"].includes(c.roleClass)),
-      hasDirectContact: inputs.some((c) => c.verified && !!c.phone && (c.phoneType === "PUBLISHED_DIRECT" || c.phoneType === "PROFESSIONAL_MOBILE")),
+      hasDecisionMaker: inputs.some((c) =>
+        c.verified &&
+        ["owner", "president", "founder", "general_manager", "operations_manager", "sales_manager"].includes(c.roleClass)
+      ),
+      hasDirectContact: inputs.some(
+        (c) => c.verified && !!c.phone && (c.phoneType === "PUBLISHED_DIRECT" || c.phoneType === "PROFESSIONAL_MOBILE")
+      ),
       evidenceCount: countMap.get(r.id) ?? 0,
       lastVerifiedAt: r.lastVerifiedAt,
       stale: isStale(r.lastVerifiedAt, staleDays),
@@ -165,7 +168,7 @@ export function applyFilters(rows: LeadRow[], f: LeadFilters): LeadRow[] {
     }
     if (f.employeesMin !== undefined || f.employeesMax !== undefined) {
       const range = parseEmployeeRange(r.facts.employees?.value);
-      if (!range) return false; // unknown size can't satisfy an explicit employee filter
+      if (!range) return false;
       const lo = f.employeesMin ?? 0;
       const hi = f.employeesMax ?? Number.MAX_SAFE_INTEGER;
       if (range.max < lo || range.min > hi) return false;
@@ -197,7 +200,7 @@ export function applyFilters(rows: LeadRow[], f: LeadFilters): LeadRow[] {
         return (b.researchConfidence ?? -1) - (a.researchConfidence ?? -1);
       case "name":
         return a.name.localeCompare(b.name);
-      case "caller": // Caller Queue order
+      case "caller":
         return (
           (b.icpScore ?? -1) - (a.icpScore ?? -1) ||
           gradeOrder[a.best.grade] - gradeOrder[b.best.grade] ||

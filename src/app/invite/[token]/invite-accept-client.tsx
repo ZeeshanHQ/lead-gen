@@ -3,7 +3,7 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { acceptInviteWithPasswordAction } from "./actions";
-import type { TeamMember } from "@/server/domain/team";
+import { getDefaultRouteForMember, type TeamMember } from "@/server/domain/team";
 import { CheckCircle2, UserCheck, Layers, ArrowRight, ShieldCheck, Lock } from "lucide-react";
 
 interface InviteAcceptClientProps {
@@ -36,7 +36,7 @@ export function InviteAcceptClient({
         setError(res.error || "Could not accept invitation.");
         return;
       }
-      router.push("/");
+      router.push(getDefaultRouteForMember(member));
       router.refresh();
     });
   };

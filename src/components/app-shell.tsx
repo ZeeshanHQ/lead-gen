@@ -6,7 +6,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import type { MarketView, TenantWorkspace } from "@/server/repo/markets";
 import { NICHE_PRESET_TEMPLATES } from "@/server/domain/markets";
-import { type TeamMember, ROLE_PRESETS, type PermissionKey } from "@/server/domain/team";
+import {
+  type TeamMember,
+  ROLE_PRESETS,
+  type PermissionKey,
+  canMemberAccessPath,
+  getDefaultRouteForMember,
+} from "@/server/domain/team";
 import {
   switchMarketAction,
   switchTenantAction,
@@ -15,23 +21,12 @@ import {
   deleteNicheAction,
   createTenantWorkspaceAction,
 } from "@/app/actions/tenant";
-import { switchActiveMemberAction } from "@/app/settings/actions";
 import { logoutAction } from "@/app/login/actions";
 import {
   LayoutDashboard,
-  SlidersHorizontal,
   Compass,
-  PlaySquare,
-  Inbox,
-  CheckCircle,
-  Sheet,
   PhoneCall,
-  Radio,
-  Users,
-  ShieldAlert,
-  Coins,
   Settings,
-  History,
   Building2,
   ChevronLeft,
   ChevronRight,
@@ -46,6 +41,7 @@ import {
   Loader2,
   Briefcase,
   Lock,
+  LogOut,
 } from "lucide-react";
 
 interface AppShellProps {
@@ -64,8 +60,6 @@ interface AppShellProps {
 
 function AppShellInner({
   children,
-  reviewCount = 0,
-  approvedCount = 0,
   callerCount = 0,
   activeTenant,
   allTenants = [],
@@ -73,21 +67,28 @@ function AppShellInner({
   tenantMarkets = [],
   allMarkets = [],
   activeMember,
-  allMembers = [],
 }: AppShellProps) {
   const pathname = usePathname();
-  if (pathname === '/login' || pathname.startsWith('/invite')) {
-    return <>{children}</>;
-  }
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Live synced member state (updates automatically when Owner changes permissions in /settings)
+  const [liveMember, setLiveMember] = useState<TeamMember | undefined>(activeMember);
+  const [optimisticPath, setOptimisticPath] = useState<string>(pathname);
+
+  useEffect(() => {
+    setLiveMember(activeMember);
+  }, [activeMember]);
+
+  useEffect(() => {
+    setOptimisticPath(pathname);
+  }, [pathname]);
 
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [tenantDropdownOpen, setTenantDropdownOpen] = useState(false);
   const [nicheDropdownOpen, setNicheDropdownOpen] = useState(false);
   const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState<number>(0.9);
 
   // Modals for Multi-Niche & Multi-Tenant Management
   const [nicheModalOpen, setNicheModalOpen] = useState(false);
@@ -116,6 +117,72 @@ function AppShellInner({
   const [newTenantInitialNiche, setNewTenantInitialNiche] = useState("US Residential HVAC");
   const [newTenantInitialCategory, setNewTenantInitialCategory] = useState("hvac");
 
+  // Live Permission & Access Heartbeat — syncs permissions in real time without manual refresh
+  useEffect(() => {
+    let active = true;
+
+    const syncMemberAccess = async () => {
+      try {
+        const res = await fetch("/api/auth/me", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!active || !data.ok || !data.activeMember) return;
+
+        const nextMember: TeamMember = data.activeMember;
+        if (nextMember.id === "guest" || nextMember.status === "SUSPENDED") {
+          window.location.href = "/login";
+          return;
+        }
+
+        setLiveMember((prev) => {
+          const prevSig = prev
+            ? JSON.stringify({
+                role: prev.role,
+                status: prev.status,
+                perms: prev.permissions,
+                scope: prev.nicheScope,
+                niches: prev.allowedNicheIds,
+              })
+            : "";
+          const nextSig = JSON.stringify({
+            role: nextMember.role,
+            status: nextMember.status,
+            perms: nextMember.permissions,
+            scope: nextMember.nicheScope,
+            niches: nextMember.allowedNicheIds,
+          });
+          if (prevSig !== nextSig) {
+            // Owner updated this member's permissions or role — refresh server state too
+            router.refresh();
+            return nextMember;
+          }
+          return prev;
+        });
+      } catch {
+        // Ignore transient network errors
+      }
+    };
+
+    const interval = setInterval(syncMemberAccess, 4000);
+    const onFocus = () => syncMemberAccess();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      active = false;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [router]);
+
+  // Enforce strict route protection on client navigation & live permission changes
+  const isAllowedOnCurrentPath = canMemberAccessPath(liveMember, pathname);
+  const fallbackRoute = getDefaultRouteForMember(liveMember);
+
+  useEffect(() => {
+    if (liveMember && !isAllowedOnCurrentPath) {
+      router.replace(fallbackRoute);
+    }
+  }, [liveMember, isAllowedOnCurrentPath, fallbackRoute, router, pathname]);
+
   const currentTenantName = activeTenant?.name || "Astraventa Workspace";
   const currentNicheName = activeMarket?.name || "Active Niche";
 
@@ -124,7 +191,7 @@ function AppShellInner({
       ? allTenants
       : [{ id: "tenant_main", name: "Astraventa Workspace", role: "Owner" }];
 
-  const displayedMarkets: MarketView[] =
+  const baseMarkets: MarketView[] =
     tenantMarkets.length > 0
       ? tenantMarkets
       : allMarkets.length > 0
@@ -146,6 +213,16 @@ function AppShellInner({
           },
         ];
 
+  // Filter markets to only those allowed for this member
+  const allowedMarketsForMember = baseMarkets.filter(
+    (n) =>
+      !liveMember ||
+      liveMember.role === "OWNER" ||
+      liveMember.nicheScope === "ALL" ||
+      liveMember.allowedNicheIds.length === 0 ||
+      liveMember.allowedNicheIds.includes(n.id)
+  );
+
   useEffect(() => {
     setMobileOpen(false);
     setTenantDropdownOpen(false);
@@ -156,19 +233,12 @@ function AppShellInner({
   useEffect(() => {
     const saved = localStorage.getItem("astraventa_sidebar_collapsed");
     if (saved === "true") setCollapsed(true);
-    const savedZoom = localStorage.getItem("astraventa_dashboard_zoom");
-    if (savedZoom) setZoomLevel(parseFloat(savedZoom));
   }, []);
 
   const toggleCollapsed = () => {
     const next = !collapsed;
     setCollapsed(next);
     localStorage.setItem("astraventa_sidebar_collapsed", String(next));
-  };
-
-  const handleZoomChange = (val: number) => {
-    setZoomLevel(val);
-    localStorage.setItem("astraventa_dashboard_zoom", String(val));
   };
 
   const handleSwitchTenant = (tenantId: string) => {
@@ -183,14 +253,6 @@ function AppShellInner({
     setNicheDropdownOpen(false);
     startTransition(async () => {
       await switchMarketAction(marketId);
-      router.refresh();
-    });
-  };
-
-  const handleSwitchMember = (memberId: string) => {
-    setMemberDropdownOpen(false);
-    startTransition(async () => {
-      await switchActiveMemberAction(memberId);
       router.refresh();
     });
   };
@@ -324,6 +386,12 @@ function AppShellInner({
     });
   };
 
+  const isOwner = !liveMember || liveMember.role === "OWNER";
+  const canManageNiches = isOwner || Boolean(liveMember?.permissions.manageNiches);
+  const canManageTeam = isOwner || Boolean(liveMember?.permissions.manageTeamAndSettings);
+  // Show niche switcher only if user can manage niches OR has multiple assigned niches
+  const showNicheSwitcher = canManageNiches || allowedMarketsForMember.length > 1;
+
   const allNavGroups: Array<{
     group: string;
     items: Array<{
@@ -333,13 +401,13 @@ function AppShellInner({
       pill?: string;
       count?: number;
       highlight?: boolean;
-      perm?: PermissionKey;
+      perm: PermissionKey;
     }>;
   }> = [
     {
-      group: "Core Pipeline",
+      group: "Workspace",
       items: [
-        { href: "/", label: "Dashboard", icon: LayoutDashboard },
+        { href: "/", label: "Dashboard", icon: LayoutDashboard, perm: "approveLeads" },
         { href: "/discover", label: "Find Leads", icon: Compass, perm: "discoverLeads" },
         {
           href: "/caller",
@@ -359,52 +427,34 @@ function AppShellInner({
     },
   ];
 
-  // Filter navigation so only permitted options appear for the active member
+  // Filter navigation so ONLY permitted options appear for the active member
   const visibleNavGroups = allNavGroups
     .map((group) => ({
       ...group,
       items: group.items.filter(
-        (item) => !item.perm || !activeMember || activeMember.permissions[item.perm] === true
+        (item) => isOwner || Boolean(liveMember?.permissions[item.perm])
       ),
     }))
     .filter((group) => group.items.length > 0);
 
-  // Check if current route requires a permission that the active member lacks
-  const currentMatchedItem = allNavGroups
-    .flatMap((g) => g.items)
-    .find((item) => (item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)));
-
-  // Always allow /settings so the user can manage team or switch views
-  const isCurrentRouteRestricted =
-    pathname !== "/settings" &&
-    Boolean(
-      currentMatchedItem?.perm &&
-        activeMember &&
-        activeMember.permissions[currentMatchedItem.perm] === false
-    );
-
   const getPageTitle = () => {
     for (const g of allNavGroups) {
       for (const item of g.items) {
-        if (item.href === "/" && pathname === "/") return "Overview";
+        if (item.href === "/" && pathname === "/") return "Overview Dashboard";
         if (item.href !== "/" && pathname.startsWith(item.href)) return item.label;
       }
     }
-    if (pathname.startsWith("/company/")) return "Company Details";
-    return "Lead Workspace";
+    if (pathname.startsWith("/company/")) return "Lead Profile";
+    return "Leads CRM";
   };
-
-  const canManageNiches = !activeMember || activeMember.permissions.manageNiches;
-  const canDiscover = !activeMember || activeMember.permissions.discoverLeads;
-  const ownerMember = allMembers.find((m) => m.role === "OWNER") || allMembers[0];
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#09090b] text-zinc-100">
       {/* Global Switching Indicator Toast */}
       {isPending && (
-        <div className="fixed top-4 right-4 z-[100] flex items-center gap-2.5 px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 font-medium text-xs shadow-xl">
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-400" />
-          <span>Updating workspace...</span>
+        <div className="fixed top-4 right-4 z-[100] flex items-center gap-2.5 px-4 py-2 rounded-lg bg-[#121215] border border-zinc-700 text-zinc-100 font-medium text-xs shadow-xl">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+          <span>Updating...</span>
         </div>
       )}
 
@@ -421,14 +471,18 @@ function AppShellInner({
       {/* ============================================================ */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col bg-[#0c0c0e] border-r border-[#1f1f23] backdrop-blur-xl transition-all duration-300 ease-in-out lg:static",
-          collapsed ? "w-20" : "w-64 xl:w-72",
+          "fixed inset-y-0 left-0 z-50 flex flex-col bg-[#0c0c0e] border-r border-[#1f1f23] backdrop-blur-xl transition-all duration-200 ease-in-out lg:static",
+          collapsed ? "w-20" : "w-64 xl:w-68",
           mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
         {/* Brand Header */}
         <div className="flex h-16 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
-          <Link href="/" className="flex items-center gap-3 overflow-hidden group">
+          <Link
+            href={fallbackRoute}
+            onClick={() => setOptimisticPath(fallbackRoute)}
+            className="flex items-center gap-3 overflow-hidden group"
+          >
             <img
               src="/logo.png"
               alt="Astraventa"
@@ -448,16 +502,16 @@ function AppShellInner({
 
           <button
             onClick={() => setMobileOpen(false)}
-            className="rounded-lg p-1 text-slate-400 hover:bg-slate-900 hover:text-white lg:hidden"
+            className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-900 hover:text-white lg:hidden"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Workspace & Niche Selector */}
-        {!collapsed && (
-          <div className="p-3 border-b border-[#1f1f23] space-y-2 bg-slate-900/30">
-            {/* Workspace Selector */}
+        {/* Workspace & Niche Selector — ONLY shown if member has permission to switch/manage niches */}
+        {!collapsed && canManageNiches && (
+          <div className="p-3 border-b border-[#1f1f23] space-y-2 bg-[#09090b]/50">
+            {/* Workspace Selector (Owner/Admin only) */}
             <div className="relative">
               <button
                 type="button"
@@ -465,23 +519,23 @@ function AppShellInner({
                   setTenantDropdownOpen(!tenantDropdownOpen);
                   setNicheDropdownOpen(false);
                 }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-950/90 border border-slate-800 hover:border-slate-700 text-left transition-all"
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#121215] border border-zinc-800 hover:border-zinc-700 text-left transition-all"
               >
                 <div className="min-w-0">
-                  <div className="text-[10px] font-medium text-slate-500">Workspace</div>
-                  <div className="text-xs font-medium text-slate-200 truncate flex items-center gap-1.5">
+                  <div className="text-[10px] font-medium text-zinc-500">Workspace</div>
+                  <div className="text-xs font-medium text-zinc-200 truncate flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>
                     <span className="truncate">{currentTenantName}</span>
                   </div>
                 </div>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-1" />
+                <ChevronDown className="w-3.5 h-3.5 text-zinc-400 shrink-0 ml-1" />
               </button>
 
               {tenantDropdownOpen && (
-                <div className="absolute top-full left-0 mt-1 w-full z-50 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl p-1.5 space-y-1 max-h-80 overflow-y-auto">
-                  <div className="px-2 py-1 text-[10px] font-medium text-slate-400 flex items-center justify-between">
+                <div className="absolute top-full left-0 mt-1 w-full z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-1.5 space-y-1 max-h-80 overflow-y-auto">
+                  <div className="px-2 py-1 text-[10px] font-medium text-zinc-400 flex items-center justify-between">
                     <span>Switch Workspace</span>
-                    <Briefcase className="w-3 h-3 text-slate-400" />
+                    <Briefcase className="w-3 h-3 text-zinc-400" />
                   </div>
                   {displayedTenants.map((t) => {
                     const isCurrent = activeTenant ? activeTenant.id === t.id : currentTenantName === t.name;
@@ -494,13 +548,13 @@ function AppShellInner({
                         className={cn(
                           "w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs transition-colors",
                           isCurrent
-                            ? "bg-slate-800 text-white font-medium"
-                            : "text-slate-300 hover:bg-slate-800/60"
+                            ? "bg-zinc-800 text-white font-medium"
+                            : "text-zinc-300 hover:bg-zinc-800/60"
                         )}
                       >
                         <div className="min-w-0 pr-2">
                           <div className="truncate">{t.name}</div>
-                          <div className="text-[10px] text-slate-500 truncate">
+                          <div className="text-[10px] text-zinc-500 truncate">
                             {countForTenant || 1} niche{countForTenant === 1 ? "" : "s"}
                           </div>
                         </div>
@@ -509,22 +563,20 @@ function AppShellInner({
                     );
                   })}
 
-                  {canManageNiches && (
-                    <div className="pt-1 mt-1 border-t border-slate-800">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTenantDropdownOpen(false);
-                          setModalError(null);
-                          setTenantModalOpen(true);
-                        }}
-                        className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>New Workspace</span>
-                      </button>
-                    </div>
-                  )}
+                  <div className="pt-1 mt-1 border-t border-zinc-800">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTenantDropdownOpen(false);
+                        setModalError(null);
+                        setTenantModalOpen(true);
+                      }}
+                      className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>New Workspace</span>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -537,152 +589,142 @@ function AppShellInner({
                   setNicheDropdownOpen(!nicheDropdownOpen);
                   setTenantDropdownOpen(false);
                 }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-950/90 border border-slate-800 hover:border-slate-700 text-left transition-all"
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#121215] border border-zinc-800 hover:border-zinc-700 text-left transition-all"
               >
                 <div className="min-w-0">
-                  <div className="text-[10px] font-medium text-slate-500 flex items-center justify-between">
+                  <div className="text-[10px] font-medium text-zinc-500 flex items-center justify-between">
                     <span>Active Niche</span>
-                    <span className="text-slate-400 ml-1">({allMarkets.length})</span>
+                    <span className="text-zinc-400 ml-1">({allowedMarketsForMember.length})</span>
                   </div>
                   <div className="text-xs font-medium text-white truncate flex items-center gap-1.5">
-                    <Building2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                    <Building2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                     <span className="truncate">{currentNicheName}</span>
                   </div>
                 </div>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-1" />
+                <ChevronDown className="w-3.5 h-3.5 text-zinc-400 shrink-0 ml-1" />
               </button>
 
               {nicheDropdownOpen && (
-                <div className="absolute top-full left-0 mt-1 w-72 z-50 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl p-2 space-y-1.5 max-h-[420px] overflow-y-auto">
-                  <div className="px-2 py-1 text-[10px] font-medium text-slate-400 flex items-center justify-between">
+                <div className="absolute top-full left-0 mt-1 w-72 z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-2 space-y-1.5 max-h-[420px] overflow-y-auto">
+                  <div className="px-2 py-1 text-[10px] font-medium text-zinc-400 flex items-center justify-between">
                     <span>Switch Niche</span>
-                    <span className="text-[10px] text-slate-500">
-                      {activeMember?.nicheScope === "SELECTED" ? "Assigned to you" : "All niches"}
-                    </span>
+                    <span className="text-[10px] text-zinc-500">All niches</span>
                   </div>
 
                   <div className="space-y-1">
-                    {(allMarkets.length > 0 ? allMarkets : displayedMarkets)
-                      .filter(
-                        (n) =>
-                          !activeMember ||
-                          activeMember.nicheScope === "ALL" ||
-                          activeMember.allowedNicheIds.length === 0 ||
-                          activeMember.allowedNicheIds.includes(n.id)
-                      )
-                      .map((n) => {
-                        const isCurrent = activeMarket ? activeMarket.id === n.id : currentNicheName === n.name;
-                        return (
-                          <button
-                            key={n.id}
-                            type="button"
-                            onClick={() => handleSwitchNiche(n.id)}
-                            className={cn(
-                              "w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left text-xs transition-all",
-                              isCurrent
-                                ? "bg-slate-800 text-white font-medium border border-slate-700"
-                                : "text-slate-300 hover:bg-slate-800/60 border border-transparent"
-                            )}
-                          >
-                            <div className="min-w-0 pr-2">
-                              <div className="truncate flex items-center gap-1.5">
-                                {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />}
-                                <span className="truncate">{n.name}</span>
-                              </div>
-                              <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                                {n.description || "Custom niche"}
-                              </div>
+                    {allowedMarketsForMember.map((n) => {
+                      const isCurrent = activeMarket ? activeMarket.id === n.id : currentNicheName === n.name;
+                      return (
+                        <button
+                          key={n.id}
+                          type="button"
+                          onClick={() => handleSwitchNiche(n.id)}
+                          className={cn(
+                            "w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left text-xs transition-all",
+                            isCurrent
+                              ? "bg-zinc-800 text-white font-medium border border-zinc-700"
+                              : "text-zinc-300 hover:bg-zinc-800/60 border border-transparent"
+                          )}
+                        >
+                          <div className="min-w-0 pr-2">
+                            <div className="truncate flex items-center gap-1.5">
+                              {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />}
+                              <span className="truncate">{n.name}</span>
                             </div>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-950 text-slate-300 shrink-0">
-                              {n.leadCount} leads
-                            </span>
-                          </button>
-                        );
-                      })}
+                            <div className="text-[10px] text-zinc-400 truncate mt-0.5">
+                              {n.description || "Custom niche"}
+                            </div>
+                          </div>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-300 shrink-0">
+                            {n.leadCount} leads
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
 
-                  {canManageNiches && (
-                    <div className="pt-1.5 mt-1.5 border-t border-slate-800 flex flex-col gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNicheDropdownOpen(false);
-                          setNicheModalTab("create");
-                          setModalError(null);
-                          setModalSuccess(null);
-                          setNicheModalOpen(true);
-                        }}
-                        className="w-full flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-white hover:bg-slate-200 text-slate-950 text-xs font-medium transition-colors"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Add New Niche</span>
-                      </button>
+                  <div className="pt-1.5 mt-1.5 border-t border-zinc-800 flex flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNicheDropdownOpen(false);
+                        setNicheModalTab("create");
+                        setModalError(null);
+                        setModalSuccess(null);
+                        setNicheModalOpen(true);
+                      }}
+                      className="w-full flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-xs font-bold transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add New Niche</span>
+                    </button>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNicheDropdownOpen(false);
-                          setNicheModalTab("manage");
-                          setModalError(null);
-                          setModalSuccess(null);
-                          setNicheModalOpen(true);
-                        }}
-                        className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-medium transition-colors"
-                      >
-                        <Edit3 className="w-3 h-3" />
-                        <span>Manage Niches ({allMarkets.length})</span>
-                      </button>
-                    </div>
-                  )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNicheDropdownOpen(false);
+                        setNicheModalTab("manage");
+                        setModalError(null);
+                        setModalSuccess(null);
+                        setNicheModalOpen(true);
+                      }}
+                      className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs font-medium transition-colors"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      <span>Manage Niches ({allMarkets.length})</span>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* Navigation Groups (Strictly filtered by activeMember permissions) */}
+        {/* Navigation Groups (Strictly filtered by liveMember permissions) */}
         <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
           {visibleNavGroups.map((group) => (
             <div key={group.group} className="space-y-1">
               {!collapsed ? (
-                <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
                   {group.group}
                 </div>
               ) : (
                 <div className="h-2 border-t border-[#1f1f23] mx-2" />
               )}
 
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 {group.items.map((item) => {
                   const Icon = item.icon;
+                  const activeCheckPath = optimisticPath || pathname;
                   const isActive =
                     item.href === "/"
-                      ? pathname === "/"
-                      : pathname.startsWith(item.href);
+                      ? activeCheckPath === "/"
+                      : activeCheckPath.startsWith(item.href);
 
                   return (
                     <Link
                       key={item.href}
                       href={item.href}
                       prefetch={true}
+                      onClick={() => setOptimisticPath(item.href)}
                       title={collapsed ? item.label : undefined}
                       className={cn(
-                        "group flex items-center gap-3 rounded-lg px-2.5 py-2 text-xs font-medium transition-all relative",
+                        "group flex items-center gap-3 rounded-lg px-2.5 py-2.5 text-xs font-semibold transition-all relative",
                         isActive
-                          ? "bg-slate-800/90 text-white"
-                          : "text-slate-400 hover:bg-slate-900/80 hover:text-slate-200"
+                          ? "bg-zinc-800/90 text-white shadow-sm"
+                          : "text-zinc-400 hover:bg-zinc-900/80 hover:text-zinc-200"
                       )}
                     >
                       {isActive && (
-                        <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-sky-400" />
+                        <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-white" />
                       )}
 
                       <Icon
                         className={cn(
                           "h-4 w-4 shrink-0 transition-colors",
                           isActive
-                            ? "text-sky-400"
-                            : "text-slate-400 group-hover:text-slate-200"
+                            ? "text-white"
+                            : "text-zinc-400 group-hover:text-zinc-200"
                         )}
                       />
 
@@ -691,10 +733,10 @@ function AppShellInner({
                       {!collapsed && item.count !== undefined && item.count > 0 && (
                         <span
                           className={cn(
-                            "ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0",
+                            "ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0",
                             item.highlight
-                              ? "bg-sky-500/20 text-sky-300 border border-sky-500/30"
-                              : "bg-slate-800 text-slate-300"
+                              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                              : "bg-zinc-800 text-zinc-300"
                           )}
                         >
                           {item.count}
@@ -702,7 +744,7 @@ function AppShellInner({
                       )}
 
                       {!collapsed && item.pill && (
-                        <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 shrink-0">
+                        <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 shrink-0">
                           {item.pill}
                         </span>
                       )}
@@ -715,36 +757,38 @@ function AppShellInner({
         </div>
 
         {/* Sidebar Footer */}
-        <div className="shrink-0 border-t border-[#1f1f23] p-3 bg-slate-950/90">
+        <div className="shrink-0 border-t border-[#1f1f23] p-3 bg-[#09090b]">
           {!collapsed ? (
             <div className="space-y-2">
-              {activeMember && (
-                <Link
-                  href="/settings"
-                  className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg bg-slate-900/70 hover:bg-slate-900 border border-[#1f1f23] transition-colors"
-                  title="Open Team & Settings"
-                >
+              {liveMember && (
+                <div className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg bg-[#121215] border border-zinc-800/80">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
                     <div className="min-w-0">
-                      <div className="text-xs font-medium text-slate-200 truncate">
-                        {activeMember.name}
+                      <div className="text-xs font-semibold text-zinc-100 truncate">
+                        {liveMember.name}
                       </div>
-                      <div className="text-[10px] text-slate-400 truncate">
-                        {ROLE_PRESETS[activeMember.role]?.label || activeMember.role}
+                      <div className="text-[10px] text-zinc-400 truncate">
+                        {ROLE_PRESETS[liveMember.role]?.label || liveMember.role}
                       </div>
                     </div>
                   </div>
-                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 shrink-0">
-                    Team
-                  </span>
-                </Link>
+                  <form action={logoutAction}>
+                    <button
+                      type="submit"
+                      title="Log Out"
+                      className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 transition-colors"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                    </button>
+                  </form>
+                </div>
               )}
 
               <button
                 type="button"
                 onClick={toggleCollapsed}
-                className="w-full flex items-center justify-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs text-slate-400 hover:text-white transition-colors"
+                className="w-full flex items-center justify-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#121215] hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-400 hover:text-white transition-colors"
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
                 <span>Collapse Sidebar</span>
@@ -755,7 +799,7 @@ function AppShellInner({
               type="button"
               onClick={toggleCollapsed}
               title="Expand Sidebar"
-              className="w-full flex items-center justify-center p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-colors"
+              className="w-full flex items-center justify-center p-2 rounded-lg bg-[#121215] hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white transition-colors"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
@@ -768,7 +812,7 @@ function AppShellInner({
       {/* ============================================================ */}
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         {/* Top Header Bar */}
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#1f1f23] bg-[#09090b]/85 px-4 sm:px-6 backdrop-blur-xl z-30">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#1f1f23] bg-[#09090b]/90 px-4 sm:px-6 backdrop-blur-xl z-30">
           <div className="flex items-center gap-3.5 min-w-0">
             <button
               type="button"
@@ -780,8 +824,6 @@ function AppShellInner({
 
             <div>
               <div className="flex items-center gap-2 text-[11px] text-zinc-400">
-                <span className="truncate max-w-[160px] text-zinc-400 font-medium">{currentTenantName}</span>
-                <span className="text-zinc-600">/</span>
                 <span className="text-zinc-300 font-medium truncate">{currentNicheName}</span>
               </div>
               <h1 className="text-sm sm:text-base font-bold text-white tracking-tight truncate">
@@ -790,60 +832,61 @@ function AppShellInner({
             </div>
           </div>
 
-          {/* Right Header: Niche Selector & User Menu */}
+          {/* Right Header: Niche Switcher (Only if permitted) & User Menu */}
           <div className="flex items-center gap-3">
-            {/* Clean Niche Switcher Button */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => {
-                  setNicheDropdownOpen(!nicheDropdownOpen);
-                  setMemberDropdownOpen(false);
-                }}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#141418] hover:bg-[#1a1a20] border border-zinc-800 text-xs text-zinc-300 hover:text-white transition shadow-sm"
-                title="Active niche"
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                <span className="font-medium text-white max-w-[130px] sm:max-w-[180px] truncate">{currentNicheName}</span>
-                <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
-              </button>
+            {showNicheSwitcher && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNicheDropdownOpen(!nicheDropdownOpen);
+                    setMemberDropdownOpen(false);
+                  }}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#141418] hover:bg-[#1a1a20] border border-zinc-800 text-xs text-zinc-300 hover:text-white transition shadow-sm"
+                  title="Active niche"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                  <span className="font-medium text-white max-w-[130px] sm:max-w-[180px] truncate">{currentNicheName}</span>
+                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+                </button>
 
-              {nicheDropdownOpen && (
-                <div className="absolute right-0 top-full mt-1.5 w-64 z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-2 space-y-1 max-h-80 overflow-y-auto">
-                  <div className="px-2 py-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center justify-between">
-                    <span>Switch Niche</span>
-                    <Zap className="w-3 h-3 text-zinc-400" />
+                {nicheDropdownOpen && (
+                  <div className="absolute right-0 top-full mt-1.5 w-64 z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-2 space-y-1 max-h-80 overflow-y-auto">
+                    <div className="px-2 py-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center justify-between">
+                      <span>Switch Niche</span>
+                      <Zap className="w-3 h-3 text-zinc-400" />
+                    </div>
+                    {allowedMarketsForMember.map((n) => {
+                      const isCurrent = activeMarket ? activeMarket.id === n.id : currentNicheName === n.name;
+                      return (
+                        <button
+                          key={n.id}
+                          type="button"
+                          onClick={() => {
+                            handleSwitchNiche(n.id);
+                            setNicheDropdownOpen(false);
+                          }}
+                          className={cn(
+                            "w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left text-xs transition",
+                            isCurrent
+                              ? "bg-zinc-800 text-white font-medium"
+                              : "text-zinc-300 hover:bg-zinc-800/60"
+                          )}
+                        >
+                          <span className="truncate pr-2">{n.name}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-400 shrink-0">
+                            {n.leadCount}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
-                  {displayedMarkets.map((n) => {
-                    const isCurrent = activeMarket ? activeMarket.id === n.id : currentNicheName === n.name;
-                    return (
-                      <button
-                        key={n.id}
-                        type="button"
-                        onClick={() => {
-                          handleSwitchNiche(n.id);
-                          setNicheDropdownOpen(false);
-                        }}
-                        className={cn(
-                          "w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left text-xs transition",
-                          isCurrent
-                            ? "bg-zinc-800 text-white font-medium"
-                            : "text-zinc-300 hover:bg-zinc-800/60"
-                        )}
-                      >
-                        <span className="truncate pr-2">{n.name}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-400 shrink-0">
-                          {n.leadCount}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
 
             {/* User Profile Avatar & Dropdown */}
-            {activeMember && (
+            {liveMember && (
               <div className="relative">
                 <button
                   type="button"
@@ -855,13 +898,13 @@ function AppShellInner({
                   title="Account profile"
                 >
                   <div className="w-6 h-6 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-[11px] font-bold text-white shrink-0">
-                    {activeMember.name?.charAt(0).toUpperCase() || "U"}
+                    {liveMember.name?.charAt(0).toUpperCase() || "U"}
                   </div>
                   <span className="font-semibold text-white max-w-[110px] truncate hidden sm:inline">
-                    {activeMember.name.replace(/\s*\(You\)/i, "")}
+                    {liveMember.name.replace(/\s*\(You\)/i, "")}
                   </span>
                   <span className="text-[10px] text-zinc-400 hidden md:inline">
-                    {ROLE_PRESETS[activeMember.role]?.label || activeMember.role}
+                    {ROLE_PRESETS[liveMember.role]?.label || liveMember.role}
                   </span>
                   <ChevronDown className="w-3 h-3 text-zinc-400" />
                 </button>
@@ -869,14 +912,14 @@ function AppShellInner({
                 {memberDropdownOpen && (
                   <div className="absolute right-0 top-full mt-1.5 w-60 z-50 rounded-xl border border-zinc-800 bg-[#121215] p-3 shadow-2xl space-y-2.5">
                     <div className="border-b border-zinc-800/80 pb-2.5">
-                      <div className="text-xs font-semibold text-white truncate">{activeMember.name}</div>
-                      <div className="text-[11px] text-zinc-400 truncate">{activeMember.email || "Workspace Account"}</div>
+                      <div className="text-xs font-semibold text-white truncate">{liveMember.name}</div>
+                      <div className="text-[11px] text-zinc-400 truncate">{liveMember.email || "Workspace Account"}</div>
                       <span className="inline-block mt-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300">
-                        {ROLE_PRESETS[activeMember.role]?.label || activeMember.role}
+                        {ROLE_PRESETS[liveMember.role]?.label || liveMember.role}
                       </span>
                     </div>
 
-                    {canManageNiches && (
+                    {canManageTeam && (
                       <Link
                         href="/settings"
                         onClick={() => setMemberDropdownOpen(false)}
@@ -904,36 +947,24 @@ function AppShellInner({
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 transition-all bg-[#09090b]">
           <div className="w-full max-w-[1700px] mx-auto space-y-5">
-            {isCurrentRouteRestricted && activeMember ? (
-              <div className="mx-auto max-w-lg rounded-xl border border-slate-800 bg-slate-900/60 p-8 text-center space-y-4 mt-10">
-                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-800 text-slate-300">
+            {!isAllowedOnCurrentPath && liveMember ? (
+              <div className="mx-auto max-w-md rounded-xl border border-zinc-800 bg-[#121215] p-8 text-center space-y-4 mt-10">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800 text-zinc-300">
                   <Lock className="h-4 w-4" />
                 </div>
                 <div className="space-y-1">
-                  <h2 className="text-base font-semibold text-white">
-                    Page Not Enabled for {activeMember.name}
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    Your current role ({ROLE_PRESETS[activeMember.role]?.label || activeMember.role})
-                    does not have access to <strong>{getPageTitle()}</strong>.
+                  <h2 className="text-base font-bold text-white">Redirecting to Your Workspace...</h2>
+                  <p className="text-xs text-zinc-400">
+                    Taking you to your permitted workspace view.
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                <div className="pt-2">
                   <Link
-                    href="/"
-                    className="rounded-lg bg-white px-4 py-2 text-xs font-medium text-slate-950 hover:bg-slate-200"
+                    href={fallbackRoute}
+                    className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-xs font-bold text-black hover:bg-zinc-200"
                   >
-                    Go to Overview
+                    Continue
                   </Link>
-                  {ownerMember && ownerMember.id !== activeMember.id && (
-                    <button
-                      type="button"
-                      onClick={() => handleSwitchMember(ownerMember.id)}
-                      className="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700"
-                    >
-                      Switch Back to {ownerMember.name}
-                    </button>
-                  )}
                 </div>
               </div>
             ) : (
@@ -944,29 +975,29 @@ function AppShellInner({
       </div>
 
       {/* ============================================================ */}
-      {/* MODAL 1: CREATE / MANAGE NICHES                              */}
+      {/* MODAL 1: CREATE / MANAGE NICHES (Owner / Permitted Only)     */}
       {/* ============================================================ */}
-      {nicheModalOpen && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-2xl rounded-xl bg-slate-900 border border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+      {nicheModalOpen && canManageNiches && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-2xl rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
               <div>
-                <h2 className="text-base font-semibold text-white">Manage Niches</h2>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <h2 className="text-base font-bold text-white">Manage Niches</h2>
+                <p className="text-xs text-zinc-400 mt-0.5">
                   Create unlimited niches (HVAC, Real Estate, Medical, Solar, or any custom niche).
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setNicheModalOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"
+                className="p-1.5 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Tabs */}
-            <div className="flex border-b border-slate-800 px-6 pt-2 gap-4">
+            <div className="flex border-b border-zinc-800 px-6 pt-2 gap-4">
               <button
                 type="button"
                 onClick={() => {
@@ -978,7 +1009,7 @@ function AppShellInner({
                   "pb-2.5 text-xs font-medium border-b-2 transition-colors flex items-center gap-1.5",
                   nicheModalTab === "create"
                     ? "border-white text-white"
-                    : "border-transparent text-slate-400 hover:text-slate-200"
+                    : "border-transparent text-zinc-400 hover:text-zinc-200"
                 )}
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -995,7 +1026,7 @@ function AppShellInner({
                   "pb-2.5 text-xs font-medium border-b-2 transition-colors flex items-center gap-1.5",
                   nicheModalTab === "manage"
                     ? "border-white text-white"
-                    : "border-transparent text-slate-400 hover:text-slate-200"
+                    : "border-transparent text-zinc-400 hover:text-zinc-200"
                 )}
               >
                 <Edit3 className="w-3.5 h-3.5" />
@@ -1019,7 +1050,7 @@ function AppShellInner({
               {nicheModalTab === "create" ? (
                 <form onSubmit={handleCreateNicheSubmit} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-2">
+                    <label className="block text-xs font-medium text-zinc-300 mb-2">
                       Quick Templates (Or type any custom niche below)
                     </label>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -1031,12 +1062,12 @@ function AppShellInner({
                           className={cn(
                             "px-3 py-2 rounded-lg border text-left text-xs transition",
                             nicheCategory === preset.category && nicheName === preset.name
-                              ? "bg-slate-800 border-slate-500 text-white font-medium"
-                              : "bg-slate-950/70 border-slate-800 text-slate-300 hover:border-slate-700"
+                              ? "bg-zinc-800 border-zinc-500 text-white font-medium"
+                              : "bg-[#09090b] border-zinc-800 text-zinc-300 hover:border-zinc-700"
                           )}
                         >
                           <div className="font-medium truncate">{preset.name}</div>
-                          <div className="text-[10px] text-slate-500 truncate">
+                          <div className="text-[10px] text-zinc-500 truncate">
                             {preset.keywords[0]}
                           </div>
                         </button>
@@ -1046,7 +1077,7 @@ function AppShellInner({
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="sm:col-span-2">
-                      <label className="block text-xs font-medium text-slate-300 mb-1">
+                      <label className="block text-xs font-medium text-zinc-300 mb-1">
                         Niche Name *
                       </label>
                       <input
@@ -1055,11 +1086,11 @@ function AppShellInner({
                         value={nicheName}
                         onChange={(e) => setNicheName(e.target.value)}
                         placeholder="e.g., Real Estate, Medical Clinics, HVAC..."
-                        className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:border-slate-600 focus:outline-none"
+                        className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-300 mb-1">
+                      <label className="block text-xs font-medium text-zinc-300 mb-1">
                         Category Tag
                       </label>
                       <input
@@ -1067,13 +1098,13 @@ function AppShellInner({
                         value={nicheCategory}
                         onChange={(e) => setNicheCategory(e.target.value)}
                         placeholder="e.g., real_estate"
-                        className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:border-slate-600 focus:outline-none"
+                        className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                    <label className="block text-xs font-medium text-zinc-300 mb-1">
                       Short Description
                     </label>
                     <input
@@ -1081,12 +1112,12 @@ function AppShellInner({
                       value={nicheDesc}
                       onChange={(e) => setNicheDesc(e.target.value)}
                       placeholder="e.g., Local dental clinics, property management companies..."
-                      className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:border-slate-600 focus:outline-none"
+                      className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                    <label className="block text-xs font-medium text-zinc-300 mb-1">
                       Search Keywords (comma-separated)
                     </label>
                     <textarea
@@ -1094,19 +1125,19 @@ function AppShellInner({
                       value={nicheKeywords}
                       onChange={(e) => setNicheKeywords(e.target.value)}
                       placeholder="e.g., real estate brokerage, property management"
-                      className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:border-slate-600 focus:outline-none"
+                      className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                     />
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-medium text-slate-300 mb-1">
+                      <label className="block text-xs font-medium text-zinc-300 mb-1">
                         Business Type
                       </label>
                       <select
                         value={nicheBusinessType}
                         onChange={(e) => setNicheBusinessType(e.target.value as any)}
-                        className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:border-slate-600 focus:outline-none"
+                        className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                       >
                         <option value="both">Residential &amp; Commercial</option>
                         <option value="residential">Residential / Consumer</option>
@@ -1114,7 +1145,7 @@ function AppShellInner({
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-300 mb-1">
+                      <label className="block text-xs font-medium text-zinc-300 mb-1">
                         Minimum Score (0 - 100)
                       </label>
                       <input
@@ -1123,23 +1154,23 @@ function AppShellInner({
                         max={95}
                         value={nicheMinScore}
                         onChange={(e) => setNicheMinScore(Number(e.target.value))}
-                        className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:border-slate-600 focus:outline-none"
+                        className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                       />
                     </div>
                   </div>
 
-                  <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-2">
+                  <div className="pt-3 border-t border-zinc-800 flex items-center justify-end gap-2">
                     <button
                       type="button"
                       onClick={() => setNicheModalOpen(false)}
-                      className="px-4 py-2 rounded-lg text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-white"
+                      className="px-4 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:bg-zinc-800 hover:text-white"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
                       disabled={isPending}
-                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white hover:bg-slate-200 text-slate-950 text-xs font-medium transition disabled:opacity-50"
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-xs font-bold transition disabled:opacity-50"
                     >
                       {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
                       <span>Create Niche</span>
@@ -1158,59 +1189,59 @@ function AppShellInner({
                         className={cn(
                           "p-3.5 rounded-xl border transition-all",
                           isCurrent
-                            ? "bg-slate-800/60 border-slate-600"
-                            : "bg-slate-950/60 border-slate-800"
+                            ? "bg-zinc-800/60 border-zinc-600"
+                            : "bg-[#09090b] border-zinc-800"
                         )}
                       >
                         {isEditing ? (
                           <div className="space-y-3">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               <div>
-                                <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                                <label className="block text-[11px] font-medium text-zinc-400 mb-1">
                                   Niche Name
                                 </label>
                                 <input
                                   type="text"
                                   value={editName}
                                   onChange={(e) => setEditName(e.target.value)}
-                                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white"
+                                  className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-xs text-white"
                                 />
                               </div>
                               <div>
-                                <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                                <label className="block text-[11px] font-medium text-zinc-400 mb-1">
                                   Description
                                 </label>
                                 <input
                                   type="text"
                                   value={editDesc}
                                   onChange={(e) => setEditDesc(e.target.value)}
-                                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white"
+                                  className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-xs text-white"
                                 />
                               </div>
                             </div>
                             <div>
-                              <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                              <label className="block text-[11px] font-medium text-zinc-400 mb-1">
                                 Keywords (comma-separated)
                               </label>
                               <input
                                 type="text"
                                 value={editKeywords}
                                 onChange={(e) => setEditKeywords(e.target.value)}
-                                className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white"
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-xs text-white"
                               />
                             </div>
                             <div className="flex items-center justify-end gap-2">
                               <button
                                 type="button"
                                 onClick={() => setEditingMarketId(null)}
-                                className="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300"
+                                className="px-3 py-1.5 rounded-lg bg-zinc-800 text-xs text-zinc-300"
                               >
                                 Cancel
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleSaveEditMarket(m.id)}
-                                className="px-3 py-1.5 rounded-lg bg-white text-slate-950 text-xs font-medium"
+                                className="px-3 py-1.5 rounded-lg bg-white text-black text-xs font-bold"
                               >
                                 Save
                               </button>
@@ -1222,15 +1253,15 @@ function AppShellInner({
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-semibold text-white">{m.name}</span>
                                 {isCurrent && (
-                                  <span className="px-2 py-0.5 rounded bg-slate-700 text-slate-200 text-[10px] font-medium">
+                                  <span className="px-2 py-0.5 rounded bg-zinc-700 text-zinc-200 text-[10px] font-medium">
                                     Active
                                   </span>
                                 )}
-                                <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400 text-[10px]">
+                                <span className="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 text-[10px]">
                                   {m.leadCount} leads
                                 </span>
                               </div>
-                              <p className="text-xs text-slate-400 mt-0.5">{m.description}</p>
+                              <p className="text-xs text-zinc-400 mt-0.5">{m.description}</p>
                             </div>
 
                             <div className="flex items-center gap-1.5 shrink-0">
@@ -1241,7 +1272,7 @@ function AppShellInner({
                                     setNicheModalOpen(false);
                                     handleSwitchNiche(m.id);
                                   }}
-                                  className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-200 text-slate-950 text-xs font-medium transition"
+                                  className="px-3 py-1.5 rounded-lg bg-white hover:bg-zinc-200 text-black text-xs font-bold transition"
                                 >
                                   Switch
                                 </button>
@@ -1249,7 +1280,7 @@ function AppShellInner({
                               <button
                                 type="button"
                                 onClick={() => startEditingMarket(m)}
-                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white"
+                                className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white"
                                 title="Edit Niche"
                               >
                                 <Edit3 className="w-3.5 h-3.5" />
@@ -1258,7 +1289,7 @@ function AppShellInner({
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteMarket(m.id, m.name)}
-                                  className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-950/50 hover:text-rose-300"
+                                  className="p-1.5 rounded-lg text-zinc-400 hover:bg-rose-950/50 hover:text-rose-300"
                                   title="Remove Niche"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -1280,20 +1311,20 @@ function AppShellInner({
       {/* ============================================================ */}
       {/* MODAL 2: CREATE NEW WORKSPACE                                */}
       {/* ============================================================ */}
-      {tenantModalOpen && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-xl bg-slate-900 border border-slate-800 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+      {tenantModalOpen && canManageNiches && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
               <div>
-                <h2 className="text-base font-semibold text-white">New Workspace</h2>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <h2 className="text-base font-bold text-white">New Workspace</h2>
+                <p className="text-xs text-zinc-400 mt-0.5">
                   Add a separate company or client workspace.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setTenantModalOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"
+                className="p-1.5 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1307,7 +1338,7 @@ function AppShellInner({
               )}
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
+                <label className="block text-xs font-medium text-zinc-300 mb-1">
                   Workspace Name *
                 </label>
                 <input
@@ -1316,12 +1347,12 @@ function AppShellInner({
                   value={newTenantName}
                   onChange={(e) => setNewTenantName(e.target.value)}
                   placeholder="e.g., Apex Agency, Client Workspace..."
-                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:border-slate-600 focus:outline-none"
+                  className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
+                <label className="block text-xs font-medium text-zinc-300 mb-1">
                   Your Role
                 </label>
                 <input
@@ -1329,13 +1360,13 @@ function AppShellInner({
                   value={newTenantRole}
                   onChange={(e) => setNewTenantRole(e.target.value)}
                   placeholder="e.g., Owner, Manager"
-                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:border-slate-600 focus:outline-none"
+                  className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                  <label className="block text-xs font-medium text-zinc-300 mb-1">
                     First Niche Template
                   </label>
                   <select
@@ -1346,7 +1377,7 @@ function AppShellInner({
                       const preset = NICHE_PRESET_TEMPLATES.find((p) => p.category === cat);
                       if (preset) setNewTenantInitialNiche(preset.name);
                     }}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:border-slate-600 focus:outline-none"
+                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                   >
                     {NICHE_PRESET_TEMPLATES.map((p) => (
                       <option key={p.category} value={p.category}>
@@ -1356,30 +1387,30 @@ function AppShellInner({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                  <label className="block text-xs font-medium text-zinc-300 mb-1">
                     First Niche Name
                   </label>
                   <input
                     type="text"
                     value={newTenantInitialNiche}
                     onChange={(e) => setNewTenantInitialNiche(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:border-slate-600 focus:outline-none"
+                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                   />
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-2">
+              <div className="pt-3 border-t border-zinc-800 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setTenantModalOpen(false)}
-                  className="px-4 py-2 rounded-lg text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-white"
+                  className="px-4 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:bg-zinc-800 hover:text-white"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white hover:bg-slate-200 text-slate-950 text-xs font-medium"
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-xs font-bold"
                 >
                   {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
                   <span>Create Workspace</span>
