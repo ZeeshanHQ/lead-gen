@@ -27,6 +27,7 @@ import {
   Compass,
   PhoneCall,
   Settings,
+  Activity,
   Building2,
   ChevronLeft,
   ChevronRight,
@@ -404,7 +405,9 @@ function AppShellInner({
       pill?: string;
       count?: number;
       highlight?: boolean;
-      perm: PermissionKey;
+      perm?: PermissionKey;
+      alwaysVisible?: boolean;
+      ownerOnly?: boolean;
     }>;
   }> = [
     {
@@ -425,7 +428,18 @@ function AppShellInner({
     {
       group: "Administration",
       items: [
-        { href: "/settings", label: "Team & Settings", icon: Settings, perm: "manageTeamAndSettings" },
+        {
+          href: "/settings",
+          label: canManageTeam ? "Team & Settings" : "Account Settings",
+          icon: Settings,
+          alwaysVisible: true,
+        },
+        {
+          href: "/usage",
+          label: "API Usage",
+          icon: Activity,
+          ownerOnly: true,
+        },
       ],
     },
   ];
@@ -434,9 +448,11 @@ function AppShellInner({
   const visibleNavGroups = allNavGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter(
-        (item) => isOwner || Boolean(liveMember?.permissions[item.perm])
-      ),
+      items: group.items.filter((item) => {
+        if (item.ownerOnly) return isOwner;
+        if (item.alwaysVisible) return true;
+        return isOwner || (item.perm ? Boolean(liveMember?.permissions[item.perm]) : false);
+      }),
     }))
     .filter((group) => group.items.length > 0);
 
@@ -850,13 +866,20 @@ function AppShellInner({
                       </span>
                     </div>
 
-                    {canManageTeam && (
+                    <Link
+                      href="/settings"
+                      onClick={() => setMemberDropdownOpen(false)}
+                      className="block rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition"
+                    >
+                      {canManageTeam ? "Team & Settings" : "Account Settings"}
+                    </Link>
+                    {isOwner && (
                       <Link
-                        href="/settings"
+                        href="/usage"
                         onClick={() => setMemberDropdownOpen(false)}
                         className="block rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition"
                       >
-                        Team &amp; Settings
+                        API Usage &amp; Quotas
                       </Link>
                     )}
 

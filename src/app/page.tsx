@@ -19,6 +19,7 @@ import {
   Activity,
   ChevronRight,
   Calendar,
+  UserCheck,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -42,8 +43,14 @@ export default async function OverviewPage() {
     loadLeadRows(db, "approved", market.id),
   ]);
 
-  // Filter approved rows by the active Must-Have Gate
+  const isOwnerOrManager =
+    activeMember.role === "OWNER" || Boolean(activeMember.permissions.manageTeamAndSettings);
+
+  // Filter approved rows by the active Must-Have Gate AND by member assignment if not Owner/Manager
   const qualifiedRows = approvedRows.filter((l) => {
+    if (!isOwnerOrManager && l.assignedMemberId !== activeMember.id) {
+      return false;
+    }
     if (activeGate.requirePhone) {
       const phone = l.best?.phone || l.phoneDisplay || "";
       const digits = phone.replace(/\D/g, "");
@@ -68,6 +75,14 @@ export default async function OverviewPage() {
     .sort((a, b) => (b.icpScore ?? 0) - (a.icpScore ?? 0))
     .slice(0, 6);
 
+  const recentEntries = isOwnerOrManager
+    ? overview.recent
+    : overview.recent.filter(
+        (entry) =>
+          entry.actor?.toLowerCase() === activeMember.name?.toLowerCase() ||
+          entry.actor?.toLowerCase() === activeMember.email?.toLowerCase()
+      );
+
   const totalCrm = qualifiedRows.length;
   const pctReady = totalCrm > 0 ? Math.round((readyToCall / totalCrm) * 100) : 0;
   const pctConnected = totalCrm > 0 ? Math.round((connected / totalCrm) * 100) : 0;
@@ -86,14 +101,22 @@ export default async function OverviewPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                 {market.name}
               </span>
+              {!isOwnerOrManager && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 font-medium text-emerald-300">
+                  <UserCheck className="h-3 w-3" />
+                  My Assigned Queue ({activeMember.name})
+                </span>
+              )}
             </div>
 
             <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
               {market.name}
             </h1>
             <p className="text-sm text-zinc-400 leading-relaxed">
-              {market.description ||
-                `Verified ${market.name} lead extraction, Must-Have Quality Gate enforcement, and cold-calling CRM pipeline.`}
+              {isOwnerOrManager
+                ? market.description ||
+                  `Verified ${market.name} lead extraction, Must-Have Quality Gate enforcement, and cold-calling CRM pipeline.`
+                : `Your assigned ${market.name} calling queue, scheduled callbacks, and booked meetings.`}
             </p>
           </div>
 
@@ -134,14 +157,14 @@ export default async function OverviewPage() {
           className="group rounded-2xl border border-zinc-800/80 bg-[#121215] p-5 transition hover:border-zinc-700"
         >
           <div className="flex items-center justify-between text-xs text-zinc-400">
-            <span>Verified Leads in CRM</span>
+            <span>{isOwnerOrManager ? "Verified Leads in CRM" : "My Assigned Leads"}</span>
             <Building2 className="w-4 h-4 text-zinc-500" />
           </div>
           <div className="mt-2 text-3xl font-bold tracking-tight text-white">
             {totalCrm}
           </div>
           <div className="mt-1 flex items-center justify-between text-xs text-zinc-500">
-            <span>Passed Must-Have Gate</span>
+            <span>{isOwnerOrManager ? "Passed Must-Have Gate" : "Assigned to your queue"}</span>
             <span className="text-zinc-300 flex items-center gap-0.5 text-[11px] font-medium group-hover:underline">
               Open CRM <ChevronRight className="w-3 h-3" />
             </span>
@@ -191,7 +214,7 @@ export default async function OverviewPage() {
           className="group rounded-2xl border border-zinc-800/80 bg-[#121215] p-5 transition hover:border-emerald-500/40"
         >
           <div className="flex items-center justify-between text-xs text-zinc-400 group-hover:text-emerald-300">
-            <span>Meetings Booked 🎯</span>
+            <span>Meetings Booked</span>
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="mt-2 text-3xl font-bold tracking-tight text-white">
@@ -212,11 +235,11 @@ export default async function OverviewPage() {
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-zinc-400" />
             <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-              CRM Pipeline Breakdown
+              {isOwnerOrManager ? "CRM Pipeline Breakdown" : "My Calling Pipeline Breakdown"}
             </h2>
           </div>
           <div className="text-xs text-zinc-400">
-            {totalCrm} Active CRM Opportunities
+            {totalCrm} {isOwnerOrManager ? "Active CRM Opportunities" : "Assigned Leads"}
           </div>
         </div>
 
@@ -265,10 +288,14 @@ export default async function OverviewPage() {
             <div className="flex items-center justify-between border-b border-zinc-800/80 pb-4">
               <div>
                 <h2 className="text-base font-bold text-white">
-                  Top Qualified Leads in CRM
+                  {isOwnerOrManager
+                    ? "Top Qualified Leads in CRM"
+                    : "My Top Assigned Leads in CRM"}
                 </h2>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                  Highest-scoring verified leads ready for immediate outreach.
+                  {isOwnerOrManager
+                    ? "Highest-scoring verified leads ready for immediate outreach."
+                    : `Verified leads assigned to ${activeMember.name} for calling and follow-up.`}
                 </p>
               </div>
 
@@ -287,18 +314,32 @@ export default async function OverviewPage() {
               <div className="py-12 text-center">
                 <Building2 className="w-10 h-10 text-zinc-600 mx-auto mb-3" />
                 <h3 className="text-sm font-semibold text-zinc-300">
-                  No Qualified Leads in CRM Yet
+                  {isOwnerOrManager
+                    ? "No Qualified Leads in CRM Yet"
+                    : "No Leads Assigned to Your Queue Yet"}
                 </h3>
                 <p className="text-xs text-zinc-500 max-w-sm mx-auto mt-1 mb-4">
-                  Extract verified {market.name} companies with dialable phone numbers in 1 click.
+                  {isOwnerOrManager
+                    ? `Extract verified ${market.name} companies with dialable phone numbers in 1 click.`
+                    : `Import your lead sheet in Leads CRM or ask your Workspace Owner to assign ${market.name} leads to your account.`}
                 </p>
-                <Link
-                  href="/discover"
-                  className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-bold text-black hover:bg-zinc-200 transition"
-                >
-                  <Compass className="w-3.5 h-3.5" />
-                  <span>Find &amp; Qualify Leads</span>
-                </Link>
+                {perms.discoverLeads ? (
+                  <Link
+                    href="/discover"
+                    className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-bold text-black hover:bg-zinc-200 transition"
+                  >
+                    <Compass className="w-3.5 h-3.5" />
+                    <span>Find &amp; Qualify Leads</span>
+                  </Link>
+                ) : (
+                  <Link
+                    href="/caller"
+                    className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-bold text-black hover:bg-zinc-200 transition"
+                  >
+                    <PhoneCall className="w-3.5 h-3.5" />
+                    <span>Open My Leads CRM</span>
+                  </Link>
+                )}
               </div>
             ) : (
               <div className="divide-y divide-zinc-800/60 mt-2">
@@ -313,7 +354,7 @@ export default async function OverviewPage() {
                       className="py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:bg-zinc-900/50 -mx-2 px-2 rounded-xl transition"
                     >
                       <div className="space-y-1 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <Link
                             href="/caller"
                             className="font-semibold text-sm text-white hover:underline transition truncate"
@@ -329,6 +370,12 @@ export default async function OverviewPage() {
                               }`}
                             >
                               {score}/100
+                            </span>
+                          )}
+                          {isOwnerOrManager && lead.assignedMemberName && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-zinc-800/90 border border-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-300">
+                              <UserCheck className="w-2.5 h-2.5 text-emerald-400" />
+                              {lead.assignedMemberName}
                             </span>
                           )}
                         </div>
@@ -412,17 +459,19 @@ export default async function OverviewPage() {
             <div className="flex items-center justify-between border-b border-zinc-800/80 pb-3">
               <div className="flex items-center gap-2">
                 <Activity className="w-4 h-4 text-zinc-400" />
-                <h3 className="text-sm font-bold text-white">Recent Activity</h3>
+                <h3 className="text-sm font-bold text-white">
+                  {isOwnerOrManager ? "Recent Activity" : "My Recent Activity"}
+                </h3>
               </div>
             </div>
 
-            {overview.recent.length === 0 ? (
+            {recentEntries.length === 0 ? (
               <div className="py-6 text-center text-xs text-zinc-500">
                 No activity logged yet.
               </div>
             ) : (
               <div className="divide-y divide-zinc-800/60 mt-2 text-xs">
-                {overview.recent.slice(0, 5).map((entry) => (
+                {recentEntries.slice(0, 5).map((entry) => (
                   <div key={entry.id} className="py-2.5 space-y-1">
                     <div className="flex items-center justify-between gap-2">
                       <span className="rounded bg-[#09090b] px-1.5 py-0.5 font-mono text-[10px] text-zinc-300 border border-zinc-800">

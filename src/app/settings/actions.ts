@@ -12,6 +12,7 @@ import {
   switchActiveMember,
   acceptTeamInvite,
   listTeamMembers,
+  getActiveTeamMember,
   type InviteMemberInput,
   type UpdateMemberAccessInput,
 } from "@/server/repo/team";
@@ -66,6 +67,29 @@ export async function updateTeamMemberAccessAction(
     return { ok: true, member };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to update member access" };
+  }
+}
+
+export async function updateMyProfileAction(input: { name: string; title?: string }) {
+  try {
+    const db = await getDb();
+    const { activeMember } = await getActiveTeamMember(db);
+    if (!activeMember || activeMember.id === "guest") {
+      return { ok: false, error: "Unauthorized" };
+    }
+    const member = await updateTeamMemberAccess(
+      db,
+      activeMember.id,
+      {
+        name: input.name.trim() || activeMember.name,
+        title: input.title?.trim() ?? activeMember.title,
+      },
+      activeMember.name
+    );
+    revalidatePath("/", "layout");
+    return { ok: true, member };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to update profile" };
   }
 }
 

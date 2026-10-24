@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/server/db/client";
 import { loadLeadRows } from "@/server/repo/queue";
-import { listSyncEligibleIds } from "@/server/repo/approvals";
 import { factValue } from "@/server/domain/facts";
 
 function escapeCsvCell(val: unknown): string {
@@ -13,9 +12,27 @@ function escapeCsvCell(val: unknown): string {
 export async function GET() {
   try {
     const db = await getDb();
+    const { getActiveTeamMember } = await import("@/server/repo/team");
+    const { activeMember } = await getActiveTeamMember(db);
+
+    if (activeMember.role !== "OWNER" && !activeMember.permissions.exportAndSync) {
+      return NextResponse.json(
+        {
+          error:
+            "Export access is restricted. Only the Workspace Owner or authorized members can export CSV files.",
+        },
+        { status: 403 }
+      );
+    }
+
     const { getActiveContext } = await import("@/server/repo/markets");
     const { market } = await getActiveContext(db);
-    const leads = await loadLeadRows(db, "approved", market.id);
+    const allApproved = await loadLeadRows(db, "approved", market.id);
+    const isOwnerOrManager =
+      activeMember.role === "OWNER" || Boolean(activeMember.permissions.manageTeamAndSettings);
+    const leads = isOwnerOrManager
+      ? allApproved
+      : allApproved.filter((l) => l.assignedMemberId === activeMember.id);
 
     const headers = [
       "Company Name",
@@ -36,6 +53,7 @@ export async function GET() {
       "Tech Stack / FSM",
       "Google Maps URL",
       "Lifecycle Status",
+      "Assigned Caller",
       "Next Follow-Up Scheduled",
       "Caller Conversation Notes",
       "Approved At",
@@ -46,7 +64,8 @@ export async function GET() {
       const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
         `${l.name} ${l.address || ""} ${l.city || ""} ${l.state || ""}`
       )}`;
-      const nextFollowUp = l.notes?.match(/\[Next Follow-up Scheduled:\s*([^\]]+)\]/i)?.[1] || "";
+      const nextFollowUp =
+        l.notes?.match(/\[Next Follow-up Scheduled:\s*([^\]]+)\]/i)?.[1] || "";
 
       return [
         escapeCsvCell(l.name),
@@ -67,6 +86,7 @@ export async function GET() {
         escapeCsvCell(factValue(l.facts, "software")),
         escapeCsvCell(mapsUrl),
         escapeCsvCell(l.status),
+        escapeCsvCell(l.assignedMemberName || "Unassigned"),
         escapeCsvCell(nextFollowUp),
         escapeCsvCell(l.notes || l.researchSummary || ""),
         escapeCsvCell(l.approvedAt ? new Date(l.approvedAt).toISOString().slice(0, 10) : ""),
@@ -84,6 +104,9 @@ export async function GET() {
       },
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || "Failed to generate CSV" }, { status: 500 });
+    return NextResponse.json(
+      { error: err.message || "Failed to generate CSV" },
+      { status: 500 }
+    );
   }
 }

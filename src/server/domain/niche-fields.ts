@@ -19,7 +19,7 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Install & Replacement",
       shortLabel: "Install Focus",
       options: [
-        "Full System Installs ✓",
+        "Full System Installs",
         "AC & Heating Replacement",
         "Service & Repair Only",
         "Commercial + Residential",
@@ -31,7 +31,7 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Customer Financing",
       shortLabel: "Financing",
       options: [
-        "Offers Financing ✓",
+        "Offers Financing",
         "No Financing Listed",
         "Synchrony / GoodLeap",
         "Wells Fargo / GreenSky",
@@ -43,8 +43,8 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Trucks / Techs",
       shortLabel: "Fleet Size",
       options: [
-        "1–4 Trucks",
-        "5–15 Trucks",
+        "1-4 Trucks",
+        "5-15 Trucks",
         "15+ Trucks",
         "Owner-Operator",
         "Ask on Call",
@@ -70,7 +70,7 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Property Focus",
       shortLabel: "Property Focus",
       options: [
-        "Residential Brokerage ✓",
+        "Residential Brokerage",
         "Commercial Real Estate",
         "Luxury & Relocation",
         "Property Management",
@@ -83,8 +83,8 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Agents / Team Size",
       shortLabel: "Team Size",
       options: [
-        "Solo / Boutique (1–5)",
-        "Growing Team (6–20)",
+        "Solo / Boutique (1-5)",
+        "Growing Team (6-20)",
         "Large Brokerage (20+)",
         "Multi-Office Team",
         "Ask on Call",
@@ -96,7 +96,7 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       shortLabel: "Listings",
       options: [
         "High Volume (15+ Active)",
-        "Active Seller Listings (5–15)",
+        "Active Seller Listings (5-15)",
         "Buyer-Focused Team",
         "New Developments",
         "Verify on Call",
@@ -123,7 +123,7 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Roofing Specialty",
       shortLabel: "Specialty",
       options: [
-        "Full Roof Replacement ✓",
+        "Full Roof Replacement",
         "Storm & Insurance Claims",
         "Commercial Flat Roofing",
         "Metal & Tile Specialist",
@@ -135,7 +135,7 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Financing / Insurance",
       shortLabel: "Financing",
       options: [
-        "Offers Financing ✓",
+        "Offers Financing",
         "Insurance Restoration Focus",
         "Cash & Retail Only",
         "Ask on Call",
@@ -146,8 +146,8 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Crews / Monthly Volume",
       shortLabel: "Volume",
       options: [
-        "1–2 Crews (5–15 Roofs/mo)",
-        "3–5 Crews (15–35 Roofs/mo)",
+        "1-2 Crews (5-15 Roofs/mo)",
+        "3-5 Crews (15-35 Roofs/mo)",
         "6+ Crews (35+ Roofs/mo)",
         "Ask on Call",
       ],
@@ -172,7 +172,7 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Solar Model",
       shortLabel: "Solar Model",
       options: [
-        "Residential EPC / Installer ✓",
+        "Residential EPC / Installer",
         "Solar + Battery Storage",
         "Commercial Solar",
         "Sales Dealer",
@@ -184,7 +184,7 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Solar Financing",
       shortLabel: "Financing",
       options: [
-        "Loan / PPA / Lease ✓",
+        "Loan / PPA / Lease",
         "GoodLeap / Mosaic / Sunlight",
         "Cash & Loan",
         "Ask on Call",
@@ -195,8 +195,8 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Monthly Installs",
       shortLabel: "Volume",
       options: [
-        "1–15 Installs/mo",
-        "15–40 Installs/mo",
+        "1-15 Installs/mo",
+        "15-40 Installs/mo",
         "40+ Installs/mo",
         "Ask on Call",
       ],
@@ -220,7 +220,7 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Primary Service Focus",
       shortLabel: "Service Focus",
       options: [
-        "High-Ticket Core Service ✓",
+        "High-Ticket Core Service",
         "Residential & Local Clients",
         "Commercial / B2B Accounts",
         "Recurring Retainer / Maintenance",
@@ -232,7 +232,7 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Payment / Financing",
       shortLabel: "Financing",
       options: [
-        "Financing / Payment Plans ✓",
+        "Financing / Payment Plans",
         "Standard Billing",
         "Enterprise Invoicing",
         "Ask on Call",
@@ -243,8 +243,8 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       label: "Company Scale",
       shortLabel: "Scale",
       options: [
-        "1–5 Staff",
-        "6–20 Staff",
+        "1-5 Staff",
+        "6-20 Staff",
         "20+ Staff",
         "Multi-Location",
         "Ask on Call",
@@ -299,7 +299,7 @@ export function getSmartFieldsForNiche(
     options:
       col.options && col.options.length > 0
         ? col.options
-        : ["Confirmed ✓", "Yes", "No", "In Progress", "Ask on Call"],
+        : ["Confirmed", "Yes", "No", "In Progress", "Ask on Call"],
     isCustom: true,
   }));
 
@@ -318,21 +318,21 @@ export function resolveSmartFieldValue(
 ): string {
   const explicit = lead.facts?.[field.key];
   if (explicit && explicit.trim().length > 0) {
-    return explicit.trim();
+    return explicit.trim().replace(/\s*✓$/g, "");
   }
 
   const summary = (lead.researchSummary || "").toLowerCase();
 
   if (field.key === "financing") {
     if (lead.financingObserved || summary.includes("financing")) {
-      return field.options[0] || "Offers Financing ✓";
+      return field.options[0] || "Offers Financing";
     }
     return "Ask on Call";
   }
 
   if (field.key === "installFocus" || field.key === "roofingFocus" || field.key === "solarFocus") {
     if (lead.installSignalObserved || summary.includes("install") || summary.includes("replacement")) {
-      return field.options[0] || "Confirmed ✓";
+      return field.options[0] || "Confirmed";
     }
     return "Verify on Call";
   }
@@ -341,18 +341,18 @@ export function resolveSmartFieldValue(
     if (summary.includes("commercial")) return "Commercial Real Estate";
     if (summary.includes("property management")) return "Property Management";
     if (summary.includes("luxury")) return "Luxury & Relocation";
-    return "Residential Brokerage ✓";
+    return "Residential Brokerage";
   }
 
   if (field.key === "listingVolume") {
     if (summary.includes("listing") || summary.includes("seller") || lead.installSignalObserved) {
-      return "Active Seller Listings (5–15)";
+      return "Active Seller Listings (5-15)";
     }
     return "Verify on Call";
   }
 
   if (field.key === "serviceFocus") {
-    if (lead.installSignalObserved) return "High-Ticket Core Service ✓";
+    if (lead.installSignalObserved) return "High-Ticket Core Service";
     return "Verify on Call";
   }
 

@@ -30,6 +30,8 @@ export interface BulkImportOptions {
   targetStage: "APPROVED" | "NEEDS_REVIEW";
   sourceName?: string;
   marketId?: string;
+  assignedMemberId?: string;
+  assignedMemberName?: string;
 }
 
 export interface BulkImportResult {
@@ -213,8 +215,6 @@ export function mapRowsToLeads(matrix: string[][]): RawLeadRow[] {
     return headerRow.findIndex((h) => keywords.some((k) => h.includes(k)));
   };
 
-  // 1. Resolve column indexes by Header Names
-  // Thorough phone detection checking all standard abbreviations
   let phoneIdx = findCol([
     "phone", "phonenumber", "phoneno", "phone1", "phone2",
     "companyphone", "mainphone", "officephone", "businessphone", "workphone",
@@ -232,7 +232,6 @@ export function mapRowsToLeads(matrix: string[][]): RawLeadRow[] {
     "contactname", "contactperson", "fullname", "poc", "leadcontact"
   ]);
 
-  // If header has "contact" or "person" without number/phone indicator
   if (contactNameIdx === -1 && hasHeaders) {
     const genericContactIdx = headerRow.findIndex(
       (h) => (h === "contact" || h === "person") && !h.includes("no") && !h.includes("phone") && !h.includes("num")
@@ -270,7 +269,6 @@ export function mapRowsToLeads(matrix: string[][]): RawLeadRow[] {
   let replacementIdx = findCol(["replacement", "acreplacement", "services"]);
   let financingIdx = findCol(["financing", "lender", "finance"]);
 
-  // 2. Intelligent Data Sniffing for unmapped columns
   for (let c = 0; c < maxCols; c++) {
     const sampleCells = dataRows.slice(0, 10).map((r) => r[c]).filter(Boolean) as string[];
     if (sampleCells.length === 0) continue;
@@ -316,7 +314,6 @@ export function mapRowsToLeads(matrix: string[][]): RawLeadRow[] {
     }
   }
 
-  // Fallback company name column
   if (nameIdx === -1) {
     for (let c = 0; c < maxCols; c++) {
       if (c !== phoneIdx && c !== websiteIdx && c !== contactEmailIdx && c !== stateIdx && c !== zipIdx) {
@@ -344,7 +341,6 @@ export function mapRowsToLeads(matrix: string[][]): RawLeadRow[] {
     let phone: string | null = (phoneIdx !== -1 && row[phoneIdx]) ? row[phoneIdx]!.trim() : null;
     let contactPhone: string | null = (contactPhoneIdx !== -1 && row[contactPhoneIdx]) ? row[contactPhoneIdx]!.trim() : null;
 
-    // Row-level fallback: scan all cells for phone numbers
     if (!phone && !contactPhone) {
       for (let i = 0; i < row.length; i++) {
         if (i === nameIdx) continue;
@@ -479,25 +475,39 @@ export async function executeBulkImport(
 
       if (!targetCompanyId) continue;
 
-      // Update existing company's phone / website if missing!
-      if (phoneToUse || row.website) {
+      // Update existing company's phone / website / assignment if needed
+      if (phoneToUse || row.website || options.assignedMemberId) {
         const [existing] = await db
-          .select({ phoneDisplay: companies.phoneDisplay, website: companies.website })
+          .select({
+            phoneDisplay: companies.phoneDisplay,
+            website: companies.website,
+            assignedMemberId: companies.assignedMemberId,
+          })
           .from(companies)
           .where(eq(companies.id, targetCompanyId))
           .limit(1);
 
-        if (existing && (!existing.phoneDisplay || !existing.website)) {
+        if (existing) {
           const patch: any = { updatedAt: new Date() };
+          let needsUpdate = false;
           if (!existing.phoneDisplay && phoneToUse) {
             const p = cleanPhone(phoneToUse);
             patch.phoneDisplay = p?.display || phoneToUse;
             patch.phoneE164 = p?.e164 || null;
+            needsUpdate = true;
           }
           if (!existing.website && row.website) {
             patch.website = row.website;
+            needsUpdate = true;
           }
-          await db.update(companies).set(patch).where(eq(companies.id, targetCompanyId));
+          if (options.assignedMemberId && !existing.assignedMemberId) {
+            patch.assignedMemberId = options.assignedMemberId;
+            patch.assignedMemberName = options.assignedMemberName || actor;
+            needsUpdate = true;
+          }
+          if (needsUpdate) {
+            await db.update(companies).set(patch).where(eq(companies.id, targetCompanyId));
+          }
         }
       }
 
@@ -548,10 +558,12 @@ export async function executeBulkImport(
       }
 
       // 4. If target is APPROVED, transition lead and create baseline score
-      if (options.targetStage === "APPROVED" && createRes.kind === "created") {
+      if (options.targetStage === "APPROVED") {
         await approveCompany(db, targetCompanyId, {
           actor,
           note: "Approved via bulk external lead spreadsheet import",
+          assignedMemberId: options.assignedMemberId,
+          assignedMemberName: options.assignedMemberName,
         });
 
         // Insert baseline lead score so it displays cleanly in CRM with high fit

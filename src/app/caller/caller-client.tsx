@@ -37,6 +37,7 @@ import {
   DEFAULT_DIALER_CONFIG,
   type DialerConfig,
 } from "@/server/domain/dialer";
+import { LeadImportModal } from "@/components/lead-import-modal";
 import type { TeamPermissions } from "@/server/domain/team";
 import {
   PhoneCall,
@@ -54,6 +55,7 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
+  Upload,
   Sparkles,
   Users,
   Mail,
@@ -99,8 +101,10 @@ export function CallerClient({
   const [isAddingColumn, setIsAddingColumn] = useState(false);
   const [newColumnLabel, setNewColumnLabel] = useState("");
   const [newColumnOptions, setNewColumnOptions] = useState(
-    "Confirmed ✓, Yes, No, Ask on Call"
+    "Confirmed, Yes, No, Ask on Call"
   );
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [expandedScriptId, setExpandedScriptId] = useState<string | null>(null);
 
   const smartFields = getSmartFieldsForNiche(nicheCategory, nicheName, customColumns);
 
@@ -114,9 +118,13 @@ export function CallerClient({
     setTimeout(() => setCrmToast(null), 3500);
   };
 
-  const canExport = !permissions || permissions.exportAndSync;
+  const isOwner = !activeMember || activeMember.role === "OWNER";
+  const canImport =
+    !permissions ||
+    Boolean(permissions.discoverLeads || permissions.callerWorkbench || permissions.editContacts);
+  const canExport = isOwner || Boolean(permissions?.exportAndSync);
   const canDiscover = !permissions || permissions.discoverLeads;
-  const canManageSettings = !permissions || permissions.manageTeamAndSettings;
+  const canManageSettings = isOwner || Boolean(permissions?.manageTeamAndSettings);
   const canEditContacts =
     !permissions || permissions.editContacts || permissions.callerWorkbench;
 
@@ -263,6 +271,13 @@ export function CallerClient({
   const [selectedLead, setSelectedLead] = useState<CallerLeadView | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"CARDS" | "SHEET">("CARDS");
+
+  React.useEffect(() => {
+    const savedView = localStorage.getItem("astraventa_caller_default_view");
+    if (savedView === "SHEET" || savedView === "CARDS") {
+      setViewMode(savedView);
+    }
+  }, []);
 
   // Form state for Log Call modal
   const [isPending, startTransition] = useTransition();
@@ -722,16 +737,17 @@ export function CallerClient({
           <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
             <span className="inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-[#09090b] px-2.5 py-0.5 text-[11px] text-zinc-200 font-medium">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Active Vertical: {nicheName}
+              {nicheName}
             </span>
-            <span>&bull;</span>
-            <span>{totalCount} Verified Leads in CRM</span>
+            <span className="inline-flex items-center rounded-md border border-zinc-800 bg-[#09090b] px-2 py-0.5 text-[11px] font-semibold text-emerald-400">
+              {totalCount} Leads
+            </span>
           </div>
-          <h1 className="mt-1.5 text-xl font-bold text-white">
-            Leads CRM &amp; Calling Pipeline — {nicheName}
+          <h1 className="mt-1.5 text-xl font-bold text-white tracking-tight">
+            Leads CRM &amp; Calling Pipeline
           </h1>
           <p className="text-xs text-zinc-400 mt-0.5">
-            Click any stage, follow-up button, or edit icon to update lead details, schedule callbacks, and log call outcomes in real time.
+            Click any stage, qualification field, follow-up button, or edit icon to update records in real time.
           </p>
         </div>
 
@@ -768,10 +784,10 @@ export function CallerClient({
             <button
               type="button"
               onClick={() => setIsAddingColumn(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 px-3.5 py-2 text-xs font-semibold transition shadow-sm"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 px-3 py-2 text-xs font-semibold transition shadow-sm"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>+ Add Column</span>
+              <span>Add Column</span>
             </button>
           )}
 
@@ -779,10 +795,21 @@ export function CallerClient({
             <button
               type="button"
               onClick={() => setIsAddingLead(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-white px-3.5 py-2 text-xs font-semibold transition shadow-sm"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-white px-3 py-2 text-xs font-semibold transition shadow-sm"
             >
               <Plus className="w-3.5 h-3.5 text-emerald-400" />
               <span>Add Lead</span>
+            </button>
+          )}
+
+          {canImport && (
+            <button
+              type="button"
+              onClick={() => setImportModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 hover:text-white px-3 py-2 text-xs font-semibold transition shadow-sm"
+            >
+              <Upload className="w-3.5 h-3.5 text-zinc-400" />
+              <span>Import Sheet</span>
             </button>
           )}
 
@@ -798,7 +825,7 @@ export function CallerClient({
               <span>
                 {distributePending
                   ? "Distributing..."
-                  : `Auto-Assign to Callers (${unassignedCount})`}
+                  : `Auto-Assign (${unassignedCount})`}
               </span>
             </button>
           )}
@@ -809,7 +836,7 @@ export function CallerClient({
               className="inline-flex items-center gap-1.5 rounded-lg bg-white hover:bg-zinc-200 text-black px-3.5 py-2 text-xs font-bold transition shadow-sm"
             >
               <Search className="w-3.5 h-3.5" />
-              <span>+ Find More Leads</span>
+              <span>Find Leads</span>
             </Link>
           )}
 
@@ -850,10 +877,10 @@ export function CallerClient({
             <div className="flex items-center gap-2">
               <Users className="w-4 h-4 text-emerald-400" />
               <span className="text-xs font-bold text-white">
-                Team Callers &amp; Lead Distribution Control (Owner View)
+                Team Callers &amp; Lead Distribution
               </span>
               <span className="text-[11px] text-zinc-400">
-                — Click any caller below to inspect their assigned leads, follow-ups &amp; call records
+                Select a caller below to filter their assigned leads and activity
               </span>
             </div>
 
@@ -955,8 +982,9 @@ export function CallerClient({
                   }`}
                 >
                   <div className="flex items-center justify-between gap-1">
-                    <span className="text-xs font-bold text-white truncate">
-                      👤 {caller.name}
+                    <span className="text-xs font-bold text-white truncate flex items-center gap-1.5">
+                      <Users className="w-3 h-3 text-emerald-400 shrink-0" />
+                      <span className="truncate">{caller.name}</span>
                     </span>
                     <span className="rounded-full bg-zinc-900 border border-zinc-700 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
                       {cLeads.length} leads
@@ -979,8 +1007,11 @@ export function CallerClient({
           <div className="flex items-center gap-2.5">
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
             <div>
-              <div className="text-xs font-bold text-white">
-                {activeMember.name}&apos;s Personal Calling Queue — {nicheName}
+              <div className="text-xs font-bold text-white flex items-center gap-2">
+                <span>{activeMember.name}&apos;s Personal Calling Queue</span>
+                <span className="rounded bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                  {nicheName}
+                </span>
               </div>
               <div className="text-[11px] text-zinc-400">
                 Showing only leads assigned directly to your account ({totalCount} assigned leads)
@@ -1014,7 +1045,9 @@ export function CallerClient({
           onDeleteCustomColumn={handleDeleteCustomColumn}
           allMembers={allMembers}
           canManageSettings={canManageSettings}
-          title={`${nicheName} — Leads CRM Table`}
+          isOwner={isOwner}
+          embedded={true}
+          title={`${nicheName} Leads CRM`}
           subtitle="Click any stage, qualification column, follow-up, or lead row to edit details inline."
           showCallerLink={false}
           dialerConfig={dialerConfig}
@@ -1063,7 +1096,7 @@ export function CallerClient({
                 { key: "MY_LEADS", label: `My Assigned Leads (${myLeadsCount})` },
                 { key: "FOLLOW_UP", label: `Scheduled Follow-Ups (${followUpCount})` },
                 { key: "CONNECTED", label: `Connected (${connectedCount})` },
-                { key: "MEETINGS", label: `Meetings Booked 🎯 (${meetingsCount})` },
+                { key: "MEETINGS", label: `Meetings Booked (${meetingsCount})` },
                 { key: "ALL", label: `All CRM Leads (${totalCount})` },
               ].map((tab) => (
                 <button
@@ -1271,9 +1304,7 @@ export function CallerClient({
                               </select>
                             ) : (
                               <span className="text-[11px] font-medium text-zinc-300">
-                                {lead.assignedMemberName
-                                  ? `👤 ${lead.assignedMemberName}`
-                                  : "Unassigned"}
+                                {lead.assignedMemberName || "Unassigned"}
                               </span>
                             )}
                           </div>
@@ -1402,7 +1433,8 @@ export function CallerClient({
                         {smartFields.map((field) => {
                           const currentVal = resolveSmartFieldValue(lead, field);
                           const isPositive =
-                            currentVal.includes("✓") ||
+                            currentVal.includes("Confirmed") ||
+                            currentVal.includes("Active") ||
                             (currentVal !== "Ask on Call" && currentVal !== "Verify on Call");
                           const allOpts = field.options.includes(currentVal)
                             ? field.options
@@ -1461,73 +1493,89 @@ export function CallerClient({
                       </div>
                     </div>
 
-                    {/* Interactive Notes & Follow-Up Bar */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800/70 bg-[#09090b]/50 px-3.5 py-2.5 text-xs">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <FileText className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                        {cleanNotes ? (
-                          <span className="text-zinc-300 truncate" title={cleanNotes}>
-                            <strong className="text-zinc-400 font-medium mr-1.5">
-                              Notes:
-                            </strong>
-                            {cleanNotes.split("\n").pop()}
-                          </span>
-                        ) : (
-                          <span className="text-zinc-500">
-                            No call notes logged yet for this lead.
-                          </span>
-                        )}
-                      </div>
-
-                      {canEditContacts && (
-                        <div className="flex items-center gap-3 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => openFollowUpModal(lead)}
-                            className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1"
-                          >
-                            <Clock className="w-3 h-3" />
-                            <span>
-                              {lead.nextFollowUp ? "Reschedule Follow-Up" : "Set Follow-Up"}
+                    {/* Interactive Notes, Follow-Up & Compact Script Bar */}
+                    <div className="rounded-lg border border-zinc-800/70 bg-[#09090b]/50 px-3.5 py-2.5 text-xs space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <FileText className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                          {cleanNotes ? (
+                            <span className="text-zinc-300 truncate" title={cleanNotes}>
+                              <strong className="text-zinc-400 font-medium mr-1.5">
+                                Notes:
+                              </strong>
+                              {cleanNotes.split("\n").pop()}
                             </span>
+                          ) : (
+                            <span className="text-zinc-500">
+                              No call notes logged yet for this lead.
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedScriptId(
+                                expandedScriptId === lead.companyId ? null : lead.companyId
+                              )
+                            }
+                            className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1"
+                          >
+                            {expandedScriptId === lead.companyId ? (
+                              <ChevronUp className="w-3 h-3" />
+                            ) : (
+                              <ChevronDown className="w-3 h-3" />
+                            )}
+                            <span>Call Script</span>
                           </button>
                           <button
                             type="button"
-                            onClick={() => openEditModal(lead)}
-                            className="text-[11px] font-semibold text-zinc-300 hover:text-white flex items-center gap-1"
+                            onClick={() => copyToClipboard(scriptText, `script_${lead.companyId}`)}
+                            className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1"
                           >
-                            <Pencil className="w-3 h-3" />
-                            <span>{cleanNotes ? "Edit Notes" : "+ Add Note"}</span>
+                            {copiedId === `script_${lead.companyId}` ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-400" />
+                                <span>Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" />
+                                <span>Copy Script</span>
+                              </>
+                            )}
                           </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Call Script */}
-                    <div className="rounded-lg border border-zinc-800/80 bg-[#09090b]/70 p-3.5 text-xs space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-zinc-300">
-                          Suggested Cold Call Opener
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard(scriptText, `script_${lead.companyId}`)}
-                          className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1"
-                        >
-                          {copiedId === `script_${lead.companyId}` ? (
+                          {canEditContacts && (
                             <>
-                              <Check className="w-3 h-3 text-emerald-400" />
-                              <span>Copied</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3 h-3" />
-                              <span>Copy Script</span>
+                              <button
+                                type="button"
+                                onClick={() => openFollowUpModal(lead)}
+                                className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1"
+                              >
+                                <Clock className="w-3 h-3" />
+                                <span>
+                                  {lead.nextFollowUp ? "Reschedule Follow-Up" : "Set Follow-Up"}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openEditModal(lead)}
+                                className="text-[11px] font-semibold text-zinc-300 hover:text-white flex items-center gap-1"
+                              >
+                                <Pencil className="w-3 h-3" />
+                                <span>{cleanNotes ? "Edit Notes" : "+ Add Note"}</span>
+                              </button>
                             </>
                           )}
-                        </button>
+                        </div>
                       </div>
-                      <p className="text-zinc-400 leading-relaxed">&ldquo;{scriptText}&rdquo;</p>
+
+                      {expandedScriptId === lead.companyId && (
+                        <div className="pt-2 border-t border-zinc-800/80 text-zinc-400 leading-relaxed">
+                          &ldquo;{scriptText}&rdquo;
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -1545,7 +1593,7 @@ export function CallerClient({
               <div>
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <Clock className="w-4 h-4 text-amber-400" />
-                  <span>Schedule Follow-Up — {followUpTarget.name}</span>
+                  <span>Schedule Follow-Up: {followUpTarget.name}</span>
                 </h3>
                 <p className="text-xs text-zinc-400 mt-0.5">
                   Choose a 1-click preset or pick a custom callback date and time.
@@ -1614,9 +1662,10 @@ export function CallerClient({
                   <button
                     type="button"
                     onClick={() => handleSaveFollowUp(null)}
-                    className="px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-xs font-semibold text-zinc-300 hover:text-white transition"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-xs font-semibold text-zinc-300 hover:text-white transition"
                   >
-                    ✓ Mark Done / Clear
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Mark Done / Clear</span>
                   </button>
                 ) : (
                   <div />
@@ -1650,7 +1699,7 @@ export function CallerClient({
             <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-white">
-                  Edit CRM Lead — {editingLead.name}
+                  Edit CRM Lead: {editingLead.name}
                 </h3>
                 <p className="text-xs text-zinc-400 mt-0.5">
                   Update company details, decision maker, phone, stage, follow-up, or notes.
@@ -2057,7 +2106,7 @@ export function CallerClient({
             <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-white">
-                  Log Call &amp; Follow-Up — {selectedLead.name}
+                  Log Call &amp; Follow-Up: {selectedLead.name}
                 </h3>
                 <p className="text-xs text-zinc-400 mt-0.5">
                   {selectedLead.bestContact.name || "Owner/Manager"} &bull;{" "}
@@ -2093,7 +2142,7 @@ export function CallerClient({
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                   {[
-                    { key: "MEETING_BOOKED", label: "Meeting Booked 🎯" },
+                    { key: "MEETING_BOOKED", label: "Meeting Booked" },
                     { key: "CONNECTED", label: "Connected / Spoke" },
                     { key: "GATEKEEPER_BLOCKED", label: "Gatekeeper" },
                     { key: "NO_ANSWER", label: "No Answer" },
@@ -2278,7 +2327,7 @@ export function CallerClient({
                   type="text"
                   value={newColumnOptions}
                   onChange={(e) => setNewColumnOptions(e.target.value)}
-                  placeholder="e.g. Confirmed ✓, Yes, No, Ask on Call"
+                  placeholder="e.g. Confirmed, Yes, No, Ask on Call"
                   className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:border-zinc-600 focus:outline-none"
                 />
                 <p className="text-[11px] text-zinc-500 mt-1">
@@ -2306,6 +2355,17 @@ export function CallerClient({
           </div>
         </div>
       )}
+
+      {/* Bulk CSV / Sheet Import Modal */}
+      <LeadImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImportSuccess={() => {
+          setTimeout(() => {
+            window.location.reload();
+          }, 1000);
+        }}
+      />
     </div>
   );
 }

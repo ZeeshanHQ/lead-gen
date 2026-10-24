@@ -23,6 +23,7 @@ export const gateSchema = z.object({
   requireDecisionMaker: z.boolean(),
   requireEmail: z.boolean(),
   requireLocation: z.boolean(),
+  customMustHaves: z.array(z.string()).optional(),
 });
 export type LeadGate = z.infer<typeof gateSchema>;
 
@@ -33,12 +34,18 @@ export function defaultGate(): LeadGate {
     requireDecisionMaker: false,
     requireEmail: false,
     requireLocation: false,
+    customMustHaves: [],
   };
 }
 
 /** Fills any missing keys so older saved rules keep working. */
 export function resolveGate(gate: Partial<LeadGate> | null | undefined): LeadGate {
-  return { ...defaultGate(), ...(gate ?? {}) };
+  const base = defaultGate();
+  return {
+    ...base,
+    ...(gate ?? {}),
+    customMustHaves: Array.isArray(gate?.customMustHaves) ? gate.customMustHaves : [],
+  };
 }
 
 export const GATE_META: Record<

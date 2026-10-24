@@ -13,6 +13,19 @@ function cell(val: unknown): string {
 export async function GET() {
   try {
     const db = await getDb();
+    const { getActiveTeamMember } = await import("@/server/repo/team");
+    const { activeMember } = await getActiveTeamMember(db);
+
+    if (activeMember.role !== "OWNER" && !activeMember.permissions.exportAndSync) {
+      return NextResponse.json(
+        {
+          error:
+            "Export access is restricted. Only the Workspace Owner or authorized members can export CSV files.",
+        },
+        { status: 403 }
+      );
+    }
+
     const { getActiveContext } = await import("@/server/repo/markets");
     const { market } = await getActiveContext(db);
     const { leads } = await loadQualificationReport(db, market.id);
@@ -61,7 +74,7 @@ export async function GET() {
         l.status,
       ]
         .map(cell)
-        .join(","),
+        .join(",")
     );
 
     const today = new Date().toISOString().slice(0, 10);

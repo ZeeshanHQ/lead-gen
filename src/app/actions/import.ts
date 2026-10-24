@@ -6,8 +6,8 @@ import {
   parseDelimitedText,
   mapRowsToLeads,
   executeBulkImport,
-  type BulkImportOptions,
 } from "@/server/repo/bulk-import";
+import { getActiveTeamMember } from "@/server/repo/team";
 
 export async function importLeadsAction(
   rawText: string,
@@ -39,13 +39,24 @@ export async function importLeadsAction(
     }
 
     const db = await getDb();
+    const { activeMember } = await getActiveTeamMember(db);
+    if (activeMember.id === "guest" || activeMember.status !== "ACTIVE") {
+      return { success: false, error: "Unauthorized. Please sign in to import leads." };
+    }
+
     const { getActiveContext } = await import("@/server/repo/markets");
     const { market } = await getActiveContext(db);
+
+    const assignToCaller =
+      activeMember.role !== "OWNER" && !activeMember.permissions.manageTeamAndSettings;
+
     const result = await executeBulkImport(db, leads, {
-      actor: options.actor || "CRM User",
+      actor: activeMember.name || options.actor || "CRM User",
       targetStage: options.targetStage || "APPROVED",
       sourceName: options.sourceName || "sheet_upload",
       marketId: market.id,
+      assignedMemberId: assignToCaller ? activeMember.id : undefined,
+      assignedMemberName: assignToCaller ? activeMember.name : undefined,
     });
 
     revalidatePath("/");

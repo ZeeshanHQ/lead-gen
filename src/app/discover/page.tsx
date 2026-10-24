@@ -58,6 +58,7 @@ export default async function DiscoverPage() {
       <LeadProspector
         key={ctx.market.id}
         activeMarket={ctx.market}
+        allMarkets={ctx.allMarkets}
         initialRule={ctx.rule?.config}
         initialGate={activeGate}
         initialLeads={qualifiedLeads.slice(0, 60) as any}

@@ -137,7 +137,7 @@ export const ROLE_PRESETS: Record<TeamRole, RolePresetMeta> = {
       callerWorkbench: true,
       editContacts: true,
       editRules: true,
-      exportAndSync: true,
+      exportAndSync: false,
       manageNiches: true,
       manageTeamAndSettings: true,
     },
@@ -154,7 +154,7 @@ export const ROLE_PRESETS: Record<TeamRole, RolePresetMeta> = {
       callerWorkbench: true,
       editContacts: true,
       editRules: false,
-      exportAndSync: true,
+      exportAndSync: false,
       manageNiches: false,
       manageTeamAndSettings: false,
     },
@@ -223,7 +223,10 @@ export function canMemberAccessPath(member: TeamMember | null | undefined, pathn
     return Boolean(member.permissions.callerWorkbench);
   }
   if (pathname.startsWith("/settings")) {
-    return Boolean(member.permissions.manageTeamAndSettings);
+    return member.id !== "guest" && member.status === "ACTIVE";
+  }
+  if (pathname.startsWith("/usage")) {
+    return false;
   }
   if (pathname.startsWith("/rules") || pathname.startsWith("/sources") || pathname.startsWith("/runs")) {
     return Boolean(member.permissions.editRules || member.permissions.manageTeamAndSettings);

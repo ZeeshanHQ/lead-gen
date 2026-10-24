@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Zap,
   MapPin,
@@ -24,6 +25,8 @@ import {
   Users,
   Mail,
   Globe,
+  Plus,
+  X,
 } from "lucide-react";
 import {
   runLeadDiscoveryAction,
@@ -34,11 +37,13 @@ import {
   updateRuleTargetingAction,
   getActiveRulesForDiscoveryAction,
 } from "./actions";
+import { switchMarketAction } from "@/app/actions/tenant";
 import { autoDistributeLeadsAction } from "@/app/caller/actions";
 import { CandidateForm } from "./candidate-form";
 import { EvidenceDrawer } from "@/components/evidence-drawer";
-import { defaultGate, GATE_FIELDS, GATE_META, resolveGate, type GateField, type LeadGate } from "@/server/domain/gate";
+import { GATE_FIELDS, GATE_META, resolveGate, type GateField, type LeadGate } from "@/server/domain/gate";
 import type { TeamMember } from "@/server/domain/team";
+import type { MarketView } from "@/server/repo/markets";
 
 interface LeadItem {
   id: string;
@@ -74,6 +79,7 @@ interface RunSummary {
 
 export function LeadProspector({
   activeMarket,
+  allMarkets = [],
   initialRule,
   initialGate,
   initialLeads = [],
@@ -89,6 +95,7 @@ export function LeadProspector({
     keywords: string[];
     category: string;
   };
+  allMarkets?: MarketView[];
   initialRule?: any;
   initialGate?: LeadGate;
   initialLeads?: LeadItem[];
@@ -97,6 +104,7 @@ export function LeadProspector({
   canEditRules?: boolean;
   allMembers?: TeamMember[];
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [targetCount, setTargetCount] = useState<number>(25);
   const [customCountInput, setCustomCountInput] = useState<string>("25");
@@ -105,6 +113,8 @@ export function LeadProspector({
   const [gate, setGate] = useState<LeadGate>(() =>
     initialGate ? resolveGate(initialGate) : resolveGate(initialRule?.gate)
   );
+  const [showCustomGateInput, setShowCustomGateInput] = useState(false);
+  const [customGateText, setCustomGateText] = useState("");
   const [leads, setLeads] = useState<LeadItem[]>(initialLeads);
   const [totalReviewCount, setTotalReviewCount] = useState<number>(
     initialTotalCount || initialLeads.length
@@ -170,12 +180,27 @@ export function LeadProspector({
       setEditMinScore(initialRule.scoring?.minScore ?? 60);
       setGate(resolveGate(initialGate ?? initialRule.gate));
     }
-    if (initialLeads && initialLeads.length > 0) {
+    if (initialLeads) {
       setLeads(initialLeads);
-      setTotalReviewCount(initialTotalCount || initialLeads.length);
-      setCrmReadyCount(initialCrmReadyCount || initialLeads.length);
+      setTotalReviewCount(initialTotalCount ?? initialLeads.length);
+      setCrmReadyCount(initialCrmReadyCount ?? initialLeads.length);
     }
   }, [activeMarket?.id, initialRule, initialGate, initialLeads, initialTotalCount, initialCrmReadyCount]);
+
+  const handleSwitchNicheInline = (marketId: string) => {
+    if (!marketId || marketId === nicheInfo?.id) return;
+    const targetMarket = allMarkets.find((m) => m.id === marketId);
+    if (targetMarket) {
+      setNicheInfo(targetMarket);
+      if (targetMarket.keywords?.length) {
+        setEditKeywords(targetMarket.keywords.join(", "));
+      }
+    }
+    startTransition(async () => {
+      await switchMarketAction(marketId);
+      router.refresh();
+    });
+  };
 
   // Fallback load only if no initialRule was supplied by the server
   useEffect(() => {
@@ -238,6 +263,57 @@ export function LeadProspector({
         setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
       }
     }
+  };
+
+  const handleAddCustomGateRule = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = customGateText.trim();
+    if (!trimmed) return;
+    const currentCustom = gate.customMustHaves || [];
+    if (currentCustom.some((item) => item.toLowerCase() === trimmed.toLowerCase())) {
+      setCustomGateText("");
+      setShowCustomGateInput(false);
+      return;
+    }
+    const nextCustom = [...currentCustom, trimmed];
+    const nextGate: LeadGate = { ...gate, customMustHaves: nextCustom };
+    setGate(nextGate);
+    setCustomGateText("");
+    setShowCustomGateInput(false);
+
+    const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+    const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    if (!kwsArr.some((k) => k.toLowerCase() === trimmed.toLowerCase())) {
+      kwsArr.push(trimmed);
+      setEditKeywords(kwsArr.join(", "));
+    }
+
+    await updateRuleTargetingAction({
+      states: statesArr.length > 0 ? statesArr : ["TX"],
+      cities: citiesArr,
+      minScore: editMinScore,
+      keywords: kwsArr,
+      gate: nextGate,
+    });
+  };
+
+  const handleRemoveCustomGateRule = async (ruleText: string) => {
+    const nextCustom = (gate.customMustHaves || []).filter((item) => item !== ruleText);
+    const nextGate: LeadGate = { ...gate, customMustHaves: nextCustom };
+    setGate(nextGate);
+
+    const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+    const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+
+    await updateRuleTargetingAction({
+      states: statesArr.length > 0 ? statesArr : ["TX"],
+      cities: citiesArr,
+      minScore: editMinScore,
+      keywords: kwsArr,
+      gate: nextGate,
+    });
   };
 
   const handlePresetCount = (count: number) => {
@@ -463,9 +539,27 @@ export function LeadProspector({
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 Live Web Discovery &bull; AI Verification Engine
               </span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-zinc-900 text-zinc-400 border border-zinc-800">
-                Active Niche: <strong className="text-zinc-100 ml-1">{activeNicheName}</strong>
-              </span>
+              {allMarkets.length > 1 ? (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-zinc-900 text-zinc-300 border border-zinc-700">
+                  <span className="text-zinc-400">Active Niche:</span>
+                  <select
+                    value={nicheInfo?.id || ""}
+                    onChange={(e) => handleSwitchNicheInline(e.target.value)}
+                    disabled={isPending}
+                    className="bg-transparent font-bold text-white focus:outline-none cursor-pointer"
+                  >
+                    {allMarkets.map((m) => (
+                      <option key={m.id} value={m.id} className="bg-zinc-900 text-white">
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-zinc-900 text-zinc-400 border border-zinc-800">
+                  Active Niche: <strong className="text-zinc-100 ml-1">{activeNicheName}</strong>
+                </span>
+              )}
             </div>
             <h1 className="text-xl md:text-2xl font-bold text-white tracking-tight">
               Find &amp; Qualify {activeNicheName} Leads
@@ -510,11 +604,11 @@ export function LeadProspector({
               </p>
             </div>
             <span className="text-[11px] text-emerald-400 font-semibold shrink-0">
-              {GATE_FIELDS.filter((f) => gate[f]).length} Mandatory Rules Active
+              {GATE_FIELDS.filter((f) => gate[f]).length + (gate.customMustHaves?.length || 0)} Mandatory Rules Active
             </span>
           </div>
 
-          <div className="flex flex-wrap gap-2 pt-1">
+          <div className="flex flex-wrap items-center gap-2 pt-1">
             {GATE_FIELDS.map((field) => {
               const active = gate[field];
               const meta = GATE_META[field];
@@ -549,6 +643,76 @@ export function LeadProspector({
                 </button>
               );
             })}
+
+            {/* Custom Must-Have Rules */}
+            {(gate.customMustHaves || []).map((customRule) => (
+              <div
+                key={customRule}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm"
+              >
+                <span className="w-3.5 h-3.5 rounded flex items-center justify-center border bg-emerald-500 border-emerald-400 text-black">
+                  <Check className="w-2.5 h-2.5 stroke-[3]" />
+                </span>
+                <span>{customRule}</span>
+                <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                  Must
+                </span>
+                {canEditRules && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveCustomGateRule(customRule)}
+                    className="ml-0.5 text-emerald-300/70 hover:text-white transition"
+                    title="Remove custom requirement"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+
+            {/* Add Custom Requirement Trigger / Input */}
+            {canEditRules && (
+              showCustomGateInput ? (
+                <form
+                  onSubmit={handleAddCustomGateRule}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1"
+                >
+                  <input
+                    type="text"
+                    autoFocus
+                    value={customGateText}
+                    onChange={(e) => setCustomGateText(e.target.value)}
+                    placeholder="e.g., Commercial Focus, Licensed..."
+                    className="w-44 bg-transparent text-xs text-white placeholder-zinc-500 focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded bg-white px-2 py-0.5 text-[11px] font-bold text-black hover:bg-zinc-200"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCustomGateInput(false);
+                      setCustomGateText("");
+                    }}
+                    className="text-zinc-400 hover:text-white p-0.5"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowCustomGateInput(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-dashed border-zinc-700 bg-zinc-900/50 text-zinc-300 hover:border-zinc-500 hover:text-white transition"
+                >
+                  <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Custom Requirement</span>
+                </button>
+              )
+            )}
           </div>
         </div>
 
@@ -1079,13 +1243,15 @@ export function LeadProspector({
                     {/* Verified Signals (Dynamic & Niche-Agnostic) */}
                     <div className="flex flex-wrap gap-1.5 text-[10px]">
                       {phone && (
-                        <span className="px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-medium">
-                          Phone Verified ✓
+                        <span className="px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-medium inline-flex items-center gap-1">
+                          <Check className="w-2.5 h-2.5" />
+                          <span>Phone Verified</span>
                         </span>
                       )}
                       {lead.website && (
-                        <span className="px-2 py-0.5 rounded bg-zinc-900 text-zinc-300 border border-zinc-800 font-medium">
-                          Website Live ✓
+                        <span className="px-2 py-0.5 rounded bg-zinc-900 text-zinc-300 border border-zinc-800 font-medium inline-flex items-center gap-1">
+                          <Check className="w-2.5 h-2.5 text-emerald-400" />
+                          <span>Website Live</span>
                         </span>
                       )}
                       {decisionMaker && (

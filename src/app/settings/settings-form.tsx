@@ -10,7 +10,20 @@ import {
   removeTeamMemberAction,
   switchActiveMemberAction,
   sendTeamInviteEmailAction,
+  updateMyProfileAction,
 } from "./actions";
+import {
+  Shield,
+  Lock,
+  Mail,
+  Link2,
+  Check,
+  X,
+  Minus,
+  UserCheck,
+  Upload,
+  Download,
+} from "lucide-react";
 import {
   saveDialerConfigAction,
   pushLeadsToDialerAction,
@@ -438,6 +451,36 @@ export function SettingsForm({
     });
   }
 
+  // Personal profile state (for non-Owner / non-Manager team members)
+  const [myName, setMyName] = useState(initialActiveMember.name || "");
+  const [myTitle, setMyTitle] = useState(initialActiveMember.title || "");
+  const [defaultCrmView, setDefaultCrmView] = useState<"CARDS" | "SHEET">(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("astraventa_caller_default_view") as "CARDS" | "SHEET") || "CARDS";
+    }
+    return "CARDS";
+  });
+
+  const canManageWorkspace =
+    initialActiveMember.role === "OWNER" ||
+    Boolean(initialActiveMember.permissions.manageTeamAndSettings);
+
+  function handleSaveMyProfile(e: React.FormEvent) {
+    e.preventDefault();
+    startTransition(async () => {
+      const res = await updateMyProfileAction({ name: myName, title: myTitle });
+      if (typeof window !== "undefined") {
+        localStorage.setItem("astraventa_caller_default_view", defaultCrmView);
+      }
+      if (!res.ok) {
+        showToast(res.error || "Could not update profile");
+        return;
+      }
+      showToast("Your personal profile and workspace preferences have been saved.");
+      router.refresh();
+    });
+  }
+
   // Filtered members
   const filteredMembers = initialMembers.filter((m) => {
     const matchesSearch =
@@ -453,6 +496,218 @@ export function SettingsForm({
   const activeCount = initialMembers.filter((m) => m.status === "ACTIVE").length;
   const pendingCount = initialMembers.filter((m) => m.status === "INVITED").length;
   const scopedCount = initialMembers.filter((m) => m.nicheScope === "SELECTED").length;
+
+  // Dedicated Account & Workspace Settings for Callers / Team Members
+  if (!canManageWorkspace) {
+    const myAllowedNiches =
+      initialActiveMember.nicheScope === "ALL"
+        ? allMarkets
+        : allMarkets.filter((m) => initialActiveMember.allowedNicheIds.includes(m.id));
+    const rolePreset =
+      ROLE_PRESETS[initialActiveMember.role] ?? ROLE_PRESETS.CALLER;
+
+    return (
+      <div className="space-y-6 max-w-5xl mx-auto pb-12">
+        <div className="rounded-2xl border border-zinc-800/80 bg-[#121215] p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-xs font-medium text-zinc-400">{activeTenantName}</div>
+              <h1 className="mt-0.5 text-xl font-bold tracking-tight text-white sm:text-2xl">
+                Account &amp; Workspace Settings
+              </h1>
+              <p className="mt-1 text-xs sm:text-sm text-zinc-400">
+                Manage your personal profile, view your assigned role and permitted niches, and customize your Leads CRM preferences.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-[#09090b] px-3.5 py-2">
+              <UserCheck className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs font-semibold text-white">{rolePreset.label}</span>
+            </div>
+          </div>
+        </div>
+
+        {toastMessage && (
+          <div className="flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs font-medium text-emerald-200">
+            <div className="flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-400" />
+              <span>{toastMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setToastMessage(null)}
+              className="text-zinc-400 hover:text-white"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* Left: Personal Profile & Calling Preferences */}
+          <form
+            onSubmit={handleSaveMyProfile}
+            className="rounded-2xl border border-zinc-800/80 bg-[#121215] p-6 space-y-4"
+          >
+            <div className="border-b border-zinc-800/80 pb-3">
+              <h2 className="text-sm font-bold text-white">My Profile &amp; Calling Preferences</h2>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Update how your name appears on call logs, notes, and follow-up schedules.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-zinc-300 mb-1">
+                Full Display Name
+              </label>
+              <input
+                type="text"
+                required
+                value={myName}
+                onChange={(e) => setMyName(e.target.value)}
+                className="w-full rounded-lg border border-zinc-800 bg-[#09090b] px-3 py-2 text-xs text-white focus:border-zinc-600 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-zinc-300 mb-1">
+                Account Email (Verified)
+              </label>
+              <input
+                type="email"
+                readOnly
+                value={initialActiveMember.email}
+                className="w-full rounded-lg border border-zinc-800/70 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400 cursor-not-allowed"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-zinc-300 mb-1">
+                Job Title / Role Label
+              </label>
+              <input
+                type="text"
+                value={myTitle}
+                onChange={(e) => setMyTitle(e.target.value)}
+                placeholder="e.g., Outbound Sales Specialist"
+                className="w-full rounded-lg border border-zinc-800 bg-[#09090b] px-3 py-2 text-xs text-white focus:border-zinc-600 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-zinc-300 mb-1">
+                Default Leads CRM View
+              </label>
+              <select
+                value={defaultCrmView}
+                onChange={(e) => setDefaultCrmView(e.target.value as "CARDS" | "SHEET")}
+                className="w-full rounded-lg border border-zinc-800 bg-[#09090b] px-3 py-2 text-xs text-white focus:border-zinc-600 focus:outline-none"
+              >
+                <option value="CARDS">Caller Cards View (1-Click Dial &amp; Disposition)</option>
+                <option value="SHEET">Table / Spreadsheet View (Inline Grid)</option>
+              </select>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="submit"
+                disabled={isPending}
+                className="rounded-lg bg-white px-4 py-2 text-xs font-bold text-black hover:bg-zinc-200 transition disabled:opacity-50"
+              >
+                {isPending ? "Saving..." : "Save My Settings"}
+              </button>
+            </div>
+          </form>
+
+          {/* Right: Assigned Access, Import/Export Rules & Permitted Niches */}
+          <div className="rounded-2xl border border-zinc-800/80 bg-[#121215] p-6 space-y-5">
+            <div className="border-b border-zinc-800/80 pb-3">
+              <h2 className="text-sm font-bold text-white">Your Workspace Permissions</h2>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Controlled by your Workspace Owner ({activeTenantName}).
+              </p>
+            </div>
+
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-[#09090b] p-3">
+                <div className="flex items-center gap-2.5">
+                  <Upload className="w-4 h-4 text-emerald-400" />
+                  <div>
+                    <div className="text-xs font-semibold text-white">Import Lead Sheets (CSV / TSV)</div>
+                    <div className="text-[11px] text-zinc-400">
+                      Imported leads are automatically assigned to your personal CRM queue.
+                    </div>
+                  </div>
+                </div>
+                <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                  Allowed
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-[#09090b] p-3">
+                <div className="flex items-center gap-2.5">
+                  <Download className="w-4 h-4 text-zinc-400" />
+                  <div>
+                    <div className="text-xs font-semibold text-white">Export CRM Data (CSV)</div>
+                    <div className="text-[11px] text-zinc-400">
+                      {initialActiveMember.permissions.exportAndSync
+                        ? "Authorized by your Workspace Owner."
+                        : "Restricted to the Workspace Owner."}
+                    </div>
+                  </div>
+                </div>
+                {initialActiveMember.permissions.exportAndSync ? (
+                  <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                    Allowed
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-zinc-800 border border-zinc-700 px-2.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                    <Lock className="w-2.5 h-2.5" />
+                    Owner Controlled
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold text-zinc-300 mb-2">
+                Assigned Niches ({myAllowedNiches.length})
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {myAllowedNiches.map((n) => (
+                  <span
+                    key={n.id}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-[#09090b] px-2.5 py-1 text-xs text-zinc-200"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    {n.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold text-zinc-300 mb-2">
+                Enabled Capabilities
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {PERMISSION_DEFINITIONS.filter((p) => initialActiveMember.permissions[p.key]).map(
+                  (p) => (
+                    <div
+                      key={p.key}
+                      className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-[#09090b] px-3 py-2 text-xs text-zinc-200"
+                    >
+                      <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span className="truncate">{p.label}</span>
+                    </div>
+                  )
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-12">
@@ -710,8 +965,8 @@ export function SettingsForm({
                         {/* Role */}
                         <td className="px-4 py-4">
                           {member.role === "OWNER" ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-xs font-bold text-amber-300">
-                              <span>👑</span>
+                            <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 text-xs font-bold text-emerald-300">
+                              <Shield className="w-3.5 h-3.5 text-emerald-400" />
                               <span>Workspace Owner</span>
                             </span>
                           ) : (
@@ -849,8 +1104,9 @@ export function SettingsForm({
                         {/* Actions */}
                         <td className="px-5 py-4 text-right">
                           {member.role === "OWNER" ? (
-                            <span className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-1.5 text-xs font-medium text-slate-400">
-                              🔒 Workspace Owner
+                            <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-1.5 text-xs font-medium text-slate-400">
+                              <Lock className="w-3 h-3 text-slate-400" />
+                              <span>Workspace Owner</span>
                             </span>
                           ) : (
                             <div className="inline-flex items-center justify-end gap-2">
@@ -952,10 +1208,12 @@ export function SettingsForm({
                           <td key={r.role} className="px-4 py-3.5 text-center">
                             {allowed ? (
                               <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
-                                ✓
+                                <Check className="w-3 h-3" />
                               </span>
                             ) : (
-                              <span className="text-slate-600">—</span>
+                              <span className="inline-flex h-5 w-5 items-center justify-center text-slate-600">
+                                <Minus className="w-3 h-3" />
+                              </span>
                             )}
                           </td>
                         );
@@ -1419,7 +1677,7 @@ export function SettingsForm({
                       onClick={() => handleSendInviteEmail(createdInviteLink.memberId)}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 disabled:opacity-50 px-3.5 py-2 text-xs font-semibold text-slate-950 transition shadow-sm"
                     >
-                      <span>✉️</span>
+                      <Mail className="w-3.5 h-3.5" />
                       <span>{isSendingEmail ? "Dispatching..." : "Send Invitation Email"}</span>
                     </button>
 
@@ -1435,7 +1693,7 @@ export function SettingsForm({
                       }}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-white hover:bg-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-950 transition shadow-sm"
                     >
-                      <span>{copiedLink ? "✓" : "🔗"}</span>
+                      {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
                       <span>{copiedLink ? "Copied to Clipboard!" : "Copy Invite Link"}</span>
                     </button>
 
@@ -1726,7 +1984,7 @@ export function SettingsForm({
             <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
               <div>
                 <h2 className="text-base font-semibold text-white">
-                  Edit Access — {editingMember.name}
+                  Edit Access: {editingMember.name}
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-400">
                   Control which dashboard options and niches this person can see.
