@@ -430,8 +430,8 @@ export async function setupOwner(
 ): Promise<TeamMember> {
   const name = input.name.trim();
   const email = input.email.trim().toLowerCase();
-  if (name.length < 2) throw new Error("Apna naam likhein.");
-  if (!email.includes("@")) throw new Error("Sahi email likhein.");
+  if (name.length < 2) throw new Error("Please enter your full name.");
+  if (!email.includes("@")) throw new Error("Please enter a valid email address.");
 
   const all = await listTeamMembers(db);
   const owner = all.find((m) => m.role === "OWNER") ?? DEFAULT_TEAM_MEMBERS[0]!;
@@ -460,4 +460,62 @@ export async function activateMember(db: Db, memberId: string): Promise<TeamMemb
   const updated: TeamMember = { ...target, status: "ACTIVE", inviteToken: undefined, lastActiveAt: new Date().toISOString() };
   await writeSettingRaw(db, "team_members_registry", all.map((m) => (m.id === memberId ? updated : m)));
   return updated;
+}
+
+/**
+ * Register a user account: If no active credentials exist or no active owner exists,
+ * initializes the user as the workspace OWNER. Otherwise, registers them as an ACTIVE member.
+ */
+export async function registerUser(
+  db: Db,
+  input: { name: string; email: string }
+): Promise<TeamMember> {
+  const name = input.name.trim();
+  const email = input.email.trim().toLowerCase();
+  if (name.length < 2) throw new Error("Please enter your full name.");
+  if (!email.includes("@")) throw new Error("Please enter a valid business email address.");
+
+  const all = await listTeamMembers(db);
+  const existing = all.find((m) => m.email.toLowerCase() === email);
+  if (existing) {
+    return existing;
+  }
+
+  // Check if an OWNER exists with active credentials
+  const { hasAnyCredentials } = await import("../auth");
+  const hasExistingAuth = await hasAnyCredentials(db);
+
+  if (!hasExistingAuth) {
+    // This is the first account: claim OWNER role!
+    return await setupOwner(db, { name, email });
+  }
+
+  // Create new active member
+  const newMember: TeamMember = {
+    id: `member_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    name,
+    email,
+    title: "Team Member",
+    role: "CALLER",
+    status: "ACTIVE",
+    avatarColor: "bg-indigo-500/15 text-indigo-300 border border-indigo-500/30",
+    nicheScope: "ALL",
+    allowedNicheIds: [],
+    tenantIds: ["tenant_main"],
+    permissions: getPermissionsForRole("CALLER"),
+    invitedAt: new Date().toISOString(),
+    lastActiveAt: new Date().toISOString(),
+  };
+
+  const nextList = [...all, newMember];
+  await writeSettingRaw(db, "team_members_registry", nextList);
+  await audit(db, {
+    actor: name,
+    action: "team.user_registered",
+    entityType: "team_member",
+    entityId: newMember.id,
+    details: { name, email, role: newMember.role },
+  });
+
+  return newMember;
 }

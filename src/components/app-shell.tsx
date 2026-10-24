@@ -661,6 +661,7 @@ function AppShellInner({
                     <Link
                       key={item.href}
                       href={item.href}
+                      prefetch={true}
                       title={collapsed ? item.label : undefined}
                       className={cn(
                         "group flex items-center gap-3 rounded-lg px-2.5 py-2 text-xs font-medium transition-all relative",

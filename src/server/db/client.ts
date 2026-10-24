@@ -19,6 +19,7 @@ export interface DbHandle {
 }
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "drizzle");
+let migratedPgInProcess = false;
 
 function isLocalPostgresHost(connectionString: string): boolean {
   try {
@@ -39,8 +40,6 @@ export async function createDb(url: string): Promise<DbHandle> {
     const isMemory = url.startsWith("memory://");
     const rawRelPath = url.slice("pglite://".length);
 
-    // On Vercel serverless without DATABASE_URL configured, /var/task is read-only.
-    // Redirect embedded PGlite storage to os.tmpdir() so the app never fails with EROFS.
     const isServerlessReadOnly = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
     const dir = isMemory
       ? undefined
@@ -82,30 +81,31 @@ export async function createDb(url: string): Promise<DbHandle> {
 
   const { Pool } = await import("pg");
   const { drizzle } = await import("drizzle-orm/node-postgres");
-  const { migrate } = await import("drizzle-orm/node-postgres/migrator");
 
   const useSsl = !isLocalPostgresHost(url) && !url.includes("sslmode=disable");
   const pool = new Pool({
     connectionString: url,
-    max: process.env.VERCEL ? 3 : 10,
-    idleTimeoutMillis: 20_000,
-    connectionTimeoutMillis: 15_000,
+    max: process.env.VERCEL ? 4 : 10,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
     ssl: useSsl ? { rejectUnauthorized: false } : undefined,
   });
 
   const db = drizzle({ client: pool, schema });
 
-  try {
-    const fsModule = await import("node:fs");
-    if (fsModule.existsSync(MIGRATIONS_FOLDER)) {
-      await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
-    } else {
-      const { SCHEMA_DDL } = await import("./ddl");
-      await pool.query(SCHEMA_DDL);
+  if (!migratedPgInProcess) {
+    try {
+      const { migrate } = await import("drizzle-orm/node-postgres/migrator");
+      const fsModule = await import("node:fs");
+      if (fsModule.existsSync(MIGRATIONS_FOLDER)) {
+        await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+      }
+      migratedPgInProcess = true;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("Postgres migration skipped or warning:", msg);
+      migratedPgInProcess = true;
     }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn("Postgres migration/DDL warning:", msg);
   }
 
   return { db: db as unknown as Db, driver: "pg", close: () => pool.end() };

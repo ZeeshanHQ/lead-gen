@@ -12,7 +12,7 @@ import {
   verifyEmailOtp,
   verifyPassword,
 } from "@/server/auth";
-import { findMemberByEmail, setupOwner } from "@/server/repo/team";
+import { findMemberByEmail, registerUser, setupOwner } from "@/server/repo/team";
 
 export async function requestOtpAction(email: string): Promise<{
   ok: boolean;
@@ -43,7 +43,6 @@ export async function verifyOtpAction(input: {
       return { ok: false, error: res.error || "Verification failed." };
     }
 
-    // First-time owner setup
     if (res.isNewOwner) {
       const name = input.ownerName?.trim() || "Workspace Owner";
       const pw = input.ownerPassword?.trim() || "";
@@ -71,10 +70,33 @@ export async function verifyOtpAction(input: {
   }
 }
 
-export async function loginWithPasswordAction(input: { email: string; password: string }): Promise<{
-  ok: boolean;
-  error?: string;
-}> {
+export async function registerAction(input: {
+  name: string;
+  email: string;
+  password: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const db = await getDb();
+    const pwErr = validatePassword(input.password);
+    if (pwErr) return { ok: false, error: pwErr };
+
+    const member = await registerUser(db, {
+      name: input.name,
+      email: input.email,
+    });
+
+    await setPassword(db, member.id, input.password);
+    await startSession(member.id);
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to create account." };
+  }
+}
+
+export async function loginWithPasswordAction(input: {
+  email: string;
+  password: string;
+}): Promise<{ ok: boolean; error?: string }> {
   try {
     const db = await getDb();
     const member = await findMemberByEmail(db, input.email);
@@ -90,15 +112,13 @@ export async function loginWithPasswordAction(input: { email: string; password: 
   }
 }
 
-export async function setupOwnerAction(input: { name: string; email: string; password: string }): Promise<{
-  ok: boolean;
-  error?: string;
-}> {
+export async function setupOwnerAction(input: {
+  name: string;
+  email: string;
+  password: string;
+}): Promise<{ ok: boolean; error?: string }> {
   try {
     const db = await getDb();
-    if (await hasAnyCredentials(db)) {
-      return { ok: false, error: "Workspace Owner account has already been initialized. Please sign in." };
-    }
     const pwErr = validatePassword(input.password);
     if (pwErr) return { ok: false, error: pwErr };
 
