@@ -6,6 +6,7 @@ import { getActiveTeamMember } from "@/server/repo/team";
 import { canMemberAccessPath, getDefaultRouteForMember } from "@/server/domain/team";
 import { loadLeadRows, type LeadRow } from "@/server/repo/queue";
 import { resolveGate, type LeadGate } from "@/server/domain/gate";
+import { POST_APPROVAL } from "@/server/domain/lifecycle";
 import { LeadProspector } from "./lead-prospector";
 
 export const dynamic = "force-dynamic";
@@ -45,10 +46,23 @@ export default async function DiscoverPage() {
   }
 
   const activeGate = resolveGate((ctx.rule?.config as any)?.gate);
-  const [approved, review] = await Promise.all([
-    loadLeadRows(db, "approved", ctx.market.id),
-    loadLeadRows(db, "review", ctx.market.id),
-  ]);
+  const isOwnerOrManager =
+    activeMember.role === "OWNER" || Boolean(activeMember.permissions.manageTeamAndSettings);
+
+  let allRows: LeadRow[] = [];
+  try {
+    allRows = await loadLeadRows(db, "all", ctx.market.id);
+  } catch (err) {
+    console.warn("DiscoverPage loadLeadRows fallback:", err);
+  }
+
+  const visibleRows = isOwnerOrManager
+    ? allRows
+    : allRows.filter((l) => l.assignedMemberId === activeMember.id);
+
+  const postApprovalSet = new Set<string>(POST_APPROVAL as readonly string[]);
+  const review = visibleRows.filter((l) => !postApprovalSet.has(l.status));
+  const approved = visibleRows.filter((l) => postApprovalSet.has(l.status));
 
   const qualifiedLeads = [...review, ...approved].filter((l) => passesLeadRowGate(l, activeGate));
   const crmReadyCount = approved.filter((l) => passesLeadRowGate(l, activeGate)).length;
@@ -61,11 +75,11 @@ export default async function DiscoverPage() {
         allMarkets={ctx.allMarkets}
         initialRule={ctx.rule?.config}
         initialGate={activeGate}
-        initialLeads={qualifiedLeads.slice(0, 60) as any}
+        initialLeads={qualifiedLeads.slice(0, 80) as any}
         initialTotalCount={qualifiedLeads.length}
         initialCrmReadyCount={crmReadyCount}
         canEditRules={activeMember.role === "OWNER" || Boolean(activeMember.permissions.editRules)}
-        allMembers={allMembers}
+        allMembers={isOwnerOrManager ? allMembers : []}
       />
     </div>
   );

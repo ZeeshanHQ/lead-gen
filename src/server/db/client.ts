@@ -93,9 +93,9 @@ export async function createDb(url: string): Promise<DbHandle> {
   const useSsl = !isLocalPostgresHost(connString) && !connString.includes("sslmode=disable");
   const pool = new Pool({
     connectionString: connString,
-    max: process.env.VERCEL ? 1 : 10,
-    idleTimeoutMillis: process.env.VERCEL ? 1000 : 30_000,
-    connectionTimeoutMillis: 5_000,
+    max: process.env.VERCEL ? 6 : 12,
+    idleTimeoutMillis: process.env.VERCEL ? 5_000 : 30_000,
+    connectionTimeoutMillis: 15_000,
     ssl: useSsl ? { rejectUnauthorized: false } : undefined,
   });
 
@@ -103,16 +103,23 @@ export async function createDb(url: string): Promise<DbHandle> {
 
   if (!migratedPgInProcess) {
     try {
-      const { migrate } = await import("drizzle-orm/node-postgres/migrator");
-      const fsModule = await import("node:fs");
-      if (fsModule.existsSync(MIGRATIONS_FOLDER)) {
-        await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+      const { sql } = await import("drizzle-orm");
+      // Fast check: if system_settings table already exists, skip heavy DDL migrator on cold start
+      await db.execute(sql`SELECT 1 FROM "system_settings" LIMIT 1`);
+      migratedPgInProcess = true;
+    } catch {
+      try {
+        const { migrate } = await import("drizzle-orm/node-postgres/migrator");
+        const fsModule = await import("node:fs");
+        if (fsModule.existsSync(MIGRATIONS_FOLDER)) {
+          await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+        }
+        migratedPgInProcess = true;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn("Postgres migration skipped or warning:", msg);
+        migratedPgInProcess = true;
       }
-      migratedPgInProcess = true;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("Postgres migration skipped or warning:", msg);
-      migratedPgInProcess = true;
     }
   }
 

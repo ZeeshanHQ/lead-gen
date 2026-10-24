@@ -116,8 +116,8 @@ function AppShellInner({
   // Create Tenant Workspace Form State
   const [newTenantName, setNewTenantName] = useState("");
   const [newTenantRole, setNewTenantRole] = useState("Workspace Owner");
-  const [newTenantInitialNiche, setNewTenantInitialNiche] = useState("US Residential HVAC");
-  const [newTenantInitialCategory, setNewTenantInitialCategory] = useState("hvac");
+  const [newTenantInitialNiche, setNewTenantInitialNiche] = useState("Primary Target Niche");
+  const [newTenantInitialCategory, setNewTenantInitialCategory] = useState("custom");
 
   // Live Permission & Access Heartbeat — syncs permissions in real time without manual refresh
   useEffect(() => {
@@ -186,7 +186,6 @@ function AppShellInner({
   }, [liveMember, isAllowedOnCurrentPath, fallbackRoute, router, pathname]);
 
   const currentTenantName = activeTenant?.name || "Astraventa Workspace";
-  const currentNicheName = activeMarket?.name || "Active Niche";
 
   const displayedTenants: TenantWorkspace[] =
     allTenants.length > 0
@@ -198,22 +197,9 @@ function AppShellInner({
       ? tenantMarkets
       : allMarkets.length > 0
       ? allMarkets
-      : [
-          {
-            id: "hvac",
-            key: "hvac",
-            name: "US Residential HVAC",
-            description: "AC/Heating replacement & installs",
-            status: "ACTIVE",
-            tenantId: "tenant_main",
-            category: "hvac",
-            icon: "flame",
-            keywords: ["HVAC contractor", "AC replacement"],
-            leadCount: 0,
-            reviewCount: 0,
-            approvedCount: 0,
-          },
-        ];
+      : activeMarket
+      ? [activeMarket]
+      : [];
 
   // Filter markets to only those allowed for this member
   const allowedMarketsForMember = baseMarkets.filter(
@@ -222,8 +208,16 @@ function AppShellInner({
       liveMember.role === "OWNER" ||
       liveMember.nicheScope === "ALL" ||
       liveMember.allowedNicheIds.length === 0 ||
-      liveMember.allowedNicheIds.includes(n.id)
+      liveMember.allowedNicheIds.includes(n.id) ||
+      liveMember.allowedNicheIds.includes(n.key)
   );
+
+  const resolvedActiveMarket =
+    allowedMarketsForMember.find((m) => m.id === activeMarket?.id) ||
+    allowedMarketsForMember[0] ||
+    activeMarket;
+
+  const currentNicheName = resolvedActiveMarket?.name || "Active Niche";
 
   useEffect(() => {
     setMobileOpen(false);
@@ -374,7 +368,7 @@ function AppShellInner({
       const res = await createTenantWorkspaceAction({
         name: newTenantName.trim(),
         role: newTenantRole.trim() || "Owner",
-        initialNicheName: newTenantInitialNiche.trim() || preset?.name || "US Residential HVAC",
+        initialNicheName: newTenantInitialNiche.trim() || preset?.name || "Primary Target Niche",
         initialNicheCategory: newTenantInitialCategory,
         initialNicheKeywords: preset?.keywords,
       });

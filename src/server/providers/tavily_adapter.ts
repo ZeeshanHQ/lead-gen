@@ -152,28 +152,41 @@ export class TavilyAdapter implements DiscoveryAdapter {
     const candidates: DiscoveredCandidate[] = [];
     const seenDomains = new Set<string>();
 
-    for (const q of searchQueries) {
+    // Execute planned queries in parallel batches of 4 to minimize total discovery latency
+    const batchSize = 4;
+    for (let i = 0; i < searchQueries.length; i += batchSize) {
       if (candidates.length >= query.limit) break;
+      const chunk = searchQueries.slice(i, i + batchSize);
 
-      try {
-        const batch = await runPlannedQuery(q, apiKey, {
-          maxResults: Math.min(Math.max(query.limit, 10), 20),
-          seenDomains,
-          timeoutMs: 10000,
-        });
+      const results = await Promise.allSettled(
+        chunk.map((q) =>
+          runPlannedQuery(q, apiKey, {
+            maxResults: Math.min(Math.max(query.limit, 12), 20),
+            seenDomains,
+            timeoutMs: 5500,
+          })
+        )
+      );
 
-        for (const item of batch) {
-          if (candidates.length >= query.limit) break;
-          candidates.push(item);
+      for (const res of results) {
+        if (res.status === "fulfilled") {
+          for (const item of res.value) {
+            if (candidates.length >= query.limit) break;
+            candidates.push(item);
+          }
+        } else {
+          const err = res.reason;
+          if (err instanceof SearchProviderError && err.fatal) {
+            throw err;
+          }
+          if (
+            err?.message?.includes("Authentication") ||
+            err?.message?.includes("Quota") ||
+            err?.message?.includes("rejected")
+          ) {
+            throw err;
+          }
         }
-      } catch (err: any) {
-        if (err instanceof SearchProviderError && err.fatal) {
-          throw err;
-        }
-        if (err.message?.includes("Authentication") || err.message?.includes("Quota") || err.message?.includes("rejected")) {
-          throw err;
-        }
-        console.warn(`Tavily query failed for "${q.queryText}":`, err.message);
       }
     }
 

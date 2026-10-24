@@ -972,7 +972,7 @@ export function LeadProspector({
             <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
             <div className="flex-1">{errorMsg}</div>
             <button onClick={() => setErrorMsg(null)} className="text-rose-400 hover:text-white">
-              ✕
+              <X className="w-4 h-4" />
             </button>
           </div>
         )}
@@ -988,25 +988,27 @@ export function LeadProspector({
                     {successBanner || "Lead Discovery Completed"}
                   </div>
                   <p className="text-xs text-zinc-300 mt-0.5">
-                    Qualified leads are automatically placed in your <strong className="text-white">Leads CRM (Ready to Call)</strong> queue for your cold callers.
+                    Qualified leads are automatically placed in your <strong className="text-white">Leads CRM (Ready to Call)</strong> queue.
                   </p>
                 </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  disabled={distributing}
-                  onClick={handleAutoDistributeFromDiscover}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-100 border border-zinc-700 font-semibold text-xs transition"
-                >
-                  {distributing ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Users className="w-3.5 h-3.5 text-emerald-400" />
-                  )}
-                  <span>Auto-Assign to Callers</span>
-                </button>
+                {allMembers.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={distributing}
+                    onClick={handleAutoDistributeFromDiscover}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-100 border border-zinc-700 font-semibold text-xs transition"
+                  >
+                    {distributing ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Users className="w-3.5 h-3.5 text-emerald-400" />
+                    )}
+                    <span>Auto-Assign to Callers</span>
+                  </button>
+                )}
 
                 <Link
                   href="/caller"

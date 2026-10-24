@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { getDb } from "@/server/db/client";
+import { companies } from "@/server/db/schema";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { POST_APPROVAL } from "@/server/domain/lifecycle";
 import { getActiveContext, type MarketView, type TenantWorkspace } from "@/server/repo/markets";
 import { getActiveTeamMember } from "@/server/repo/team";
 import type { TeamMember } from "@/server/domain/team";
@@ -52,7 +55,27 @@ export default async function RootLayout({
 
     reviewCount = ctx.market.reviewCount || 0;
     approvedCount = ctx.market.approvedCount || 0;
-    callerCount = ctx.market.approvedCount || 0;
+
+    const isOwnerOrManager =
+      !activeMember ||
+      activeMember.role === "OWNER" ||
+      Boolean(activeMember.permissions.manageTeamAndSettings);
+
+    if (isOwnerOrManager) {
+      callerCount = ctx.market.approvedCount || 0;
+    } else {
+      const [row] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(companies)
+        .where(
+          and(
+            eq(companies.marketId, ctx.market.id),
+            eq(companies.assignedMemberId, activeMember.id),
+            inArray(companies.status, [...POST_APPROVAL])
+          )
+        );
+      callerCount = Number(row?.n ?? 0);
+    }
   } catch {
     // Safe fallback if DB is initializing
   }

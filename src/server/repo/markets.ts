@@ -8,6 +8,7 @@ import {
 } from "../domain/markets";
 import { REVIEWABLE, POST_APPROVAL } from "../domain/lifecycle";
 import { audit } from "./audit";
+import { getActiveTeamMember } from "./team";
 
 export interface TenantWorkspace {
   id: string;
@@ -182,14 +183,34 @@ async function getCookieIds(): Promise<{ marketId?: string; tenantId?: string }>
 export async function getActiveContext(db: Db) {
   await ensureMarketsSeeded(db);
 
-  const [allMarkets, settingsRows, cookieIds] = await Promise.all([
+  const [rawAllMarkets, settingsRows, cookieIds, teamCtx] = await Promise.all([
     listMarkets(db),
     db
       .select()
       .from(systemSettings)
       .where(inArray(systemSettings.key, ["tenants_registry", "active_tenant_id", "active_market_id"])),
     getCookieIds(),
+    getActiveTeamMember(db),
   ]);
+
+  const activeMember = teamCtx.activeMember;
+  const isScopedMember =
+    activeMember &&
+    activeMember.id !== "guest" &&
+    activeMember.role !== "OWNER" &&
+    activeMember.nicheScope === "SELECTED" &&
+    Array.isArray(activeMember.allowedNicheIds) &&
+    activeMember.allowedNicheIds.length > 0;
+
+  const scopedMarkets = isScopedMember
+    ? rawAllMarkets.filter(
+        (m) =>
+          activeMember.allowedNicheIds.includes(m.id) ||
+          activeMember.allowedNicheIds.includes(m.key)
+      )
+    : rawAllMarkets;
+
+  const allMarkets = scopedMarkets.length > 0 ? scopedMarkets : rawAllMarkets;
 
   const settingsMap = new Map(settingsRows.map((r) => [r.key, r.value]));
   const rawTenants = settingsMap.get("tenants_registry") as TenantWorkspace[] | undefined;
@@ -200,9 +221,15 @@ export async function getActiveContext(db: Db) {
   const targetTenantId = cookieIds.tenantId || savedTenantId || "tenant_main";
   const tenant = allTenants.find((t) => t.id === targetTenantId) ?? allTenants[0] ?? DEFAULT_TENANTS[0]!;
 
-  const tenantMarkets = allMarkets.filter((m) => m.tenantId === tenant.id);
+  const tenantMarketsRaw = allMarkets.filter((m) => m.tenantId === tenant.id);
+  const tenantMarkets = tenantMarketsRaw.length > 0 ? tenantMarketsRaw : allMarkets;
 
-  const targetMarketId = cookieIds.marketId || savedMarketId;
+  // For scoped team members, only allow their own cookie selection within their allowed niches;
+  // never fall back to the Owner's global savedMarketId if it isn't in their allowed niches.
+  const targetMarketId = isScopedMember
+    ? cookieIds.marketId || ""
+    : cookieIds.marketId || savedMarketId;
+
   let market =
     tenantMarkets.find((m) => m.id === targetMarketId || m.key === targetMarketId) ??
     allMarkets.find((m) => m.id === targetMarketId || m.key === targetMarketId) ??
@@ -289,21 +316,45 @@ export async function switchActiveMarket(
   marketId: string,
   actor = "local-user"
 ): Promise<MarketView> {
-  const allMarkets = await listMarkets(db);
+  const [allMarkets, { activeMember }] = await Promise.all([
+    listMarkets(db),
+    getActiveTeamMember(db),
+  ]);
   const found = allMarkets.find((m) => m.id === marketId || m.key === marketId);
   if (!found) throw new Error("Target niche not found");
 
-  await Promise.all([
-    writeSettingRaw(db, "active_market_id", found.id),
-    writeSettingRaw(db, "active_tenant_id", found.tenantId),
-  ]);
+  if (
+    activeMember &&
+    activeMember.id !== "guest" &&
+    activeMember.role !== "OWNER" &&
+    activeMember.nicheScope === "SELECTED" &&
+    activeMember.allowedNicheIds.length > 0 &&
+    !activeMember.allowedNicheIds.includes(found.id) &&
+    !activeMember.allowedNicheIds.includes(found.key)
+  ) {
+    throw new Error("You do not have access to switch to this niche.");
+  }
+
+  // Only update workspace-wide default market setting if the Workspace Owner switched it
+  if (!activeMember || activeMember.role === "OWNER") {
+    await Promise.all([
+      writeSettingRaw(db, "active_market_id", found.id),
+      writeSettingRaw(db, "active_tenant_id", found.tenantId),
+    ]);
+  }
 
   await audit(db, {
-    actor,
+    actor: activeMember?.name || actor,
     action: "niche.switched",
     entityType: "market",
     entityId: found.id,
-    details: { name: found.name, key: found.key, tenantId: found.tenantId },
+    details: {
+      name: found.name,
+      key: found.key,
+      tenantId: found.tenantId,
+      memberId: activeMember?.id,
+      memberRole: activeMember?.role,
+    },
   });
 
   return found;

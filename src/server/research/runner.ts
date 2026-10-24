@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   companies,
@@ -38,6 +38,13 @@ export interface RunCounters {
   failedJobs: number;
   factsRecorded: number;
   contactsDiscovered: number;
+  approvedCount?: number;
+  qualifiedCompanyIds?: string[];
+  memberId?: string;
+  memberName?: string;
+  memberRole?: string;
+  marketName?: string;
+  targetCount?: number;
 }
 
 export async function createResearchRun(
@@ -144,6 +151,7 @@ export async function createResearchRun(
 
 export interface ExecuteRunOptions {
   timeoutMs?: number;
+  maxWallClockMs?: number;
   mockPages?: any[];
   autoEnrich?: boolean;
 }
@@ -169,10 +177,12 @@ export async function executeRun(
 
   const limits = (run.limits as Record<string, any>) || {};
   const maxCandidates = limits.maxCandidates || 25;
-  const concurrency = Math.min(Math.max(limits.concurrency || 2, 1), 6);
-  const pagesPerCompany = limits.pagesPerCompany || 12;
+  const concurrency = Math.min(Math.max(limits.concurrency || 6, 1), 10);
+  const pagesPerCompany = Math.min(limits.pagesPerCompany || 3, 6);
   const stopOnError = !!limits.stopOnError;
-  const timeoutMs = runOpts?.timeoutMs ?? limits.timeoutMs ?? (run.mode === "test" ? 1000 : 8000);
+  const timeoutMs = runOpts?.timeoutMs ?? limits.timeoutMs ?? (run.mode === "test" ? 1000 : 2800);
+  const maxWallClockMs = runOpts?.maxWallClockMs ?? 15_000;
+  const deadline = Date.now() + maxWallClockMs;
   const runActor = run.actor || "Research Runner";
 
   let ruleConfig: RuleConfig = defaultHvacRuleConfig();
@@ -194,6 +204,9 @@ export async function executeRun(
     failedJobs: 0,
     factsRecorded: 0,
     contactsDiscovered: 0,
+    approvedCount: 0,
+    qualifiedCompanyIds: [],
+    targetCount: maxCandidates,
   };
 
   const companyIdsToResearch: string[] = [];
@@ -226,7 +239,11 @@ export async function executeRun(
       if (j.companyId) companyIdsToResearch.push(j.companyId);
     }
   } else {
-    // Standard discovery: test, small, full
+    // Pull a larger candidate pool so filtering/deduping still yields the requested qualified count
+    const poolLimit = runOpts?.mockPages
+      ? maxCandidates
+      : Math.min(Math.max(Math.ceil(maxCandidates * 2), maxCandidates + 15), 100);
+
     const discovered = await executeDiscovery(
       db,
       {
@@ -235,12 +252,13 @@ export async function executeRun(
         states: ruleConfig.geography.states,
         cities: ruleConfig.geography.cities,
         zips: ruleConfig.geography.zips,
-        limit: maxCandidates,
+        limit: poolLimit,
       },
       limits.providerFilter
     );
 
     counters.totalCandidates = discovered.length;
+    const duplicateIds: string[] = [];
 
     for (const d of discovered) {
       const intake = await createCandidate(
@@ -264,29 +282,41 @@ export async function executeRun(
         companyIdsToResearch.push(intake.id);
       } else if (intake.kind === "duplicate") {
         counters.duplicatesMerged++;
-        companyIdsToResearch.push(intake.existingId);
+        duplicateIds.push(intake.existingId);
       } else if (intake.kind === "excluded") {
         counters.excludedCount++;
       }
     }
+
+    for (const dupId of duplicateIds) {
+      if (companyIdsToResearch.length >= poolLimit) break;
+      companyIdsToResearch.push(dupId);
+    }
   }
 
   // Deduplicate target company IDs
-  const uniqueCompanyIds = Array.from(new Set(companyIdsToResearch)).slice(0, maxCandidates);
+  const maxPoolToInspect = runOpts?.mockPages
+    ? maxCandidates
+    : Math.min(maxCandidates * 2 + 10, 80);
+  const uniqueCompanyIds = Array.from(new Set(companyIdsToResearch)).slice(0, maxPoolToInspect);
 
-  // Step 2: Create research jobs in DB
+  // Step 2: Create research jobs in DB in a single bulk insert
   const jobIds: string[] = [];
-  for (const cid of uniqueCompanyIds) {
-    const [j] = await db
+  if (uniqueCompanyIds.length > 0) {
+    const insertedJobs = await db
       .insert(researchJobs)
-      .values({
-        runId,
-        companyId: cid,
-        kind: "research",
-        status: "QUEUED",
-      })
+      .values(
+        uniqueCompanyIds.map((cid) => ({
+          runId,
+          companyId: cid,
+          kind: "research",
+          status: "QUEUED",
+        }))
+      )
       .returning({ id: researchJobs.id });
-    if (j) jobIds.push(j.id);
+    for (const j of insertedJobs) {
+      jobIds.push(j.id);
+    }
   }
 
   // Step 3: Run jobs with concurrency pool
@@ -296,6 +326,8 @@ export async function executeRun(
   async function worker() {
     while (activeIndex < uniqueCompanyIds.length) {
       if (stopOnError && encounteredError) break;
+      if (!runOpts?.mockPages && (counters.approvedCount || 0) >= maxCandidates) break;
+      if (!runOpts?.mockPages && Date.now() >= deadline) break;
 
       const idx = activeIndex++;
       const companyId = uniqueCompanyIds[idx];
@@ -321,7 +353,16 @@ export async function executeRun(
         counters.factsRecorded += result.factsRecorded;
         counters.contactsDiscovered += result.contactsDiscovered;
 
-        if (runOpts?.autoEnrich && result.status !== "DISQUALIFIED") {
+        if (result.status === "APPROVED" || result.status === "NEEDS_REVIEW") {
+          counters.approvedCount = (counters.approvedCount || 0) + 1;
+          counters.qualifiedCompanyIds?.push(companyId);
+        }
+
+        if (
+          runOpts?.autoEnrich &&
+          result.status !== "DISQUALIFIED" &&
+          (runOpts?.mockPages || Date.now() + 2000 < deadline)
+        ) {
           try {
             const { enrichCompany } = await import("../enrichment/pipeline");
             await enrichCompany(db, companyId, { actor: `${runActor} (Auto-Enrich)` });
@@ -352,12 +393,6 @@ export async function executeRun(
           })
           .where(eq(researchJobs.id, jobId));
       }
-
-      // Periodically update run counters
-      await db
-        .update(researchRuns)
-        .set({ counters: counters as any, updatedAt: new Date() })
-        .where(eq(researchRuns.id, runId));
     }
   }
 

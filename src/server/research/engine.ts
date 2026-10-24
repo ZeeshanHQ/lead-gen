@@ -42,7 +42,7 @@ export function buildColdCallerBattlecard(params: {
   const city = params.city || "local market";
   const state = params.state || "";
   const location = state ? `${city}, ${state}` : city;
-  const nicheName = params.nicheName || "US Residential HVAC";
+  const nicheName = params.nicheName || "Target Industry";
   const isHvac = /hvac|heating|air conditioning|cooling/i.test(nicheName);
 
   const f = params.facts;
@@ -54,24 +54,24 @@ export function buildColdCallerBattlecard(params: {
 
   // Synthesize executive bullet points for caller screen
   const bullets: string[] = [];
-  if (dmName) bullets.push(`🎯 Target Decision Maker: ${dmName} (${dmTitle})`);
-  else bullets.push(`🎯 Gatekeeper Strategy: Ask directly for the Owner or Managing Partner`);
+  if (dmName) bullets.push(`Decision Maker: ${dmName} (${dmTitle})`);
+  else bullets.push(`Gatekeeper Strategy: Ask directly for the Owner or Managing Partner`);
 
-  bullets.push(`📍 Local Market: ${location} (${nicheName})`);
+  bullets.push(`Local Market: ${location} (${nicheName})`);
   const hasStrongPresence = f.strong_presence?.value === "YES";
   if (hasStrongPresence) {
-    bullets.push(`⭐ Reputation: Verified Strong Public Presence & Local Reviews`);
+    bullets.push(`Reputation: Verified Strong Public Presence & Local Reviews`);
   }
 
   if (isHvac) {
-    if (hasReplacement) bullets.push(`🔥 Focus: Residential HVAC Replacement & Installs (High average ticket)`);
+    if (hasReplacement) bullets.push(`Focus: Residential HVAC Replacement & Installs`);
   } else {
-    if (hasReplacement) bullets.push(`🔥 Focus: Verified High-Value Core Services (${nicheName})`);
+    if (hasReplacement) bullets.push(`Focus: Verified High-Value Core Services (${nicheName})`);
   }
-  if (hasFinancing) bullets.push(`💳 Financing / Plans: Active client financing or payment plans verified`);
-  if (isHiring) bullets.push(`🚨 Operational Pressure: Actively recruiting staff / expanding team`);
-  if (software) bullets.push(`💻 Tech Stack: Uses ${software} for operations / scheduling`);
-  if (brandSnippet) bullets.push(`🏅 Authority: ${brandSnippet}`);
+  if (hasFinancing) bullets.push(`Financing / Plans: Active client financing or payment plans verified`);
+  if (isHiring) bullets.push(`Growth Signal: Actively recruiting staff / expanding team`);
+  if (software) bullets.push(`Tech Stack: Uses ${software} for operations / scheduling`);
+  if (brandSnippet) bullets.push(`Authority: ${brandSnippet}`);
 
   // Synthesize the 15-second opening pitch script tailored to this exact business & niche!
   const targetGreeting = dmName ? `Hey ${dmName.split(" ")[0]}` : "Hey there";
@@ -84,7 +84,7 @@ export function buildColdCallerBattlecard(params: {
       ? "with lead techs swamped in the field, open replacement quotes take days before dispatchers follow up, losing big-ticket installs"
       : software
       ? `using ${software}, inbound quote triage and after-hours estimate follow-ups often fall through the cracks`
-      : "after-hours replacement estimates sit idle before dispatchers can follow up, losing $10k+ installs to competitors";
+      : "after-hours replacement estimates sit idle before dispatchers can follow up, losing high-ticket installs to competitors";
     script = `${targetGreeting}, noticed your team handles ${hookService} in ${location}${repHook}${hasFinancing ? " with customer financing" : ""}. The reason for my call: a lot of established HVAC owners in the area tell us that ${hookPain}. We build custom backend AI agents for contractors to automatically follow up on and book open replacement estimates. Do you guys currently have an automated follow-up system in place for your open installation bids?`;
   } else {
     const hookPain = isHiring
@@ -94,7 +94,7 @@ export function buildColdCallerBattlecard(params: {
   }
 
   const summary = bullets.join(" · ");
-  const notes = `--- COLD CALLER BATTLECARD (${nicheName.toUpperCase()}) ---\n${bullets.join("\n")}\n\n📞 15-SECOND OPENING SCRIPT:\n"${script}"`;
+  const notes = `--- COLD CALLER BRIEF (${nicheName.toUpperCase()}) ---\n${bullets.join("\n")}\n\n15-SECOND OPENING SCRIPT:\n"${script}"`;
 
   return { summary, notes };
 }

@@ -42,13 +42,16 @@ export interface LeadRow {
   assignedMemberName?: string | null;
 }
 
-export type Scope = "review" | "approved";
+export type Scope = "review" | "approved" | "all";
 
 export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Promise<LeadRow[]> {
+  const reviewStatuses = ["DISCOVERED", "RESEARCHING", "RESEARCHED", "NEEDS_REVIEW", "DISQUALIFIED"];
   const statuses: string[] =
     scope === "review"
-      ? ["DISCOVERED", "RESEARCHING", "RESEARCHED", "NEEDS_REVIEW", "DISQUALIFIED"]
-      : [...POST_APPROVAL];
+      ? reviewStatuses
+      : scope === "approved"
+      ? [...POST_APPROVAL]
+      : [...reviewStatuses, ...POST_APPROVAL];
   const whereClause = marketId
     ? and(inArray(companies.status, statuses), eq(companies.marketId, marketId))
     : inArray(companies.status, statuses);
@@ -56,7 +59,8 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
     .select()
     .from(companies)
     .where(whereClause)
-    .orderBy(desc(companies.createdAt));
+    .orderBy(desc(companies.createdAt))
+    .limit(250);
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
 
