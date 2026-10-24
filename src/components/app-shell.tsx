@@ -76,6 +76,9 @@ function AppShellInner({
   allMembers = [],
 }: AppShellProps) {
   const pathname = usePathname();
+  if (pathname === '/login' || pathname.startsWith('/invite')) {
+    return <>{children}</>;
+  }
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 

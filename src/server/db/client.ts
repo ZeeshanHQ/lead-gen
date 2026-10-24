@@ -82,12 +82,20 @@ export async function createDb(url: string): Promise<DbHandle> {
   const { Pool } = await import("pg");
   const { drizzle } = await import("drizzle-orm/node-postgres");
 
-  const useSsl = !isLocalPostgresHost(url) && !url.includes("sslmode=disable");
+  // In Supabase, port 5432 is SESSION mode (strictly capped to 15 connections max for whole DB).
+  // Port 6543 is TRANSACTION mode (built for serverless / Vercel, supports thousands of connections).
+  // Automatically rewrite port 5432 to 6543 for Supabase pooler connections.
+  let connString = url.trim();
+  if (connString.includes("pooler.supabase.com:5432")) {
+    connString = connString.replace(":5432", ":6543");
+  }
+
+  const useSsl = !isLocalPostgresHost(connString) && !connString.includes("sslmode=disable");
   const pool = new Pool({
-    connectionString: url,
-    max: process.env.VERCEL ? 4 : 10,
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 10_000,
+    connectionString: connString,
+    max: process.env.VERCEL ? 1 : 10,
+    idleTimeoutMillis: process.env.VERCEL ? 1000 : 30_000,
+    connectionTimeoutMillis: 5_000,
     ssl: useSsl ? { rejectUnauthorized: false } : undefined,
   });
 
