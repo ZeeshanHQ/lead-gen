@@ -24,7 +24,11 @@ export default async function ApprovedLeadsPage() {
   ]);
 
   const syncEligibleIds = new Set(syncEligibleList);
-  const perms = teamState.activeMember.permissions;
+  const activeMember = teamState.activeMember;
+  const allMembers = teamState.allMembers || [];
+  const perms = activeMember.permissions;
+  const isOwner = activeMember.role === "OWNER";
+  const canManageSettings = isOwner || Boolean(perms.manageTeamAndSettings);
 
   const crmLeads: CrmLeadItem[] = leads.map((l) => ({
     id: l.id,
@@ -50,37 +54,39 @@ export default async function ApprovedLeadsPage() {
     nextFollowUp: l.notes?.match(/\[Next Follow-up Scheduled:\s*([^\]]+)\]/i)?.[1] || null,
     researchSummary: l.researchSummary,
     approvedAt: l.approvedAt,
+    assignedMemberId: l.assignedMemberId || null,
+    assignedMemberName: l.assignedMemberName || null,
   }));
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="border-b border-slate-800/80 pb-4 flex flex-wrap items-center justify-between gap-4">
+      <div className="border-b border-zinc-800/80 pb-4 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-lg font-semibold text-white">
             CRM Leads — {market.name}
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
-            Approved leads for <strong className="text-slate-200">{market.name}</strong> ({syncEligibleIds.size} ready for export or calling).
+          <p className="text-xs text-zinc-400 mt-1">
+            Approved leads for <strong className="text-zinc-200">{market.name}</strong> ({syncEligibleIds.size} ready for export or calling).
           </p>
         </div>
 
         <div className="flex items-center gap-2.5">
-          {perms?.exportAndSync !== false && (
+          {perms?.exportAndSync !== false && isOwner && (
             <>
               <a
                 href="/api/export/csv"
                 download
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-200 font-medium text-xs border border-slate-700/80 transition-colors"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 font-medium text-xs border border-zinc-700/80 transition-colors"
               >
-                <Download className="w-3.5 h-3.5 text-slate-400" />
+                <Download className="w-3.5 h-3.5 text-zinc-400" />
                 Export CSV
               </a>
               <Link
                 href="/sheets"
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-200 font-medium text-xs border border-slate-700/80 transition-colors"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 font-medium text-xs border border-zinc-700/80 transition-colors"
               >
-                <Sheet className="w-3.5 h-3.5 text-slate-400" />
+                <Sheet className="w-3.5 h-3.5 text-zinc-400" />
                 Sheets Sync
               </Link>
             </>
@@ -88,7 +94,7 @@ export default async function ApprovedLeadsPage() {
           {perms?.callerWorkbench !== false && (
             <Link
               href="/caller"
-              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-white hover:bg-slate-200 text-slate-950 font-semibold text-xs transition-colors"
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-white hover:bg-zinc-200 text-black font-semibold text-xs transition-colors"
             >
               <PhoneCall className="w-3.5 h-3.5" />
               Caller Queue
@@ -102,11 +108,15 @@ export default async function ApprovedLeadsPage() {
         key={market.id}
         initialLeads={crmLeads}
         nicheName={market.name}
-        title={`${market.name} — Approved Leads`}
-        subtitle="Manage call status, notes, follow-up dates, and dialer exports."
+        title={`${market.name} CRM Pipeline`}
+        subtitle="Manage assigned callers, call status, notes, follow-up dates, and dialer exports."
         showCallerLink={perms?.callerWorkbench !== false}
         dialerConfig={dialerConfig}
         permissions={perms}
+        allMembers={allMembers}
+        canManageSettings={canManageSettings}
+        isOwner={isOwner}
+        activeActorName={activeMember.name}
       />
     </div>
   );

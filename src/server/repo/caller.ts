@@ -10,6 +10,7 @@ import { type FactMap, factValue } from "../domain/facts";
 import { type CustomCrmColumn } from "../domain/niche-fields";
 import { setFact } from "./facts";
 import { audit } from "./audit";
+import { createNotification } from "./notifications";
 
 export function extractLatestFollowUp(notes: string | null | undefined): string | null {
   if (!notes) return null;
@@ -687,22 +688,60 @@ export async function assignLeadToMember(
   memberName: string | null,
   actor: string
 ): Promise<void> {
+  const [company] = await db
+    .select({
+      id: companies.id,
+      name: companies.name,
+      assignedMemberId: companies.assignedMemberId,
+    })
+    .from(companies)
+    .where(eq(companies.id, companyId))
+    .limit(1);
+
+  const prevMemberId = company?.assignedMemberId;
+
   await db
     .update(companies)
     .set({
-      assignedMemberId: memberId,
-      assignedMemberName: memberName,
+      assignedMemberId: memberId || null,
+      assignedMemberName: memberName || null,
       updatedAt: new Date(),
     })
     .where(eq(companies.id, companyId));
 
   await audit(db, {
     actor,
-    action: "lead.assigned",
+    action: memberId ? "lead.assigned" : "lead.unassigned",
     entityType: "company",
     entityId: companyId,
-    details: { assignedMemberId: memberId, assignedMemberName: memberName },
+    details: { assignedMemberId: memberId || null, assignedMemberName: memberName || null },
   });
+
+  try {
+    if (memberId) {
+      await createNotification(db, {
+        recipientMemberId: memberId,
+        title: "Lead Assigned to Your Queue",
+        message: `"${company?.name || "A lead"}" was assigned to you by ${actor}. Ready to dial.`,
+        category: "lead_assigned",
+        link: "/caller",
+        entityType: "company",
+        entityId: companyId,
+      });
+    } else if (prevMemberId) {
+      await createNotification(db, {
+        recipientMemberId: prevMemberId,
+        title: "Lead Unassigned",
+        message: `"${company?.name || "A lead"}" was unassigned from your queue by ${actor}.`,
+        category: "lead_unassigned",
+        link: "/caller",
+        entityType: "company",
+        entityId: companyId,
+      });
+    }
+  } catch {
+    // Non-blocking notification dispatch
+  }
 }
 
 export async function autoDistributeLeads(
@@ -726,6 +765,11 @@ export async function autoDistributeLeads(
 
   if (unassigned.length === 0) return { distributedCount: 0 };
 
+  const distributionCounts: Record<string, { count: number; name: string }> = {};
+  for (const m of members) {
+    distributionCounts[m.id] = { count: 0, name: m.name };
+  }
+
   let idx = 0;
   for (const row of unassigned) {
     const targetMember = members[idx % members.length]!;
@@ -737,6 +781,9 @@ export async function autoDistributeLeads(
         updatedAt: new Date(),
       })
       .where(eq(companies.id, row.id));
+    if (distributionCounts[targetMember.id]) {
+      distributionCounts[targetMember.id]!.count++;
+    }
     idx++;
   }
 
@@ -747,6 +794,24 @@ export async function autoDistributeLeads(
     entityId: marketId,
     details: { distributedCount: unassigned.length, membersCount: members.length },
   });
+
+  try {
+    for (const [mId, meta] of Object.entries(distributionCounts)) {
+      if (meta.count > 0) {
+        await createNotification(db, {
+          recipientMemberId: mId,
+          title: "New Leads Auto-Assigned",
+          message: `${meta.count} leads were distributed to your queue by ${actor}. Ready to dial.`,
+          category: "lead_assigned",
+          link: "/caller",
+          entityType: "market",
+          entityId: marketId,
+        });
+      }
+    }
+  } catch {
+    // Non-blocking
+  }
 
   return { distributedCount: unassigned.length };
 }
@@ -934,23 +999,93 @@ export async function assignBulkLeadsToCaller(
   await db
     .update(companies)
     .set({
-      assignedMemberId: params.memberId,
-      assignedMemberName: params.memberName,
+      assignedMemberId: params.memberId || null,
+      assignedMemberName: params.memberName || null,
       updatedAt: new Date(),
     })
     .where(inArray(companies.id, ids));
 
   await audit(db, {
     actor: params.actor,
-    action: "lead.bulk_assigned_to_caller",
+    action: params.memberId ? "lead.bulk_assigned_to_caller" : "lead.bulk_unassigned",
     entityType: "market",
     entityId: params.marketId,
     details: {
       assignedCount: ids.length,
-      memberId: params.memberId,
-      memberName: params.memberName,
+      memberId: params.memberId || null,
+      memberName: params.memberName || null,
     },
   });
 
+  try {
+    if (params.memberId) {
+      await createNotification(db, {
+        recipientMemberId: params.memberId,
+        title: "Batch Leads Assigned",
+        message: `${ids.length} leads were assigned to your calling queue by ${params.actor}. Ready to dial.`,
+        category: "lead_assigned",
+        link: "/caller",
+        entityType: "market",
+        entityId: params.marketId,
+      });
+    }
+  } catch {
+    // Non-blocking
+  }
+
   return { assignedCount: ids.length };
+}
+
+export async function unassignCallerLeads(
+  db: Db,
+  params: { marketId: string; memberId: string; actor: string }
+): Promise<{ unassignedCount: number }> {
+  const rows = await db
+    .select({ id: companies.id, name: companies.name })
+    .from(companies)
+    .where(
+      and(
+        eq(companies.marketId, params.marketId),
+        eq(companies.assignedMemberId, params.memberId)
+      )
+    );
+
+  if (rows.length === 0) return { unassignedCount: 0 };
+
+  const ids = rows.map((r) => r.id);
+  await db
+    .update(companies)
+    .set({
+      assignedMemberId: null,
+      assignedMemberName: null,
+      updatedAt: new Date(),
+    })
+    .where(inArray(companies.id, ids));
+
+  await audit(db, {
+    actor: params.actor,
+    action: "lead.bulk_unassigned",
+    entityType: "market",
+    entityId: params.marketId,
+    details: {
+      unassignedCount: ids.length,
+      memberId: params.memberId,
+    },
+  });
+
+  try {
+    await createNotification(db, {
+      recipientMemberId: params.memberId,
+      title: "Queue Unassigned",
+      message: `${ids.length} leads were unassigned from your queue by ${params.actor}.`,
+      category: "lead_unassigned",
+      link: "/caller",
+      entityType: "market",
+      entityId: params.marketId,
+    });
+  } catch {
+    // Non-blocking
+  }
+
+  return { unassignedCount: ids.length };
 }

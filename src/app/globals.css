@@ -6,6 +6,12 @@
     --foreground: #fafafa;
   }
   
+  html[data-theme="light"] {
+    --background: #f8fafc;
+    --foreground: #0f172a;
+    color-scheme: light;
+  }
+  
   body {
     background-color: var(--background);
     color: var(--foreground);
@@ -29,4 +35,131 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #3f3f46;
+}
+
+/* ==========================================================================
+   Bright Mode (Light Theme) Global Overrides
+   ========================================================================== */
+html[data-theme="light"] {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+html[data-theme="light"] body {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+/* Canvas & Base App Backgrounds */
+html[data-theme="light"] .bg-\[\#09090b\],
+html[data-theme="light"] .bg-\[\#09090b\]\/90,
+html[data-theme="light"] .bg-\[\#09090b\]\/80,
+html[data-theme="light"] .bg-\[\#09090b\]\/60,
+html[data-theme="light"] .bg-\[\#09090b\]\/40,
+html[data-theme="light"] .bg-zinc-950,
+html[data-theme="light"] .bg-slate-950 {
+  background-color: #ffffff !important;
+}
+
+/* Elevated Cards, Panels & Drawers */
+html[data-theme="light"] .bg-\[\#121215\],
+html[data-theme="light"] .bg-\[\#141418\],
+html[data-theme="light"] .bg-zinc-900,
+html[data-theme="light"] .bg-zinc-900\/90,
+html[data-theme="light"] .bg-zinc-900\/80,
+html[data-theme="light"] .bg-zinc-900\/60,
+html[data-theme="light"] .bg-zinc-900\/50,
+html[data-theme="light"] .bg-zinc-900\/40,
+html[data-theme="light"] .bg-slate-900,
+html[data-theme="light"] .bg-slate-900\/40,
+html[data-theme="light"] .bg-slate-900\/60 {
+  background-color: #ffffff !important;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+}
+
+/* Hover States */
+html[data-theme="light"] .hover\:bg-zinc-900:hover,
+html[data-theme="light"] .hover\:bg-zinc-800:hover,
+html[data-theme="light"] .hover\:bg-zinc-800\/90:hover,
+html[data-theme="light"] .hover\:bg-\[\#1a1a20\]:hover,
+html[data-theme="light"] .hover\:bg-slate-800:hover {
+  background-color: #f1f5f9 !important;
+}
+
+/* Borders */
+html[data-theme="light"] .border-zinc-800,
+html[data-theme="light"] .border-zinc-800\/80,
+html[data-theme="light"] .border-zinc-800\/60,
+html[data-theme="light"] .border-zinc-800\/50,
+html[data-theme="light"] .border-\[\#1f1f23\],
+html[data-theme="light"] .border-zinc-700,
+html[data-theme="light"] .border-zinc-700\/80,
+html[data-theme="light"] .border-slate-800,
+html[data-theme="light"] .border-slate-800\/80 {
+  border-color: #e2e8f0 !important;
+}
+
+/* Headings & High-Emphasis Text */
+html[data-theme="light"] .text-white {
+  color: #0f172a !important;
+}
+html[data-theme="light"] .text-zinc-100,
+html[data-theme="light"] .text-zinc-200,
+html[data-theme="light"] .text-zinc-300,
+html[data-theme="light"] .text-slate-100,
+html[data-theme="light"] .text-slate-200,
+html[data-theme="light"] .text-slate-300 {
+  color: #1e293b !important;
+}
+
+/* Muted / Secondary Text */
+html[data-theme="light"] .text-zinc-400,
+html[data-theme="light"] .text-zinc-500,
+html[data-theme="light"] .text-slate-400,
+html[data-theme="light"] .text-slate-500 {
+  color: #64748b !important;
+}
+
+/* Form Inputs, Selects & Textareas */
+html[data-theme="light"] input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme="light"] select,
+html[data-theme="light"] textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+html[data-theme="light"] input::placeholder,
+html[data-theme="light"] textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+html[data-theme="light"] select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+/* Table Headers & Rows */
+html[data-theme="light"] thead tr {
+  background-color: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+}
+
+html[data-theme="light"] thead th {
+  color: #475569 !important;
+}
+
+html[data-theme="light"] tbody tr:hover {
+  background-color: #f8fafc !important;
+}
+
+/* Light Mode Scrollbars */
+html[data-theme="light"] ::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+html[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }

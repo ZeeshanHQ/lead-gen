@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
+import { ThemeProvider } from "@/components/theme-provider";
 import { getDb } from "@/server/db/client";
 import { companies } from "@/server/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -81,22 +82,31 @@ export default async function RootLayout({
   }
 
   return (
-    <html lang="en" className="dark">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('astraventa_theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t);}else{document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})()`,
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-[#09090b] text-zinc-100 antialiased selection:bg-zinc-700 selection:text-white">
-        <AppShell
-          reviewCount={reviewCount}
-          approvedCount={approvedCount}
-          callerCount={callerCount}
-          activeTenant={activeTenant}
-          allTenants={allTenants}
-          activeMarket={activeMarket}
-          tenantMarkets={tenantMarkets}
-          allMarkets={allMarkets}
-          activeMember={activeMember}
-          allMembers={allMembers}
-        >
-          {children}
-        </AppShell>
+        <ThemeProvider>
+          <AppShell
+            reviewCount={reviewCount}
+            approvedCount={approvedCount}
+            callerCount={callerCount}
+            activeTenant={activeTenant}
+            allTenants={allTenants}
+            activeMarket={activeMarket}
+            tenantMarkets={tenantMarkets}
+            allMarkets={allMarkets}
+            activeMember={activeMember}
+            allMembers={allMembers}
+          >
+            {children}
+          </AppShell>
+        </ThemeProvider>
       </body>
     </html>
   );

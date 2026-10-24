@@ -23,7 +23,10 @@ import {
   UserCheck,
   Upload,
   Download,
+  Sun,
+  Moon,
 } from "lucide-react";
+import { useTheme } from "@/components/theme-provider";
 import {
   saveDialerConfigAction,
   pushLeadsToDialerAction,
@@ -71,6 +74,7 @@ export function SettingsForm({
   initialDialerConfig?: DialerConfig;
 }) {
   const router = useRouter();
+  const { theme, setTheme } = useTheme();
   const [activeTab, setActiveTab] = useState<SettingsTab>("team");
   const [isPending, startTransition] = useTransition();
 
@@ -600,6 +604,45 @@ export function SettingsForm({
               <option value="CARDS">Caller Cards View (1-Click Dial &amp; Disposition)</option>
               <option value="SHEET">Table / Spreadsheet View (Inline Grid)</option>
             </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+              Theme &amp; Appearance
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setTheme("dark")}
+                className={`flex items-center gap-2.5 rounded-xl border p-3 text-left transition ${
+                  theme === "dark"
+                    ? "border-emerald-500 bg-emerald-500/10 text-white shadow-sm"
+                    : "border-zinc-800 bg-[#09090b] text-zinc-400 hover:border-zinc-700 hover:text-white"
+                }`}
+              >
+                <Moon className="w-4 h-4 text-emerald-400 shrink-0" />
+                <div>
+                  <div className="text-xs font-bold">Dark Mode</div>
+                  <div className="text-[10px] text-zinc-400">Deep obsidian &amp; zinc</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTheme("light")}
+                className={`flex items-center gap-2.5 rounded-xl border p-3 text-left transition ${
+                  theme === "light"
+                    ? "border-emerald-500 bg-emerald-500/10 text-white shadow-sm"
+                    : "border-zinc-800 bg-[#09090b] text-zinc-400 hover:border-zinc-700 hover:text-white"
+                }`}
+              >
+                <Sun className="w-4 h-4 text-amber-400 shrink-0" />
+                <div>
+                  <div className="text-xs font-bold">Bright Mode</div>
+                  <div className="text-[10px] text-zinc-400">Clean light contrast</div>
+                </div>
+              </button>
+            </div>
           </div>
 
           <div className="pt-2 border-t border-zinc-800/80 flex justify-end">
@@ -1421,6 +1464,45 @@ export function SettingsForm({
                   placeholder="Paste Google Spreadsheet ID..."
                   className="mt-1.5 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-white focus:border-slate-600 focus:outline-none"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                  Theme &amp; Appearance Mode
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setTheme("dark")}
+                    className={`flex items-center gap-2.5 rounded-xl border p-3 text-left transition ${
+                      theme === "dark"
+                        ? "border-emerald-500 bg-emerald-500/10 text-white shadow-sm"
+                        : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-white"
+                    }`}
+                  >
+                    <Moon className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <div>
+                      <div className="text-xs font-bold">Dark Mode</div>
+                      <div className="text-[10px] text-slate-400">Deep obsidian &amp; zinc</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTheme("light")}
+                    className={`flex items-center gap-2.5 rounded-xl border p-3 text-left transition ${
+                      theme === "light"
+                        ? "border-emerald-500 bg-emerald-500/10 text-white shadow-sm"
+                        : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-white"
+                    }`}
+                  >
+                    <Sun className="w-4 h-4 text-amber-400 shrink-0" />
+                    <div>
+                      <div className="text-xs font-bold">Bright Mode</div>
+                      <div className="text-[10px] text-slate-400">Clean light contrast</div>
+                    </div>
+                  </button>
+                </div>
               </div>
             </div>
 

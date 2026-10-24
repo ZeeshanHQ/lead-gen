@@ -382,3 +382,25 @@ export async function assignBulkLeadsToCallerAction(input: {
     return { ok: false, error: err.message || "Failed to bulk assign leads" };
   }
 }
+
+export async function unassignCallerLeadsAction(input: {
+  marketId: string;
+  memberId: string;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const { unassignCallerLeads } = await import("@/server/repo/caller");
+    const res = await unassignCallerLeads(db, {
+      ...input,
+      actor,
+    });
+    revalidatePath("/caller");
+    revalidatePath("/leads");
+    revalidatePath("/approved");
+    revalidatePath("/");
+    return { ok: true, unassignedCount: res.unassignedCount };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to unassign leads" };
+  }
+}

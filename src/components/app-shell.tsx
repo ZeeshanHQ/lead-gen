@@ -22,6 +22,8 @@ import {
   createTenantWorkspaceAction,
 } from "@/app/actions/tenant";
 import { logoutAction } from "@/app/login/actions";
+import { ThemeToggle } from "./theme-toggle";
+import { NotificationsMenu } from "./notifications-menu";
 import {
   LayoutDashboard,
   Compass,
@@ -824,6 +826,12 @@ function AppShellInner({
                 )}
               </div>
             )}
+
+            {/* Bright / Dark Mode Theme Toggle */}
+            <ThemeToggle />
+
+            {/* Notifications Bell Dropdown */}
+            {liveMember && <NotificationsMenu />}
 
             {/* User Profile Avatar & Dropdown */}
             {liveMember && (

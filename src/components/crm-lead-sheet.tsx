@@ -249,6 +249,7 @@ export function CrmLeadSheet({
   const [editStatus, setEditStatus] = useState<LifecycleStatus>("APPROVED");
   const [editFollowUp, setEditFollowUp] = useState("");
   const [editNotes, setEditNotes] = useState("");
+  const [editAssignedId, setEditAssignedId] = useState("");
 
   const canImport =
     !permissions ||
@@ -379,12 +380,16 @@ export function CrmLeadSheet({
     setEditStatus((lead.status as LifecycleStatus) || "APPROVED");
     setEditFollowUp(lead.nextFollowUp || "");
     setEditNotes(stripFollowUpTagFromNotes(lead.notes));
+    setEditAssignedId(lead.assignedMemberId || "");
   };
 
   const handleSaveEditLead = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingLead) return;
     const targetId = editingLead.id;
+    const assignedObj = allMembers.find((m) => m.id === editAssignedId);
+    const nextAssignedId = editAssignedId ? editAssignedId : null;
+    const nextAssignedName = assignedObj ? assignedObj.name : null;
 
     const updatedNotes = editFollowUp
       ? editNotes.trim()
@@ -401,6 +406,8 @@ export function CrmLeadSheet({
       status: editStatus,
       nextFollowUp: editFollowUp || null,
       notes: updatedNotes,
+      assignedMemberId: nextAssignedId,
+      assignedMemberName: nextAssignedName,
       bestContact: {
         name: editContactName.trim() || null,
         title: editContactTitle.trim() || null,
@@ -427,6 +434,8 @@ export function CrmLeadSheet({
         contactPhone: editPhone.trim() || null,
         nextFollowUp: editFollowUp || null,
         notes: editNotes.trim() || null,
+        assignedMemberId: nextAssignedId,
+        assignedMemberName: nextAssignedName,
       });
 
       if (res.ok) {
@@ -1274,6 +1283,28 @@ export function CrmLeadSheet({
                   className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                 />
               </div>
+
+              {canManageSettings && allMembers && allMembers.length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                    Assigned Caller
+                  </label>
+                  <select
+                    value={editAssignedId}
+                    onChange={(e) => setEditAssignedId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none cursor-pointer"
+                  >
+                    <option value="">Unassigned</option>
+                    {allMembers
+                      .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name} ({m.role})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 mb-1">

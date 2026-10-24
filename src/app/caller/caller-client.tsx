@@ -16,6 +16,7 @@ import {
   addCustomCrmColumnAction,
   deleteCustomCrmColumnAction,
   assignBulkLeadsToCallerAction,
+  unassignCallerLeadsAction,
 } from "./actions";
 import { type TeamMember, ROLE_PRESETS } from "@/server/domain/team";
 import type { LifecycleStatus } from "@/server/domain/lifecycle";
@@ -264,6 +265,37 @@ export function CallerClient({
         );
       } else {
         showToast(res.error || "Failed to assign leads");
+      }
+    });
+  };
+
+  // Bulk Unassign Leads from Specific Caller back to Unassigned Pool
+  const handleUnassignCallerLeads = (callerId: string) => {
+    if (!marketId || !callerId) return;
+    const targetCaller = allMembers.find((m) => m.id === callerId);
+
+    startDistribute(async () => {
+      const res = await unassignCallerLeadsAction({
+        marketId,
+        memberId: callerId,
+      });
+      if (res.ok) {
+        setQueue((prev) =>
+          prev.map((l) =>
+            l.assignedMemberId === callerId
+              ? {
+                  ...l,
+                  assignedMemberId: null,
+                  assignedMemberName: null,
+                }
+              : l
+          )
+        );
+        showToast(
+          `Unassigned ${res.unassignedCount || 0} leads from ${targetCaller?.name || "caller"}. Returned to Unassigned Pool.`
+        );
+      } else {
+        showToast(res.error || "Failed to unassign leads");
       }
     });
   };
@@ -884,8 +916,27 @@ export function CallerClient({
               </span>
             </div>
 
-            {unassignedCount > 0 && (
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {callerFilter !== "ALL" && callerFilter !== "UNASSIGNED" && (
+                (() => {
+                  const filteredCaller = teamCallers.find((c) => c.id === callerFilter);
+                  const count = filteredCaller ? activeQueue.filter((l) => l.assignedMemberId === filteredCaller.id).length : 0;
+                  if (!filteredCaller || count === 0) return null;
+                  return (
+                    <button
+                      type="button"
+                      disabled={distributePending}
+                      onClick={() => handleUnassignCallerLeads(filteredCaller.id)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-semibold px-3 py-1 text-xs transition disabled:opacity-50"
+                      title={`Unassign all ${count} leads from ${filteredCaller.name} and return them to the Unassigned Pool`}
+                    >
+                      <span>Unassign All ({count}) Leads</span>
+                    </button>
+                  );
+                })()
+              )}
+
+              {unassignedCount > 0 && (
                 <div className="flex items-center gap-1.5 bg-[#09090b] border border-zinc-800 rounded-lg px-2.5 py-1 text-xs">
                   <span className="text-zinc-400">
                     Assign {unassignedCount} Unassigned To:
@@ -911,8 +962,8 @@ export function CallerClient({
                     Assign All
                   </button>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
@@ -1068,8 +1119,14 @@ export function CallerClient({
                       nextFollowUp: updated.nextFollowUp ?? null,
                       notes: updated.notes ?? item.notes,
                       facts: updated.facts ?? item.facts,
-                      assignedMemberId: updated.assignedMemberId ?? item.assignedMemberId,
-                      assignedMemberName: updated.assignedMemberName ?? item.assignedMemberName,
+                      assignedMemberId:
+                        updated.assignedMemberId !== undefined
+                          ? updated.assignedMemberId
+                          : item.assignedMemberId,
+                      assignedMemberName:
+                        updated.assignedMemberName !== undefined
+                          ? updated.assignedMemberName
+                          : item.assignedMemberName,
                       bestContact: {
                         ...item.bestContact,
                         name: updated.bestContact?.name ?? item.bestContact.name,
