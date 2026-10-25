@@ -77,6 +77,14 @@ export async function registerAction(input: {
 }): Promise<{ ok: boolean; error?: string }> {
   try {
     const db = await getDb();
+    const hasCreds = await hasAnyCredentials(db);
+    if (hasCreds) {
+      return {
+        ok: false,
+        error: "Public registration is disabled. You must be invited by the Workspace Owner to access this workspace.",
+      };
+    }
+
     const pwErr = validatePassword(input.password);
     if (pwErr) return { ok: false, error: pwErr };
 
@@ -89,7 +97,7 @@ export async function registerAction(input: {
     await startSession(member.id);
     return { ok: true };
   } catch (err: any) {
-    return { ok: false, error: err.message || "Failed to create account." };
+    return { ok: false, error: err.message || "Failed to initialize workspace." };
   }
 }
 
@@ -99,11 +107,32 @@ export async function loginWithPasswordAction(input: {
 }): Promise<{ ok: boolean; error?: string }> {
   try {
     const db = await getDb();
-    const member = await findMemberByEmail(db, input.email);
-    const genericError = { ok: false, error: "Invalid email or password." };
+    const cleanEmail = input.email.trim().toLowerCase();
+    const member = await findMemberByEmail(db, cleanEmail);
 
-    if (!member || member.status === "SUSPENDED") return genericError;
-    if (!(await verifyPassword(db, member.id, input.password))) return genericError;
+    if (!member) {
+      return {
+        ok: false,
+        error: "Access Restricted: This email has not been invited to Astraventa Workspace. Please contact your Workspace Owner.",
+      };
+    }
+
+    if (member.status === "SUSPENDED") {
+      return {
+        ok: false,
+        error: "This account has been paused. Please contact your Workspace Owner.",
+      };
+    }
+
+    const valid = await verifyPassword(db, member.id, input.password);
+    if (!valid) {
+      return { ok: false, error: "Incorrect password. Please try again or use email verification code." };
+    }
+
+    if (member.status === "INVITED") {
+      const { activateMember } = await import("@/server/repo/team");
+      await activateMember(db, member.id);
+    }
 
     await startSession(member.id);
     return { ok: true };

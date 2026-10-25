@@ -497,32 +497,9 @@ export async function registerUser(
     return await setupOwner(db, { name, email });
   }
 
-  // Create new active member
-  const newMember: TeamMember = {
-    id: `member_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-    name,
-    email,
-    title: "Team Member",
-    role: "CALLER",
-    status: "ACTIVE",
-    avatarColor: "bg-indigo-500/15 text-indigo-300 border border-indigo-500/30",
-    nicheScope: "ALL",
-    allowedNicheIds: [],
-    tenantIds: ["tenant_main"],
-    permissions: getPermissionsForRole("CALLER"),
-    invitedAt: new Date().toISOString(),
-    lastActiveAt: new Date().toISOString(),
-  };
-
-  const nextList = [...all, newMember];
-  await writeSettingRaw(db, "team_members_registry", nextList);
-  await audit(db, {
-    actor: name,
-    action: "team.user_registered",
-    entityType: "team_member",
-    entityId: newMember.id,
-    details: { name, email, role: newMember.role },
-  });
-
-  return newMember;
+  // Public self-registration is strictly disabled:
+  // Only the Workspace Owner can add or invite team members.
+  throw new Error(
+    "Public registration is disabled. You must be invited by the Workspace Owner to access this workspace."
+  );
 }

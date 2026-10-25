@@ -103,14 +103,14 @@ export async function requestEmailOtp(
   if (!member && !needsInitialOwner) {
     return {
       ok: false,
-      error: "No account found for this email. Please request an invitation from your workspace administrator.",
+      error: "Access Restricted: This email has not been invited to Astraventa Workspace. Please contact your Workspace Owner for an invitation.",
     };
   }
 
   if (member && member.status === "SUSPENDED") {
     return {
       ok: false,
-      error: "This account has been deactivated. Please contact your workspace administrator.",
+      error: "This account has been deactivated. Please contact your Workspace Owner.",
     };
   }
 
@@ -188,6 +188,10 @@ export async function verifyEmailOtp(
 
   const member = await findMemberByEmail(db, cleanEmail);
   if (member) {
+    if (member.status === "INVITED") {
+      const { activateMember } = await import("./repo/team");
+      await activateMember(db, member.id);
+    }
     return { ok: true, memberId: member.id, isNewOwner: false };
   }
 
@@ -198,7 +202,7 @@ export async function verifyEmailOtp(
 
   return {
     ok: false,
-    error: "Account not found. Please contact your workspace administrator for an invite link.",
+    error: "Access Restricted: Account not found. Please contact your Workspace Owner for an invitation link.",
   };
 }
 
