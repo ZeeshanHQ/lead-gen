@@ -236,6 +236,17 @@ export async function getActiveContext(db: Db) {
     tenantMarkets[0] ??
     allMarkets[0];
 
+  // If no explicit browser cookie was set and the default/saved market has 0 leads while another market has leads, auto-select the active market with leads
+  if (!cookieIds.marketId && market && market.approvedCount === 0 && market.leadCount === 0) {
+    const marketWithLeads =
+      tenantMarkets.find((m) => m.approvedCount > 0) ??
+      tenantMarkets.find((m) => m.leadCount > 0) ??
+      allMarkets.find((m) => m.approvedCount > 0);
+    if (marketWithLeads) {
+      market = marketWithLeads;
+    }
+  }
+
   if (!market) {
     const [inserted] = await db
       .insert(markets)

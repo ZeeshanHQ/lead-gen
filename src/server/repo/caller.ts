@@ -58,6 +58,8 @@ export interface CallerLeadView {
   nextFollowUp: string | null;
   assignedMemberId: string | null;
   assignedMemberName: string | null;
+  marketId?: string;
+  marketName?: string;
 }
 
 export interface CallFeedbackInput {
@@ -73,7 +75,11 @@ export interface CallFeedbackInput {
 export async function getCallerQueue(
   db: Db,
   marketId?: string,
-  gate?: Partial<LeadGate> | null
+  _gate?: Partial<LeadGate> | null,
+  options?: {
+    includeCrossMarketForOwner?: boolean;
+    marketNames?: Record<string, string>;
+  }
 ): Promise<CallerLeadView[]> {
   const callerStatuses: LifecycleStatus[] = [
     "APPROVED",
@@ -86,9 +92,12 @@ export async function getCallerQueue(
     "NURTURE",
   ];
 
-  const whereClause = marketId
-    ? and(inArray(companies.status, callerStatuses), eq(companies.marketId, marketId))
-    : inArray(companies.status, callerStatuses);
+  const statusOrAssignedCondition = sql`(${inArray(companies.status, callerStatuses)} OR (${companies.assignedMemberId} IS NOT NULL AND ${companies.assignedMemberId} != '' AND ${companies.status} != 'REJECTED'))`;
+
+  const whereClause =
+    marketId && !options?.includeCrossMarketForOwner
+      ? and(statusOrAssignedCondition, eq(companies.marketId, marketId))
+      : statusOrAssignedCondition;
 
   const rows = await db
     .select()
@@ -113,19 +122,6 @@ export async function getCallerQueue(
     const cs = (contactsMap.get(c.id) ?? []).map(toContactInput);
     const best = pickBestContact(cs, c.phoneDisplay);
 
-    // Enforce the owner's quality gate on untouched CRM leads so leads missing required fields never appear
-    const isUntouched = c.status === "APPROVED" || c.status === "SYNCED";
-    if (isUntouched) {
-      const gateRes = evaluateGate(gate, {
-        phone: c.phoneDisplay,
-        website: c.website,
-        city: c.city,
-        state: c.state,
-        contacts: cs,
-      });
-      if (!gateRes.passed) continue;
-    }
-
     const score = scoreMap.get(c.id);
     const facts = (c.facts as FactMap) || {};
     const flatFacts: Record<string, string> = {};
@@ -137,6 +133,10 @@ export async function getCallerQueue(
       }
     }
 
+    const effectiveStatus: LifecycleStatus = callerStatuses.includes(c.status as LifecycleStatus)
+      ? (c.status as LifecycleStatus)
+      : "APPROVED";
+
     queue.push({
       companyId: c.id,
       name: c.name,
@@ -145,7 +145,7 @@ export async function getCallerQueue(
       address: c.address ?? null,
       city: c.city,
       state: c.state,
-      status: c.status as LifecycleStatus,
+      status: effectiveStatus,
       icpScore: score?.icpScore || 0,
       confidence: score?.researchConfidence || 0,
       grade: score?.grade || best.grade,
@@ -170,11 +170,20 @@ export async function getCallerQueue(
       nextFollowUp: extractLatestFollowUp(c.notes),
       assignedMemberId: c.assignedMemberId ?? null,
       assignedMemberName: c.assignedMemberName ?? null,
+      marketId: c.marketId,
+      marketName: options?.marketNames?.[c.marketId] || undefined,
     });
   }
 
-  // Sort queue by highest ICP Score first
-  queue.sort((a, b) => b.icpScore - a.icpScore);
+  // Sort queue: active market leads first (if specified), then by highest ICP Score
+  queue.sort((a, b) => {
+    if (marketId) {
+      const aMatch = a.marketId === marketId ? 1 : 0;
+      const bMatch = b.marketId === marketId ? 1 : 0;
+      if (aMatch !== bMatch) return bMatch - aMatch;
+    }
+    return b.icpScore - a.icpScore;
+  });
   return queue;
 }
 
@@ -692,6 +701,7 @@ export async function assignLeadToMember(
     .select({
       id: companies.id,
       name: companies.name,
+      status: companies.status,
       assignedMemberId: companies.assignedMemberId,
     })
     .from(companies)
@@ -699,12 +709,31 @@ export async function assignLeadToMember(
     .limit(1);
 
   const prevMemberId = company?.assignedMemberId;
+  const preApprovalStatuses = [
+    "NEW",
+    "ENRICHED",
+    "IN_REVIEW",
+    "DISCOVERED",
+    "RESEARCHING",
+    "RESEARCHED",
+    "NEEDS_REVIEW",
+    "DISQUALIFIED",
+  ];
+  const shouldPromoteToApproved =
+    Boolean(memberId) && company && preApprovalStatuses.includes(company.status);
 
   await db
     .update(companies)
     .set({
       assignedMemberId: memberId || null,
       assignedMemberName: memberName || null,
+      ...(shouldPromoteToApproved
+        ? {
+            status: "APPROVED",
+            approvedAt: new Date(),
+            approvedBy: actor,
+          }
+        : {}),
       updatedAt: new Date(),
     })
     .where(eq(companies.id, companyId));
@@ -1043,12 +1072,7 @@ export async function unassignCallerLeads(
   const rows = await db
     .select({ id: companies.id, name: companies.name })
     .from(companies)
-    .where(
-      and(
-        eq(companies.marketId, params.marketId),
-        eq(companies.assignedMemberId, params.memberId)
-      )
-    );
+    .where(eq(companies.assignedMemberId, params.memberId));
 
   if (rows.length === 0) return { unassignedCount: 0 };
 

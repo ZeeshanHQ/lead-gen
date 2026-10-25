@@ -69,6 +69,7 @@ import {
 
 interface CallerClientProps {
   initialQueue: CallerLeadView[];
+  initialCallerFilter?: string;
   nicheName?: string;
   nicheCategory?: string;
   initialCustomColumns?: CustomCrmColumn[];
@@ -82,6 +83,7 @@ interface CallerClientProps {
 
 export function CallerClient({
   initialQueue,
+  initialCallerFilter = "ALL",
   nicheName = "Active Niche",
   nicheCategory,
   initialCustomColumns = [],
@@ -95,7 +97,7 @@ export function CallerClient({
   const [queue, setQueue] = useState<CallerLeadView[]>(initialQueue);
   const [customColumns, setCustomColumns] = useState<CustomCrmColumn[]>(initialCustomColumns);
   const [search, setSearch] = useState("");
-  const [callerFilter, setCallerFilter] = useState<string>("ALL");
+  const [callerFilter, setCallerFilter] = useState<string>(initialCallerFilter || "ALL");
   const [bulkAssignCallerId, setBulkAssignCallerId] = useState<string>("");
 
   // Add Custom Column Modal State
@@ -739,6 +741,7 @@ export function CallerClient({
     researchSummary: l.researchSummary,
     assignedMemberId: l.assignedMemberId,
     assignedMemberName: l.assignedMemberName,
+    marketName: l.marketName,
   }));
 
   // Counters (scoped by active caller filter so Owner can inspect any caller's exact metrics)
@@ -1232,6 +1235,13 @@ export function CallerClient({
                           <h2 className="text-base font-bold text-white hover:underline">
                             <Link href={`/company/${lead.companyId}`}>{lead.name}</Link>
                           </h2>
+
+                          {lead.marketName && (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-[#09090b] px-2 py-0.5 text-[10px] font-medium text-zinc-300">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                              {lead.marketName}
+                            </span>
+                          )}
 
                           {/* 1-Click Inline Pipeline Stage Dropdown */}
                           {canEditContacts ? (

@@ -20,13 +20,14 @@ import {
   ChevronRight,
   Calendar,
   UserCheck,
+  Users,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 export default async function OverviewPage() {
   const db = await getDb();
-  const [ctx, { activeMember }] = await Promise.all([
+  const [ctx, { activeMember, allMembers }] = await Promise.all([
     getActiveContext(db),
     getActiveTeamMember(db),
   ]);
@@ -35,19 +36,32 @@ export default async function OverviewPage() {
     redirect(getDefaultRouteForMember(activeMember));
   }
 
-  const { market, tenant, rule: defaultRule } = ctx;
+  const { market, tenant, rule: defaultRule, allMarkets } = ctx;
   const activeGate = resolveGate((defaultRule?.config as any)?.gate);
-
-  const [overview, approvedRows] = await Promise.all([
-    getOverview(db, market.id),
-    loadLeadRows(db, "approved", market.id),
-  ]);
 
   const isOwnerOrManager =
     activeMember.role === "OWNER" || Boolean(activeMember.permissions.manageTeamAndSettings);
 
+  const [overview, approvedRows, allWorkspaceApprovedRows] = await Promise.all([
+    getOverview(db, market.id),
+    loadLeadRows(db, "approved", market.id),
+    isOwnerOrManager ? loadLeadRows(db, "approved") : Promise.resolve([]),
+  ]);
+
+  const marketNameById = new Map(allMarkets.map((m) => [m.id, m.name]));
+  const activeCallers = allMembers.filter(
+    (m) => m.role !== "OWNER" && m.status === "ACTIVE"
+  );
+
+  // For Owner / Manager:
+  // If active market has approved rows, use them; if active market has 0 leads but other markets have leads, use all workspace leads so Owner never sees 0 leads!
+  const rowsToConsider =
+    isOwnerOrManager && approvedRows.length === 0 && allWorkspaceApprovedRows.length > 0
+      ? allWorkspaceApprovedRows
+      : approvedRows;
+
   // Filter approved rows by the active Must-Have Gate AND by member assignment if not Owner/Manager
-  const qualifiedRows = approvedRows.filter((l) => {
+  const qualifiedRows = rowsToConsider.filter((l) => {
     if (!isOwnerOrManager && l.assignedMemberId !== activeMember.id) {
       return false;
     }
@@ -229,6 +243,104 @@ export default async function OverviewPage() {
         </Link>
       </div>
 
+      {/* 2.5 Team Callers & Assigned Queue Overview (Owner / Manager Live Transparency) */}
+      {isOwnerOrManager && activeCallers.length > 0 && (
+        <div className="rounded-2xl border border-zinc-800/80 bg-[#121215] p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800/80 pb-3">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-emerald-400" />
+              <h2 className="text-sm font-bold text-white">
+                Team Callers &amp; Assigned Leads Pipeline
+              </h2>
+            </div>
+            <span className="text-xs text-zinc-400">
+              Live transparency across all team caller queues and assigned niches
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {activeCallers.map((caller) => {
+              const cLeads = allWorkspaceApprovedRows.filter(
+                (l) => l.assignedMemberId === caller.id
+              );
+              const cReady = cLeads.filter((l) =>
+                ["APPROVED", "SYNCED", "CALLING"].includes(l.status)
+              ).length;
+              const cConnected = cLeads.filter((l) =>
+                ["CONNECTED", "PAIN_FOUND", "QUALIFIED"].includes(l.status)
+              ).length;
+              const cMeetings = cLeads.filter((l) => l.status === "MEETING_BOOKED").length;
+              const cFollowUps = cLeads.filter(
+                (l) => l.notes && l.notes.includes("Follow-up Scheduled")
+              ).length;
+
+              const nicheNames =
+                caller.nicheScope === "ALL"
+                  ? ["All Niches"]
+                  : (caller.allowedNicheIds || [])
+                      .map((id) => marketNameById.get(id))
+                      .filter(Boolean);
+
+              return (
+                <div
+                  key={caller.id}
+                  className="rounded-xl border border-zinc-800 bg-[#09090b] p-4 space-y-3 hover:border-zinc-700 transition"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
+                        <span className="text-xs font-bold text-white truncate">
+                          {caller.name}
+                        </span>
+                        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-zinc-300 shrink-0">
+                          {caller.role}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-zinc-400 mt-1 truncate">
+                        {nicheNames.length > 0 ? nicheNames.join(", ") : "Assigned Niches"}
+                      </div>
+                    </div>
+                    <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 text-xs font-bold text-emerald-300 shrink-0">
+                      {cLeads.length} leads
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px] bg-zinc-900/60 rounded-lg p-2.5 border border-zinc-800/80">
+                    <div>
+                      <span className="text-zinc-500 block">Ready to Call</span>
+                      <span className="font-semibold text-white">{cReady}</span>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500 block">Connected</span>
+                      <span className="font-semibold text-indigo-300">{cConnected}</span>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500 block">Follow-Ups</span>
+                      <span className="font-semibold text-amber-300">{cFollowUps}</span>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500 block">Meetings</span>
+                      <span className="font-semibold text-emerald-400">{cMeetings}</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-1">
+                    <Link
+                      href={`/caller?caller=${caller.id}`}
+                      className="inline-flex items-center justify-between w-full rounded-lg border border-zinc-800 bg-zinc-900/80 hover:bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 transition"
+                    >
+                      <span>Inspect Caller Queue</span>
+                      <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 3. Pipeline Funnel Progress Bar */}
       <div className="rounded-2xl border border-zinc-800/80 bg-[#121215] p-5">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -361,6 +473,12 @@ export default async function OverviewPage() {
                           >
                             {lead.name}
                           </Link>
+                          {lead.marketId && marketNameById.get(lead.marketId) && (
+                            <span className="inline-flex items-center gap-1 rounded bg-zinc-800/80 border border-zinc-700/80 px-2 py-0.5 text-[10px] font-medium text-zinc-300">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                              {marketNameById.get(lead.marketId)}
+                            </span>
+                          )}
                           {score > 0 && (
                             <span
                               className={`rounded-full px-2 py-0.5 text-[10px] font-bold border ${

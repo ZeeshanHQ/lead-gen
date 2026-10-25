@@ -635,17 +635,22 @@ export async function runLeadDiscoveryAction(
       autoEnrich: false,
     });
 
-    // If a Caller ran discovery, assign newly discovered leads from this run to that Caller
+    // Promote qualified leads from this live pass directly to APPROVED CRM status
+    // (and assign to the Caller if a non-Owner Caller initiated discovery)
     const assignMemberId = !isOwnerOrManager && activeMember.id !== "guest" ? activeMember.id : null;
     const assignMemberName =
       !isOwnerOrManager && activeMember.id !== "guest" ? activeMember.name : null;
 
-    if (assignMemberId && counters.qualifiedCompanyIds && counters.qualifiedCompanyIds.length > 0) {
+    if (counters.qualifiedCompanyIds && counters.qualifiedCompanyIds.length > 0) {
       await db
         .update(companies)
         .set({
-          assignedMemberId: assignMemberId,
-          assignedMemberName: assignMemberName,
+          ...(assignMemberId
+            ? {
+                assignedMemberId: assignMemberId,
+                assignedMemberName: assignMemberName,
+              }
+            : {}),
           status: "APPROVED",
           approvedAt: new Date(),
           approvedBy: actorName,

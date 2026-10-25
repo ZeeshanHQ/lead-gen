@@ -11,13 +11,19 @@ import { CallerClient } from "./caller-client";
 
 export const dynamic = "force-dynamic";
 
-export default async function CallerQueuePage() {
+export default async function CallerQueuePage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ caller?: string }>;
+}) {
   const db = await getDb();
-  const [{ market, rule }, { activeMember, allMembers }, savedDialer] = await Promise.all([
-    getActiveContext(db),
-    getActiveTeamMember(db),
-    getSetting<Partial<DialerConfig>>(db, "dialer_config"),
-  ]);
+  const [resolvedParams, { market, allMarkets, rule }, { activeMember, allMembers }, savedDialer] =
+    await Promise.all([
+      searchParams ? searchParams : Promise.resolve({} as { caller?: string }),
+      getActiveContext(db),
+      getActiveTeamMember(db),
+      getSetting<Partial<DialerConfig>>(db, "dialer_config"),
+    ]);
 
   if (!canMemberAccessPath(activeMember, "/caller")) {
     const fallback = getDefaultRouteForMember(activeMember);
@@ -31,26 +37,35 @@ export default async function CallerQueuePage() {
     ...(savedDialer || {}),
   };
 
-  const activeGate = (rule?.config as any)?.gate;
-  const [fullQueue, customColumns] = await Promise.all([
-    getCallerQueue(db, market.id, activeGate),
-    getCustomCrmColumns(db, market.id),
-  ]);
-
-  // Multi-Caller Isolation:
-  // - OWNER / Team Managers see all leads across all callers + unassigned pool
-  // - CALLER role sees ONLY leads assigned specifically to them
   const isOwnerOrManager =
     activeMember.role === "OWNER" || Boolean(activeMember.permissions.manageTeamAndSettings);
 
+  const marketNames: Record<string, string> = {};
+  for (const m of allMarkets) {
+    marketNames[m.id] = m.name;
+  }
+
+  const activeGate = (rule?.config as any)?.gate;
+  const [fullQueue, customColumns] = await Promise.all([
+    getCallerQueue(db, market.id, activeGate, {
+      includeCrossMarketForOwner: true,
+      marketNames,
+    }),
+    getCustomCrmColumns(db, market.id),
+  ]);
+
+  // Multi-Caller Isolation & Full Owner Transparency:
+  // - OWNER / Team Managers see all leads across all callers + unassigned pool across the workspace
+  // - CALLER role sees ONLY leads assigned specifically to them
   const visibleQueue = isOwnerOrManager
     ? fullQueue
     : fullQueue.filter((lead) => lead.assignedMemberId === activeMember.id);
 
   return (
     <CallerClient
-      key={market.id}
+      key={`${market.id}_${resolvedParams?.caller || "ALL"}`}
       initialQueue={visibleQueue}
+      initialCallerFilter={resolvedParams?.caller || "ALL"}
       nicheName={market.name}
       nicheCategory={market.category}
       initialCustomColumns={customColumns}

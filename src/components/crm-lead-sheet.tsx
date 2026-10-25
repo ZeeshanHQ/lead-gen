@@ -74,6 +74,7 @@ export interface CrmLeadItem {
   approvedAt?: string | Date | null;
   assignedMemberId?: string | null;
   assignedMemberName?: string | null;
+  marketName?: string | null;
 }
 
 interface CrmLeadSheetProps {
@@ -763,6 +764,11 @@ export function CrmLeadSheet({
                         >
                           {lead.name}
                         </button>
+                        {lead.marketName && (
+                          <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-medium text-zinc-300">
+                            {lead.marketName}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 text-[11px] text-zinc-400 truncate mt-0.5">
                         <span>{lead.city ? `${lead.city}, ${lead.state}` : lead.state || "US"}</span>

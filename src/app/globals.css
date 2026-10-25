@@ -38,7 +38,7 @@
 }
 
 /* ==========================================================================
-   Bright Mode (Light Theme) Global Overrides
+   Bright Mode (Light Theme) Global Design System Overrides
    ========================================================================== */
 html[data-theme="light"] {
   background-color: #f8fafc !important;
@@ -50,7 +50,26 @@ html[data-theme="light"] body {
   color: #0f172a !important;
 }
 
-/* Canvas & Base App Backgrounds */
+html[data-theme="light"] main {
+  background-color: #f8fafc !important;
+}
+
+/* 1. Shell & Header Overrides */
+html[data-theme="light"] aside,
+html[data-theme="light"] .bg-\[\#0c0c0e\],
+html[data-theme="light"] .bg-\[\#0a0a0c\] {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+html[data-theme="light"] header,
+html[data-theme="light"] header.bg-\[\#09090b\]\/90,
+html[data-theme="light"] .bg-\[\#0c0c0e\]\/80 {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* 2. Canvas & Base App Backgrounds */
 html[data-theme="light"] .bg-\[\#09090b\],
 html[data-theme="light"] .bg-\[\#09090b\]\/90,
 html[data-theme="light"] .bg-\[\#09090b\]\/80,
@@ -61,9 +80,12 @@ html[data-theme="light"] .bg-slate-950 {
   background-color: #ffffff !important;
 }
 
-/* Elevated Cards, Panels & Drawers */
+/* 3. Elevated Cards, Panels & Drawers */
 html[data-theme="light"] .bg-\[\#121215\],
 html[data-theme="light"] .bg-\[\#141418\],
+html[data-theme="light"] .bg-\[\#16161a\],
+html[data-theme="light"] .bg-\[\#18181b\],
+html[data-theme="light"] .bg-\[\#1a1a20\],
 html[data-theme="light"] .bg-zinc-900,
 html[data-theme="light"] .bg-zinc-900\/90,
 html[data-theme="light"] .bg-zinc-900\/80,
@@ -77,17 +99,99 @@ html[data-theme="light"] .bg-slate-900\/60 {
   box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
 }
 
-/* Hover States */
+/* 4. Secondary Surfaces, Avatar Circles & Badges */
+html[data-theme="light"] .bg-zinc-800,
+html[data-theme="light"] .bg-zinc-800\/90,
+html[data-theme="light"] .bg-zinc-800\/80,
+html[data-theme="light"] .bg-zinc-800\/70,
+html[data-theme="light"] .bg-zinc-800\/60,
+html[data-theme="light"] .bg-zinc-800\/50,
+html[data-theme="light"] .bg-zinc-800\/40,
+html[data-theme="light"] .bg-zinc-700,
+html[data-theme="light"] .bg-zinc-700\/50,
+html[data-theme="light"] .bg-slate-800,
+html[data-theme="light"] .bg-slate-800\/80,
+html[data-theme="light"] .bg-slate-800\/60,
+html[data-theme="light"] .bg-slate-800\/50,
+html[data-theme="light"] .bg-slate-950\/80,
+html[data-theme="light"] .bg-slate-950\/50,
+html[data-theme="light"] .bg-zinc-950\/80,
+html[data-theme="light"] .bg-zinc-950\/60,
+html[data-theme="light"] .bg-zinc-950\/50 {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+html[data-theme="light"] :not(.fixed).bg-black,
+html[data-theme="light"] :not(.fixed).bg-black\/60,
+html[data-theme="light"] :not(.fixed).bg-black\/40,
+html[data-theme="light"] :not(.fixed).bg-black\/20 {
+  background-color: #f1f5f9 !important;
+  color: #334155 !important;
+}
+
+/* 5. Primary Buttons & Call to Action (High Contrast Dark Slate on White Canvas) */
+html[data-theme="light"] .bg-white.text-black,
+html[data-theme="light"] .bg-white.text-slate-950,
+html[data-theme="light"] button.bg-white.text-black,
+html[data-theme="light"] a.bg-white.text-black {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+  border-color: #0f172a !important;
+}
+
+html[data-theme="light"] .bg-white.text-black:hover,
+html[data-theme="light"] .bg-white.text-slate-950:hover,
+html[data-theme="light"] button.bg-white.text-black:hover,
+html[data-theme="light"] a.bg-white.text-black:hover {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="light"] .bg-white.text-black svg,
+html[data-theme="light"] .bg-white.text-slate-950 svg,
+html[data-theme="light"] button.bg-white.text-black svg,
+html[data-theme="light"] a.bg-white.text-black svg {
+  color: #ffffff !important;
+}
+
+/* 6. Active Sidebar Navigation Item */
+html[data-theme="light"] aside a.bg-zinc-800\/90 {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  font-weight: 600 !important;
+}
+
+html[data-theme="light"] aside a span.bg-white {
+  background-color: #0f172a !important;
+}
+
+html[data-theme="light"] aside a:not(.bg-zinc-800\/90) {
+  color: #475569 !important;
+}
+
+html[data-theme="light"] aside a:hover {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+/* 7. Hover States */
 html[data-theme="light"] .hover\:bg-zinc-900:hover,
+html[data-theme="light"] .hover\:bg-zinc-900\/80:hover,
+html[data-theme="light"] .hover\:bg-zinc-900\/60:hover,
+html[data-theme="light"] .hover\:bg-zinc-900\/50:hover,
 html[data-theme="light"] .hover\:bg-zinc-800:hover,
 html[data-theme="light"] .hover\:bg-zinc-800\/90:hover,
+html[data-theme="light"] .hover\:bg-zinc-800\/60:hover,
+html[data-theme="light"] .hover\:bg-\[\#18181b\]:hover,
 html[data-theme="light"] .hover\:bg-\[\#1a1a20\]:hover,
 html[data-theme="light"] .hover\:bg-slate-800:hover {
   background-color: #f1f5f9 !important;
 }
 
-/* Borders */
+/* 8. Borders & Dividers */
 html[data-theme="light"] .border-zinc-800,
+html[data-theme="light"] .border-zinc-800\/90,
 html[data-theme="light"] .border-zinc-800\/80,
 html[data-theme="light"] .border-zinc-800\/60,
 html[data-theme="light"] .border-zinc-800\/50,
@@ -99,7 +203,15 @@ html[data-theme="light"] .border-slate-800\/80 {
   border-color: #e2e8f0 !important;
 }
 
-/* Headings & High-Emphasis Text */
+html[data-theme="light"] .divide-zinc-800 > :not([hidden]) ~ :not([hidden]),
+html[data-theme="light"] .divide-zinc-800\/60 > :not([hidden]) ~ :not([hidden]),
+html[data-theme="light"] .divide-zinc-800\/80 > :not([hidden]) ~ :not([hidden]),
+html[data-theme="light"] .divide-slate-800 > :not([hidden]) ~ :not([hidden]),
+html[data-theme="light"] .divide-slate-800\/60 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e2e8f0 !important;
+}
+
+/* 9. Headings & High-Emphasis Text */
 html[data-theme="light"] .text-white {
   color: #0f172a !important;
 }
@@ -112,15 +224,102 @@ html[data-theme="light"] .text-slate-300 {
   color: #1e293b !important;
 }
 
-/* Muted / Secondary Text */
+/* 10. Muted / Secondary Text */
 html[data-theme="light"] .text-zinc-400,
 html[data-theme="light"] .text-zinc-500,
 html[data-theme="light"] .text-slate-400,
 html[data-theme="light"] .text-slate-500 {
+  color: #475569 !important;
+}
+
+html[data-theme="light"] .text-zinc-600,
+html[data-theme="light"] .text-slate-600 {
   color: #64748b !important;
 }
 
-/* Form Inputs, Selects & Textareas */
+/* 11. High-Contrast Status Text & Indicators in Bright Mode */
+html[data-theme="light"] .text-emerald-200,
+html[data-theme="light"] .text-emerald-300,
+html[data-theme="light"] .text-emerald-400 {
+  color: #047857 !important;
+}
+
+html[data-theme="light"] .text-amber-200,
+html[data-theme="light"] .text-amber-300,
+html[data-theme="light"] .text-amber-400 {
+  color: #b45309 !important;
+}
+
+html[data-theme="light"] .text-sky-200,
+html[data-theme="light"] .text-sky-300,
+html[data-theme="light"] .text-sky-400 {
+  color: #0369a1 !important;
+}
+
+html[data-theme="light"] .text-indigo-200,
+html[data-theme="light"] .text-indigo-300,
+html[data-theme="light"] .text-indigo-400 {
+  color: #4338ca !important;
+}
+
+html[data-theme="light"] .text-rose-200,
+html[data-theme="light"] .text-rose-300,
+html[data-theme="light"] .text-rose-400,
+html[data-theme="light"] .text-red-300,
+html[data-theme="light"] .text-red-400 {
+  color: #be123c !important;
+}
+
+html[data-theme="light"] .text-teal-200,
+html[data-theme="light"] .text-teal-300,
+html[data-theme="light"] .text-teal-400 {
+  color: #0f766e !important;
+}
+
+/* 12. Soft Tinted Badges & Panels in Bright Mode */
+html[data-theme="light"] .bg-emerald-500\/10,
+html[data-theme="light"] .bg-emerald-500\/15,
+html[data-theme="light"] .bg-emerald-500\/20,
+html[data-theme="light"] .bg-emerald-500\/25,
+html[data-theme="light"] .bg-emerald-950\/15,
+html[data-theme="light"] .bg-emerald-950\/20,
+html[data-theme="light"] .bg-emerald-950\/30 {
+  background-color: #ecfdf5 !important;
+  border-color: #a7f3d0 !important;
+}
+
+html[data-theme="light"] .bg-amber-500\/10,
+html[data-theme="light"] .bg-amber-500\/15,
+html[data-theme="light"] .bg-amber-500\/20,
+html[data-theme="light"] .bg-amber-950\/20 {
+  background-color: #fffbeb !important;
+  border-color: #fde68a !important;
+}
+
+html[data-theme="light"] .bg-rose-500\/10,
+html[data-theme="light"] .bg-rose-500\/15,
+html[data-theme="light"] .bg-rose-500\/20,
+html[data-theme="light"] .bg-rose-950\/20 {
+  background-color: #fff1f2 !important;
+  border-color: #fecdd3 !important;
+}
+
+html[data-theme="light"] .bg-indigo-500\/10,
+html[data-theme="light"] .bg-indigo-500\/15,
+html[data-theme="light"] .bg-indigo-500\/20,
+html[data-theme="light"] .bg-indigo-950\/20 {
+  background-color: #eef2ff !important;
+  border-color: #c7d2fe !important;
+}
+
+html[data-theme="light"] .bg-sky-500\/10,
+html[data-theme="light"] .bg-sky-500\/15,
+html[data-theme="light"] .bg-sky-500\/20 {
+  background-color: #f0f9ff !important;
+  border-color: #bae6fd !important;
+}
+
+/* 13. Form Inputs, Selects & Textareas */
 html[data-theme="light"] input:not([type="checkbox"]):not([type="radio"]),
 html[data-theme="light"] select,
 html[data-theme="light"] textarea {
@@ -139,7 +338,15 @@ html[data-theme="light"] select option {
   color: #0f172a !important;
 }
 
-/* Table Headers & Rows */
+/* 14. Dropdown Popups & Floating Panels */
+html[data-theme="light"] .shadow-2xl,
+html[data-theme="light"] .shadow-xl {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.04) !important;
+}
+
+/* 15. Table Headers & Rows */
 html[data-theme="light"] thead tr {
   background-color: #f8fafc !important;
   border-color: #e2e8f0 !important;
@@ -153,7 +360,7 @@ html[data-theme="light"] tbody tr:hover {
   background-color: #f8fafc !important;
 }
 
-/* Light Mode Scrollbars */
+/* 16. Light Mode Scrollbars */
 html[data-theme="light"] ::-webkit-scrollbar-track {
   background: #f1f5f9;
 }

@@ -63,7 +63,11 @@ export default async function RootLayout({
       Boolean(activeMember.permissions.manageTeamAndSettings);
 
     if (isOwnerOrManager) {
-      callerCount = ctx.market.approvedCount || 0;
+      const workspaceApprovedTotal = allMarkets.reduce(
+        (sum, m) => sum + (m.approvedCount || 0),
+        0
+      );
+      callerCount = workspaceApprovedTotal > 0 ? workspaceApprovedTotal : (ctx.market.approvedCount || 0);
     } else {
       const [row] = await db
         .select({ n: sql<number>`count(*)::int` })

@@ -40,6 +40,7 @@ export interface LeadRow {
   approvedAt: Date | null;
   assignedMemberId?: string | null;
   assignedMemberName?: string | null;
+  marketId?: string;
 }
 
 export type Scope = "review" | "approved" | "all";
@@ -52,9 +53,13 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
       : scope === "approved"
       ? [...POST_APPROVAL]
       : [...reviewStatuses, ...POST_APPROVAL];
+  const baseStatusCond =
+    scope === "approved"
+      ? sql`(${inArray(companies.status, statuses)} OR (${companies.assignedMemberId} IS NOT NULL AND ${companies.assignedMemberId} != '' AND ${companies.status} != 'REJECTED'))`
+      : inArray(companies.status, statuses);
   const whereClause = marketId
-    ? and(inArray(companies.status, statuses), eq(companies.marketId, marketId))
-    : inArray(companies.status, statuses);
+    ? and(baseStatusCond, eq(companies.marketId, marketId))
+    : baseStatusCond;
   const rows = await db
     .select()
     .from(companies)
@@ -136,6 +141,7 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
       approvedAt: r.approvedAt,
       assignedMemberId: r.assignedMemberId ?? null,
       assignedMemberName: r.assignedMemberName ?? null,
+      marketId: r.marketId,
     };
   });
 }
