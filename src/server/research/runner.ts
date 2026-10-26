@@ -242,7 +242,7 @@ export async function executeRun(
     // Pull a larger candidate pool so filtering/deduping still yields the requested qualified count
     const poolLimit = runOpts?.mockPages
       ? maxCandidates
-      : Math.min(Math.max(Math.ceil(maxCandidates * 2), maxCandidates + 15), 100);
+      : Math.min(Math.max(Math.ceil(maxCandidates * 2), maxCandidates + 2), 40);
 
     const discovered = await executeDiscovery(
       db,
@@ -297,7 +297,7 @@ export async function executeRun(
   // Deduplicate target company IDs
   const maxPoolToInspect = runOpts?.mockPages
     ? maxCandidates
-    : Math.min(maxCandidates * 2 + 10, 80);
+    : Math.min(Math.max(maxCandidates * 2, maxCandidates + 2), 25);
   const uniqueCompanyIds = Array.from(new Set(companyIdsToResearch)).slice(0, maxPoolToInspect);
 
   // Step 2: Create research jobs in DB in a single bulk insert
@@ -319,8 +319,9 @@ export async function executeRun(
     }
   }
 
-  // Step 3: Run jobs with concurrency pool
-  const jobDeadline = Date.now() + Math.max(maxWallClockMs, 35_000);
+  // Step 3: Run jobs with concurrency pool bounded to remaining wall clock time
+  const remainingMs = Math.max(0, deadline - Date.now());
+  const jobDeadline = Date.now() + Math.max(remainingMs, 5_000);
   let activeIndex = 0;
   let encounteredError: string | null = null;
 

@@ -266,7 +266,7 @@ export async function crawlWebsite(
         try {
           const jinaRes = await fetch(`https://r.jina.ai/${currentUrl}`, {
             headers: { Accept: "text/plain" },
-            signal: AbortSignal.timeout(6000),
+            signal: AbortSignal.timeout(3500),
           });
           if (jinaRes.ok) {
             const jinaText = await jinaRes.text();

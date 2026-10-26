@@ -179,6 +179,30 @@ export async function createCandidate(
     providerRef: input.providerRef ? { provider, ref: input.providerRef } : null,
   };
 
+  // Global domain deduplication to avoid duplicate records across markets
+  if (c.domain) {
+    const [existingByDomain] = await db
+      .select({ id: companies.id, name: companies.name })
+      .from(companies)
+      .where(eq(companies.domain, c.domain))
+      .limit(1);
+    if (existingByDomain) {
+      if (input.providerRef) {
+        await db
+          .insert(companySourceRefs)
+          .values({
+            companyId: existingByDomain.id,
+            provider,
+            providerRef: input.providerRef,
+            url: c.website,
+            raw: { submitted: { name: c.name, website: c.website, phone: c.phoneDisplay, city: c.city, state: c.state } },
+          })
+          .onConflictDoNothing();
+      }
+      return { kind: "duplicate", existingId: existingByDomain.id, existingName: existingByDomain.name, reason: "domain" };
+    }
+  }
+
   // Load lightweight identities of existing companies in this market/niche for matching.
   const rows = await db
     .select({
@@ -281,7 +305,7 @@ export async function createCandidate(
       providerRef: input.providerRef ?? null,
       url: c.website,
       raw: { submitted: { name: c.name, website: c.website, phone: c.phoneDisplay, city: c.city, state: c.state } },
-    });
+    }).onConflictDoNothing();
 
     // Evidence for what the human typed in: attributable, but clearly HUMAN-entered, not publicly verified.
     const entered: [string, string | null][] = [
