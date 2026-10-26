@@ -190,3 +190,82 @@ export async function removeContact(db: Db, id: string, actor: string): Promise<
 }
 
 export { ROLE_CLASSES };
+
+
+export interface BatchContactInput {
+  fullName: string;
+  title?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  sourceUrl?: string | null;
+}
+
+/**
+ * High-performance bulk contact insertion for research runs.
+ * Cleans and inserts all discovered contacts in a single statement without serial transactions.
+ */
+export async function addContactsBatch(
+  db: Db,
+  companyId: string,
+  items: BatchContactInput[],
+  domain: string | null = null,
+  actor: string = "Research Runner"
+): Promise<number> {
+  if (!items || items.length === 0) return 0;
+
+  const validContacts: any[] = [];
+  const now = new Date();
+
+  for (const item of items) {
+    const rawName = item.fullName?.trim() || null;
+    const name = rawName ? cleanPersonName(rawName) : null;
+    const title = item.title?.trim() || null;
+    const email = item.email?.trim().toLowerCase() || null;
+    let phoneDisplay: string | null = null;
+    let phoneE164: string | null = null;
+
+    if (item.phone?.trim()) {
+      const p = cleanPhone(item.phone);
+      if (p) {
+        phoneE164 = p.e164;
+        phoneDisplay = p.extension ? `${p.display} x${p.extension}` : p.display;
+      } else {
+        const digits = item.phone.replace(/\D/g, "");
+        if (digits.length >= 4) {
+          phoneDisplay = item.phone.trim();
+          phoneE164 = digits.length >= 7 ? `+${digits}` : null;
+        }
+      }
+    }
+
+    if (!name && !phoneDisplay && !email) continue;
+    if (email && !isValidEmail(email)) continue;
+
+    const roleClass = classifyTitle(title);
+    const emailType = classifyEmail(email, domain);
+
+    validContacts.push({
+      companyId,
+      name,
+      title,
+      roleClass,
+      email,
+      emailType,
+      phoneDisplay,
+      phoneE164,
+      phoneType: "UNKNOWN" as PhoneType,
+      verified: true,
+      confidence: 0.9,
+      provenance: "PUBLICLY_VERIFIED" as const,
+      sourceUrl: item.sourceUrl ?? null,
+      sourceType: "website" as const,
+      status: "ACTIVE" as const,
+      notes: `Discovered by Research Runner from ${item.sourceUrl || "website"}`,
+    });
+  }
+
+  if (validContacts.length === 0) return 0;
+
+  const inserted = await db.insert(contacts).values(validContacts).onConflictDoNothing().returning({ id: contacts.id });
+  return inserted.length;
+}

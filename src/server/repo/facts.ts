@@ -329,3 +329,127 @@ export async function rejectSuggestion(db: Db, suggestionId: string, actor: stri
     });
   });
 }
+
+
+export interface BatchFactItem {
+  field: FactKey;
+  value: string;
+  confidence: number;
+  sourceUrl?: string | null;
+  evidenceText: string;
+}
+
+export interface SetFactsBatchResult {
+  factsRecorded: number;
+  facts: FactMap;
+}
+
+/**
+ * Fast bulk fact recording for research runs.
+ * Applies multiple extracted facts in a single database transaction,
+ * inserting all evidence rows in one statement instead of 20+ sequential roundtrips.
+ */
+export async function setFactsBatch(
+  db: Db,
+  companyId: string,
+  factItems: BatchFactItem[],
+  opts: {
+    actor: string;
+    runId?: string | null;
+    sourceType?: SourceType;
+    provenance?: Provenance;
+    retrievedAt?: Date;
+  }
+): Promise<SetFactsBatchResult> {
+  if (!factItems || factItems.length === 0) {
+    const [c] = await db.select({ facts: companies.facts }).from(companies).where(eq(companies.id, companyId)).limit(1);
+    return { factsRecorded: 0, facts: (c?.facts as FactMap) || {} };
+  }
+
+  const actor = opts.actor || "Research Runner";
+  const sourceType = opts.sourceType ?? "website";
+  const provenance = opts.provenance ?? "PUBLICLY_VERIFIED";
+  const retrievedAt = opts.retrievedAt ?? new Date();
+
+  const [company] = await db.select().from(companies).where(eq(companies.id, companyId)).limit(1);
+  if (!company) throw new FactError("Company not found");
+
+  const currentFacts: FactMap = { ...(company.facts ?? {}) };
+  const lockedSet = new Set(company.lockedFields || []);
+
+  const validItems: Array<{ field: FactKey; value: string; confidence: number; sourceUrl: string | null; evidenceText: string }> = [];
+
+  for (const item of factItems) {
+    if (!isFactKey(item.field)) continue;
+    if (!item.evidenceText || !item.evidenceText.trim()) continue;
+    try {
+      const val = validateFactValue(item.field, item.value);
+      if (val === "UNKNOWN") continue;
+      validItems.push({
+        field: item.field,
+        value: val,
+        confidence: clamp01(item.confidence),
+        sourceUrl: item.sourceUrl ?? null,
+        evidenceText: item.evidenceText.trim(),
+      });
+    } catch {
+      // Skip invalid items
+    }
+  }
+
+  if (validItems.length === 0) {
+    return { factsRecorded: 0, facts: currentFacts };
+  }
+
+  const evidenceRows: any[] = [];
+  let appliedCount = 0;
+
+  for (const item of validItems) {
+    // If field is locked by human, do not overwrite
+    if (lockedSet.has(item.field) || currentFacts[item.field]?.provenance === "HUMAN_CONFIRMED") {
+      continue;
+    }
+
+    currentFacts[item.field] = {
+      value: item.value,
+      confidence: item.confidence,
+      provenance,
+      evidenceId: null,
+      updatedAt: retrievedAt.toISOString(),
+    };
+    appliedCount++;
+
+    evidenceRows.push({
+      companyId,
+      runId: opts.runId ?? null,
+      field: item.field,
+      value: item.value,
+      sourceUrl: item.sourceUrl,
+      sourceType,
+      evidenceText: item.evidenceText,
+      retrievedAt,
+      confidence: item.confidence,
+      provenance,
+      status: "ACTIVE",
+      lastVerifiedAt: provenance === "PUBLICLY_VERIFIED" ? retrievedAt : null,
+    });
+  }
+
+  if (evidenceRows.length > 0) {
+    await db.insert(evidence).values(evidenceRows);
+  }
+
+  await db
+    .update(companies)
+    .set({
+      facts: currentFacts,
+      updatedAt: new Date(),
+      ...(provenance === "PUBLICLY_VERIFIED" ? { lastVerifiedAt: retrievedAt } : {}),
+    })
+    .where(eq(companies.id, companyId));
+
+  return {
+    factsRecorded: appliedCount,
+    facts: currentFacts,
+  };
+}

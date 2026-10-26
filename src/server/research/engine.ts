@@ -10,8 +10,8 @@ import {
   type ScoreBreakdown,
 } from "../domain/rules";
 import { toContactInput } from "../repo/contacts";
-import { getContactsForCompanies, addContact } from "../repo/contacts";
-import { setFact } from "../repo/facts";
+import { getContactsForCompanies, addContact, addContactsBatch } from "../repo/contacts";
+import { setFact, setFactsBatch, type BatchFactItem } from "../repo/facts";
 import { audit } from "../repo/audit";
 import { crawlWebsite, type CrawledPage } from "./crawler";
 import { extractAllFacts } from "./extractors";
@@ -229,8 +229,8 @@ export async function researchCompany(
     pages = options.mockPages;
   } else if (company.website) {
     const crawl = await crawlWebsite(company.website, {
-      maxPages: options.maxPages ?? 12,
-      timeoutMs: options.timeoutMs ?? 8000,
+      maxPages: options.maxPages ?? 1,
+      timeoutMs: options.timeoutMs ?? 2500,
       respectRobotsTxt: true,
     });
     pages = crawl.pages;
@@ -337,47 +337,41 @@ export async function researchCompany(
     };
   }
 
-  // 5. Website resolved! Record website_alive = YES
+  // 5. Website resolved! Record website_alive and all extracted facts in 1 batch
   const firstPage = pages[0];
   if (!firstPage) {
     throw new Error("No crawled pages available");
   }
 
-  await setFact(db, {
-    companyId,
-    field: "website_alive",
-    value: "YES",
-    confidence: 0.99,
-    provenance: "PUBLICLY_VERIFIED",
-    sourceType: "website",
-    sourceUrl: firstPage.url,
-    evidenceText: `Website resolved successfully (${pages.length} pages crawled). Title: "${firstPage.title}"`,
-    actor,
-    runId,
-  });
-  factsRecorded++;
-
-  // 6. Extract all facts and signals
   const extracted = extractAllFacts(pages);
 
-  for (const factCandidate of extracted.facts) {
-    try {
-      await setFact(db, {
-        companyId,
-        field: factCandidate.key,
-        value: factCandidate.value,
-        confidence: factCandidate.confidence,
-        provenance: "PUBLICLY_VERIFIED",
-        sourceType: "website",
-        sourceUrl: factCandidate.sourceUrl,
-        evidenceText: factCandidate.evidenceSnippet,
-        actor,
-        runId,
-      });
-      factsRecorded++;
-    } catch (err) {
-      // Ignore validation conflicts or lock rejections
-    }
+  const factBatchItems: BatchFactItem[] = [
+    {
+      field: "website_alive",
+      value: "YES",
+      confidence: 0.99,
+      sourceUrl: firstPage.url,
+      evidenceText: `Website resolved successfully (${pages.length} pages crawled). Title: "${firstPage.title}"`,
+    },
+    ...extracted.facts.map((f) => ({
+      field: f.key,
+      value: f.value,
+      confidence: f.confidence,
+      sourceUrl: f.sourceUrl,
+      evidenceText: f.evidenceSnippet,
+    })),
+  ];
+
+  try {
+    const batchFactRes = await setFactsBatch(db, companyId, factBatchItems, {
+      actor,
+      runId,
+      sourceType: "website",
+      provenance: "PUBLICLY_VERIFIED",
+    });
+    factsRecorded += batchFactRes.factsRecorded;
+  } catch (err) {
+    // Non-blocking fallback
   }
 
   // 7. Update company NAP if discovered and not locked
@@ -404,26 +398,18 @@ export async function researchCompany(
     }
   }
 
-  // 8. Discover and insert leadership contacts
-  for (const c of extracted.contacts) {
+  // 8. Discover and insert leadership contacts in 1 bulk insert
+  if (extracted.contacts && extracted.contacts.length > 0) {
     try {
-      const res = await addContact(
+      contactsDiscovered = await addContactsBatch(
         db,
-        {
-          companyId,
-          name: c.fullName,
-          title: c.title,
-          email: c.email,
-          phone: c.phone,
-          verified: true,
-          sourceUrl: c.sourceUrl,
-          notes: `Discovered by Website Research Agent at ${c.sourceUrl}`,
-        },
+        companyId,
+        extracted.contacts,
+        company.domain,
         actor
       );
-      if (res.ok) contactsDiscovered++;
     } catch {
-      // ignore duplicates or validation issues
+      // non-blocking
     }
   }
 

@@ -241,14 +241,14 @@ export async function runLeadDiscoveryAction(
       marketId: market.id,
       actor: `${actorName} (${market.name})`,
       maxCandidates: targetCount,
-      concurrency: 8,
-      pagesPerCompany: 2,
+      concurrency: 6,
+      pagesPerCompany: 1,
       providerFilter: undefined,
     });
 
     const counters = await executeRun(db, runId, {
-      timeoutMs: 2500,
-      maxWallClockMs: 14000,
+      timeoutMs: 2000,
+      maxWallClockMs: 10000,
       autoEnrich: false,
     });
 
@@ -268,16 +268,14 @@ export async function runLeadDiscoveryAction(
         .where(inArray(companies.id, counters.qualifiedCompanyIds));
     }
 
+    // Fetch updated leads for this market in 1 fast query batch
+    const allMarketRows = await loadLeadRows(db, "all", market.id);
+
     // Count how many leads from this live pass strictly passed the Must-Have Quality Gate
-    const liveQualifiedIds = counters.qualifiedCompanyIds || [];
-    let livePassedGateCount = 0;
-    if (liveQualifiedIds.length > 0) {
-      const currentRows = await loadLeadRows(db, "all", market.id);
-      const idSet = new Set(liveQualifiedIds);
-      livePassedGateCount = currentRows.filter(
-        (r) => idSet.has(r.id) && passesLeadRowGate(r, mergedGate)
-      ).length;
-    }
+    const liveQualifiedIds = new Set(counters.qualifiedCompanyIds || []);
+    const livePassedGateCount = liveQualifiedIds.size > 0
+      ? allMarketRows.filter((r) => liveQualifiedIds.has(r.id) && passesLeadRowGate(r, mergedGate)).length
+      : 0;
 
     // Real discovery only: never fabricate mock/dump leads when live yield is below target
     const finalQualifiedInRun = livePassedGateCount;
@@ -331,8 +329,7 @@ export async function runLeadDiscoveryAction(
       }),
     ]);
 
-    // Fetch updated leads for this market in 1 fast query batch
-    const allMarketRows = await loadLeadRows(db, "all", market.id);
+    // Use updated scoped leads for this market
     const scopedRows = isOwnerOrManager
       ? allMarketRows
       : allMarketRows.filter((l) => l.assignedMemberId === activeMember.id);
@@ -342,21 +339,24 @@ export async function runLeadDiscoveryAction(
     const pendingLeads = qualifiedLeads.filter((l) => !postApprovalSet.has(l.status));
     const crmReadyCount = qualifiedLeads.filter((l) => postApprovalSet.has(l.status)).length;
 
-    revalidatePath("/caller");
-    revalidatePath("/leads");
-    revalidatePath("/review");
-    revalidatePath("/discover");
-    revalidatePath("/runs");
-    revalidatePath("/usage");
-    revalidatePath("/");
+    try {
+      revalidatePath("/discover");
+      revalidatePath("/leads");
+      revalidatePath("/caller");
+    } catch {
+      // Non-blocking in non-request contexts or tests
+    }
+
+    const safeLeads = JSON.parse(JSON.stringify(pendingLeads.slice(0, 60)));
+    const safeCounters = JSON.parse(JSON.stringify(enrichedCounters));
 
     return {
       ok: true,
       runId,
-      counters: enrichedCounters,
+      counters: safeCounters,
       targetCount,
       gate: mergedGate,
-      leads: pendingLeads.slice(0, 100),
+      leads: safeLeads,
       totalReviewCount: pendingLeads.length,
       crmReadyCount,
     };

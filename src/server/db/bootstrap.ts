@@ -41,7 +41,7 @@ export const DEFAULT_SETTINGS: Record<string, unknown> = {
 let bootstrappedInProcess = false;
 
 export async function bootstrap(db: Db): Promise<void> {
-  if (bootstrappedInProcess) return;
+  if (bootstrappedInProcess && process.env.NODE_ENV !== "test") return;
 
   // Fast check: if system is already initialized, return immediately (0 latency)
   try {

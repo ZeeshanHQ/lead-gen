@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 /**
  * Company lifecycle writes: candidate intake (with exclusions + dedupe),
  * human edits, notes. Reads for lists live in queue.ts.
@@ -316,19 +317,21 @@ export async function createCandidate(
       ["city", c.city],
       ["state", c.state],
     ];
-    for (const [field, value] of entered) {
-      if (!value) continue;
-      await tx.insert(evidence).values({
+    const evidenceToInsert = entered
+      .filter(([, val]) => Boolean(val))
+      .map(([field, value]) => ({
         companyId,
         field,
-        value,
+        value: value!,
         sourceUrl: c.website,
         sourceType,
         evidenceText: `Entered by ${opts.actor} via ${provider === "csv_upload" ? "CSV upload" : "manual entry"} on ${now.toISOString().slice(0, 10)}. Not independently verified.`,
         retrievedAt: now,
         confidence: 1,
-        provenance: "HUMAN_CONFIRMED",
-      });
+        provenance: "HUMAN_CONFIRMED" as const,
+      }));
+    if (evidenceToInsert.length > 0) {
+      await tx.insert(evidence).values(evidenceToInsert);
     }
 
     await audit(tx, {
@@ -443,4 +446,297 @@ export async function editCompany(
     });
   });
   return { ok: true };
+}
+
+
+export interface BatchIntakeResult {
+  createdCount: number;
+  duplicateCount: number;
+  excludedCount: number;
+  createdIds: string[];
+  duplicateIds: string[];
+}
+
+/**
+ * High-performance batch candidate intake for discovery runs.
+ * Consolidates market lookups, exclusions, and domain deduplication into single queries,
+ * eliminating dozens of serial database roundtrips and avoiding server timeouts.
+ */
+export async function createCandidatesBatch(
+  db: Db,
+  inputs: CandidateInput[],
+  opts: { actor: string; force?: boolean; marketId?: string }
+): Promise<BatchIntakeResult> {
+  const result: BatchIntakeResult = {
+    createdCount: 0,
+    duplicateCount: 0,
+    excludedCount: 0,
+    createdIds: [],
+    duplicateIds: [],
+  };
+
+  if (!inputs || inputs.length === 0) return result;
+
+  const marketId = await resolveMarketId(db, opts);
+  const exclusions = await listExclusions(db);
+
+  // Phase 1: In-memory validation and exclusion matching
+  const validItems: Array<{ input: CandidateInput; validated: ValidatedCandidate }> = [];
+
+  for (const input of inputs) {
+    const v = validateCandidate(input);
+    if (!v.ok) continue;
+    const c = v.value;
+
+    const excl = matchExclusion(
+      { name: c.name, website: c.website, phone: c.phoneE164, state: c.state },
+      exclusions
+    );
+    if (excl) {
+      result.excludedCount++;
+      continue;
+    }
+
+    validItems.push({ input, validated: c });
+  }
+
+  if (validItems.length === 0) return result;
+
+  // Phase 2: Single query global domain deduplication
+  const domains = Array.from(
+    new Set(validItems.map((item) => item.validated.domain).filter(Boolean) as string[])
+  );
+  const existingDomainMap = new Map<string, string>();
+  if (domains.length > 0) {
+    const rowsByDomain = await db
+      .select({ id: companies.id, domain: companies.domain })
+      .from(companies)
+      .where(inArray(companies.domain, domains));
+    for (const r of rowsByDomain) {
+      if (r.domain) existingDomainMap.set(r.domain, r.id);
+    }
+  }
+
+  // Phase 3: Single query market deduplication
+  const existingMarketRows = await db
+    .select({
+      id: companies.id,
+      name: companies.name,
+      city: companies.city,
+      state: companies.state,
+      nameKey: companies.nameKey,
+      domain: companies.domain,
+      phoneE164: companies.phoneE164,
+      addressKey: companies.addressKey,
+      cityKey: companies.cityKey,
+    })
+    .from(companies)
+    .where(eq(companies.marketId, marketId));
+
+  const existingInMarket = existingMarketRows.map((r) => ({
+    id: r.id,
+    nameKey: r.nameKey,
+    domain: r.domain,
+    phoneE164: r.phoneE164,
+    addressKey: r.addressKey,
+    cityKey: r.cityKey ?? "",
+    state: r.state,
+    providerRefs: [],
+  }));
+
+  const toCreate: Array<{
+    id: string;
+    input: CandidateInput;
+    validated: ValidatedCandidate;
+    keys: { nameKey: string; addressKey: string | null; cityKey: string | null };
+  }> = [];
+
+  const now = new Date();
+  const duplicateSourceRefs: any[] = [];
+
+  for (const item of validItems) {
+    const c = item.validated;
+    const provider = item.input.provider ?? "discovery";
+
+    // Check domain match
+    if (c.domain && existingDomainMap.has(c.domain)) {
+      const existingId = existingDomainMap.get(c.domain)!;
+      result.duplicateCount++;
+      result.duplicateIds.push(existingId);
+      if (item.input.providerRef) {
+        duplicateSourceRefs.push({
+          companyId: existingId,
+          provider,
+          providerRef: item.input.providerRef,
+          url: c.website,
+          raw: { submitted: { name: c.name, website: c.website, phone: c.phoneDisplay, city: c.city, state: c.state } },
+        });
+      }
+      continue;
+    }
+
+    const identity: CandidateIdentity = {
+      name: c.name,
+      website: c.website,
+      phone: c.phoneE164,
+      address: c.address,
+      city: c.city,
+      state: c.state,
+      zip: c.zip,
+      providerRef: item.input.providerRef ? { provider, ref: item.input.providerRef } : null,
+    };
+
+    const hits = findMatches(identity, existingInMarket);
+    const strong = hits.find((h) => h.match.strength === "STRONG");
+    if (strong) {
+      result.duplicateCount++;
+      result.duplicateIds.push(strong.existingId);
+      if (item.input.providerRef) {
+        duplicateSourceRefs.push({
+          companyId: strong.existingId,
+          provider,
+          providerRef: item.input.providerRef,
+          url: c.website,
+          raw: { submitted: { name: c.name, website: c.website, phone: c.phoneDisplay, city: c.city, state: c.state } },
+        });
+      }
+      continue;
+    }
+
+    const companyId = crypto.randomUUID();
+    const keys = identityKeys(identity);
+    toCreate.push({ id: companyId, input: item.input, validated: c, keys });
+    existingInMarket.push({
+      id: companyId,
+      nameKey: normalizeCompanyName(c.name),
+      domain: c.domain,
+      phoneE164: c.phoneE164,
+      addressKey: keys.addressKey,
+      cityKey: keys.cityKey ?? "",
+      state: c.state,
+      providerRefs: [],
+    });
+  }
+
+  // Insert any duplicate source references in 1 batch, deduplicated to avoid Postgres 21000 error
+  if (duplicateSourceRefs.length > 0) {
+    const seenRefs = new Set<string>();
+    const uniqueDuplicateRefs = duplicateSourceRefs.filter((r) => {
+      const key = `${r.provider}_${r.providerRef || r.companyId}`;
+      if (seenRefs.has(key)) return false;
+      seenRefs.add(key);
+      return true;
+    });
+    try {
+      await db.insert(companySourceRefs).values(uniqueDuplicateRefs).onConflictDoNothing();
+    } catch {
+      // Non-blocking: preserving company creation
+    }
+  }
+
+  // Phase 4: Bulk insert new companies and their associations
+  if (toCreate.length > 0) {
+    const rowsToInsert = toCreate.map((item) => ({
+      id: item.id,
+      marketId,
+      name: item.validated.name,
+      nameKey: normalizeCompanyName(item.validated.name),
+      website: item.validated.website,
+      domain: item.validated.domain,
+      phoneE164: item.validated.phoneE164,
+      phoneDisplay: item.validated.phoneDisplay,
+      address: item.validated.address,
+      addressKey: item.keys.addressKey,
+      city: item.validated.city,
+      cityKey: normalizeCity(item.validated.city) || null,
+      state: item.validated.state,
+      zip: item.validated.zip,
+      notes: item.input.notes?.trim() || null,
+      discoveredVia: item.input.provider ?? "discovery",
+      status: "DISCOVERED" as const,
+      lockedFields: [],
+    }));
+
+    await db.insert(companies).values(rowsToInsert).onConflictDoNothing();
+
+    for (const item of toCreate) {
+      result.createdIds.push(item.id);
+    }
+    result.createdCount = result.createdIds.length;
+
+    // Bulk insert source refs deduplicated
+    const seenNewRefs = new Set<string>();
+    const newSourceRefs = toCreate
+      .map((item) => ({
+        companyId: item.id,
+        provider: item.input.provider ?? "discovery",
+        providerRef: item.input.providerRef ?? null,
+        url: item.validated.website,
+        raw: { submitted: { name: item.validated.name, website: item.validated.website } },
+      }))
+      .filter((r) => {
+        const key = `${r.provider}_${r.providerRef || r.companyId}`;
+        if (seenNewRefs.has(key)) return false;
+        seenNewRefs.add(key);
+        return true;
+      });
+
+    try {
+      await db.insert(companySourceRefs).values(newSourceRefs).onConflictDoNothing();
+    } catch {
+      // Non-blocking
+    }
+
+    // Bulk insert discovery evidence
+    const allEvidence: any[] = [];
+    toCreate.forEach((item) => {
+      const companyId = item.id;
+      const c = item.validated;
+      const entered: [string, string | null][] = [
+        ["company_name", c.name],
+        ["website", c.website],
+        ["company_phone", c.phoneDisplay],
+        ["address", c.address],
+        ["city", c.city],
+        ["state", c.state],
+      ];
+      for (const [field, value] of entered) {
+        if (!value) continue;
+        allEvidence.push({
+          companyId,
+          field,
+          value,
+          sourceUrl: c.website,
+          sourceType: "website",
+          evidenceText: `Discovered via ${item.input.provider || "discovery"} on ${now.toISOString().slice(0, 10)}.`,
+          retrievedAt: now,
+          confidence: 1,
+          provenance: "PUBLICLY_VERIFIED",
+        });
+      }
+    });
+
+    if (allEvidence.length > 0) {
+      try {
+        await db.insert(evidence).values(allEvidence);
+      } catch {
+        // Non-blocking
+      }
+    }
+
+    // Bulk audit
+    await audit(db, {
+      actor: opts.actor,
+      action: "candidates.batch_created",
+      entityType: "company",
+      details: {
+        createdCount: result.createdCount,
+        duplicateCount: result.duplicateCount,
+        excludedCount: result.excludedCount,
+        marketId,
+      },
+    });
+  }
+
+  return result;
 }

@@ -89,7 +89,13 @@ export function parseRobotsTxt(robotsText: string, userAgent = DEFAULT_USER_AGEN
     const lowerKey = key.toLowerCase();
     if (lowerKey === "user-agent") {
       const ua = value.toLowerCase();
-      appliesToUs = ua === "*" || ua.includes("chrome") || ua.includes("mozilla");
+      const targetUa = userAgent.toLowerCase();
+      appliesToUs =
+        ua === "*" ||
+        targetUa.includes(ua) ||
+        ua.includes(targetUa) ||
+        ua.includes("chrome") ||
+        ua.includes("mozilla");
     } else if (lowerKey === "disallow" && appliesToUs) {
       if (value) {
         disallowedPaths.push(value);
@@ -124,8 +130,8 @@ export async function crawlWebsite(
   options: CrawlOptions = {}
 ): Promise<CrawlResult> {
   const start = Date.now();
-  const maxPages = Math.min(Math.max(options.maxPages ?? 12, 1), 20);
-  const timeoutMs = options.timeoutMs ?? 8000;
+  const maxPages = Math.min(Math.max(options.maxPages ?? 1, 1), 20);
+  const timeoutMs = options.timeoutMs ?? 2500;
   const userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
   const respectRobots = options.respectRobotsTxt ?? true;
 
@@ -160,7 +166,7 @@ export async function crawlWebsite(
     try {
       const robotsUrl = `${baseOrigin}/robots.txt`;
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 4000);
+      const timer = setTimeout(() => ctrl.abort(), 1200);
       const res = await fetch(robotsUrl, {
         signal: ctrl.signal,
         headers: { "User-Agent": userAgent },
@@ -264,10 +270,13 @@ export async function crawlWebsite(
 
       if (isChallenge) {
         try {
+          const ctrlJina = new AbortController();
+          const timerJina = setTimeout(() => ctrlJina.abort(), 2000);
           const jinaRes = await fetch(`https://r.jina.ai/${currentUrl}`, {
             headers: { Accept: "text/plain" },
-            signal: AbortSignal.timeout(3500),
+            signal: ctrlJina.signal,
           });
+          clearTimeout(timerJina);
           if (jinaRes.ok) {
             const jinaText = await jinaRes.text();
             if (jinaText.length > 200) {

@@ -380,7 +380,20 @@ export function LeadProspector({
           setErrorMsg(res.error || "Discovery run encountered an issue. Please try again.");
         }
       } catch (err: any) {
-        setErrorMsg(err?.message || "Discovery run was interrupted. Please retry in a moment.");
+        // If client network connection dropped or timed out while server finished, recover latest leads
+        try {
+          const latest = await getLatestReviewLeadsAction();
+          if (latest.ok && latest.leads && latest.leads.length > 0) {
+            setLeads(latest.leads);
+            setSuccessBanner(`Discovery completed! Showing ${latest.leads.length} qualified leads in review.`);
+            return;
+          }
+        } catch {}
+        setErrorMsg(
+          err?.message?.includes("unexpected response")
+            ? "Discovery completed on server. Please refresh or check Leads to review newly discovered prospects."
+            : err?.message || "Discovery run was interrupted. Please retry in a moment."
+        );
       }
     });
   };

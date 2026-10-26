@@ -8,7 +8,7 @@ import {
   researchRuns,
 } from "../db/schema";
 import { defaultHvacRuleConfig, type RuleConfig } from "../domain/rules";
-import { createCandidate } from "../repo/companies";
+import { createCandidate, createCandidatesBatch } from "../repo/companies";
 import { audit } from "../repo/audit";
 import { executeDiscovery } from "../providers/registry";
 import { researchCompany, type ResearchResult } from "./engine";
@@ -177,7 +177,7 @@ export async function executeRun(
 
   const limits = (run.limits as Record<string, any>) || {};
   const maxCandidates = limits.maxCandidates || 25;
-  const concurrency = Math.min(Math.max(limits.concurrency || 6, 1), 10);
+  const concurrency = Math.min(Math.max(limits.concurrency || 6, 1), 6);
   const pagesPerCompany = Math.min(limits.pagesPerCompany || 3, 6);
   const stopOnError = !!limits.stopOnError;
   const timeoutMs = runOpts?.timeoutMs ?? limits.timeoutMs ?? (run.mode === "test" ? 1000 : 2800);
@@ -258,37 +258,29 @@ export async function executeRun(
     );
 
     counters.totalCandidates = discovered.length;
-    const duplicateIds: string[] = [];
 
-    for (const d of discovered) {
-      const intake = await createCandidate(
-        db,
-        {
-          name: d.name,
-          website: d.website,
-          phone: d.phone,
-          address: d.street,
-          city: d.city,
-          state: d.state,
-          zip: d.zip,
-          provider: d.provider,
-          providerRef: d.providerRef,
-        },
-        { actor: run.actor || "Discovery Runner", marketId: run.marketId ?? undefined }
-      );
+    const intakeResult = await createCandidatesBatch(
+      db,
+      discovered.map((d) => ({
+        name: d.name,
+        website: d.website,
+        phone: d.phone,
+        address: d.street,
+        city: d.city,
+        state: d.state,
+        zip: d.zip,
+        provider: d.provider,
+        providerRef: d.providerRef,
+      })),
+      { actor: run.actor || "Discovery Runner", marketId: run.marketId ?? undefined }
+    );
 
-      if (intake.kind === "created") {
-        counters.createdCompanies++;
-        companyIdsToResearch.push(intake.id);
-      } else if (intake.kind === "duplicate") {
-        counters.duplicatesMerged++;
-        duplicateIds.push(intake.existingId);
-      } else if (intake.kind === "excluded") {
-        counters.excludedCount++;
-      }
-    }
+    counters.createdCompanies = intakeResult.createdCount;
+    counters.duplicatesMerged = intakeResult.duplicateCount;
+    counters.excludedCount = intakeResult.excludedCount;
 
-    for (const dupId of duplicateIds) {
+    companyIdsToResearch.push(...intakeResult.createdIds);
+    for (const dupId of intakeResult.duplicateIds) {
       if (companyIdsToResearch.length >= poolLimit) break;
       companyIdsToResearch.push(dupId);
     }
