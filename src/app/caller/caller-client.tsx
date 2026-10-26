@@ -39,6 +39,7 @@ import {
   type DialerConfig,
 } from "@/server/domain/dialer";
 import { LeadImportModal } from "@/components/lead-import-modal";
+import { ActiveQualityGateCard } from "@/components/active-quality-gate-card";
 import type { TeamPermissions } from "@/server/domain/team";
 import {
   PhoneCall,
@@ -79,6 +80,8 @@ interface CallerClientProps {
   activeMember?: TeamMember;
   allMembers?: TeamMember[];
   permissions?: TeamPermissions;
+  initialRuleConfig?: any;
+  canEditRules?: boolean;
 }
 
 function getSmartOpeningScript({
@@ -137,6 +140,8 @@ export function CallerClient({
   activeMember,
   allMembers = [],
   permissions,
+  initialRuleConfig = {},
+  canEditRules = false,
 }: CallerClientProps) {
   const [queue, setQueue] = useState<CallerLeadView[]>(initialQueue);
   const [customColumns, setCustomColumns] = useState<CustomCrmColumn[]>(initialCustomColumns);
@@ -948,6 +953,16 @@ export function CallerClient({
               <span>Export CSV</span>
             </a>
           )}
+
+          {canEditRules && marketId && (
+            <ActiveQualityGateCard
+              marketId={marketId}
+              marketName={nicheName}
+              initialRuleConfig={initialRuleConfig}
+              canEditRules={canEditRules}
+              compactTriggerOnly={true}
+            />
+          )}
         </div>
       </div>
 
@@ -1148,6 +1163,15 @@ export function CallerClient({
             <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
               Meetings Booked: <strong className="text-emerald-400">{meetingsCount}</strong>
             </span>
+            {canEditRules && marketId && (
+              <ActiveQualityGateCard
+                marketId={marketId}
+                marketName={nicheName}
+                initialRuleConfig={initialRuleConfig}
+                canEditRules={canEditRules}
+                compactTriggerOnly={true}
+              />
+            )}
           </div>
         </div>
       ) : null}

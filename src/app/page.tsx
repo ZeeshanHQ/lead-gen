@@ -9,6 +9,7 @@ import { canMemberAccessPath, getDefaultRouteForMember } from "@/server/domain/t
 import { loadLeadRows } from "@/server/repo/queue";
 import { resolveGate } from "@/server/domain/gate";
 import { formatDateTime } from "@/lib/utils";
+import { ActiveQualityGateCard } from "@/components/active-quality-gate-card";
 import {
   Compass,
   PhoneCall,
@@ -528,50 +529,13 @@ export default async function OverviewPage() {
 
         {/* Right (33%): Niche Intelligence & Recent Activity */}
         <div className="space-y-5">
-          <div className="rounded-2xl border border-zinc-800/80 bg-[#121215] p-5">
-            <div className="flex items-center justify-between border-b border-zinc-800/80 pb-3">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-sm font-bold text-white">
-                  Active Quality Gate
-                </h3>
-              </div>
-              {perms.discoverLeads && (
-                <Link
-                  href="/discover"
-                  className="text-xs text-zinc-400 hover:text-white transition"
-                >
-                  Configure &rarr;
-                </Link>
-              )}
-            </div>
-
-            <div className="mt-3.5 space-y-3 text-xs">
-              <div className="flex items-center justify-between rounded-lg bg-[#09090b] p-2.5 border border-zinc-800">
-                <span className="text-zinc-400">Min ICP Score:</span>
-                <span className="font-bold text-white">{defaultRule?.config?.scoring?.minScore ?? 60} / 100</span>
-              </div>
-
-              <div className="space-y-2 pt-1 text-zinc-300">
-                <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-                  Target Keywords
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {(market.keywords && market.keywords.length > 0
-                    ? market.keywords.slice(0, 6)
-                    : [market.name]
-                  ).map((kw, i) => (
-                    <span
-                      key={i}
-                      className="rounded-md border border-zinc-800 bg-[#09090b] px-2 py-1 text-[11px] text-zinc-300"
-                    >
-                      {kw}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
+          <ActiveQualityGateCard
+            marketId={market.id}
+            marketName={market.name}
+            marketKeywords={market.keywords || []}
+            initialRuleConfig={defaultRule?.config || {}}
+            canEditRules={isOwnerOrManager || Boolean(activeMember.permissions.editRules)}
+          />
 
           <div className="rounded-2xl border border-zinc-800/80 bg-[#121215] p-5">
             <div className="flex items-center justify-between border-b border-zinc-800/80 pb-3">

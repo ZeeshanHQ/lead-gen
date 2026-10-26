@@ -75,6 +75,8 @@ export default async function CallerQueuePage({
       activeMember={activeMember}
       allMembers={allMembers}
       permissions={activeMember.permissions}
+      initialRuleConfig={(rule?.config as any) || {}}
+      canEditRules={isOwnerOrManager || Boolean(activeMember.permissions.editRules)}
     />
   );
 }
