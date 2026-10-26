@@ -137,8 +137,7 @@ export class TavilyAdapter implements DiscoveryAdapter {
     });
     if (plan.length === 0) return [];
 
-    // Return enough queries to satisfy the requested limit in 1 parallel batch
-    const maxQueries = Math.min(Math.max(Math.ceil((query.limit || 25) / 10), 2), 3);
+    const maxQueries = Math.min(Math.max(Math.ceil((query.limit || 25) / 5), 3), 6);
     const offset = Math.abs(query.queryOffset ?? 0) % plan.length;
 
     const selected: typeof plan = [];
@@ -156,18 +155,31 @@ export class TavilyAdapter implements DiscoveryAdapter {
       );
     }
 
-    const searchQueries = this.generateQueries(query);
+    const plan = buildQueryPlan({
+      keywords: query.keywords,
+      states: query.states,
+      cities: query.cities,
+    });
+    if (plan.length === 0) return [];
+
     const candidates: DiscoveredCandidate[] = [];
     // Seed seenDomains with existing database domains so previously acquired leads are NEVER re-added
     const seenDomains = new Set<string>(
       (query.excludeDomains ?? []).map((d) => d.toLowerCase().replace(/^www\./, ""))
     );
 
-    // Execute planned queries in parallel batches of 4 to minimize total discovery latency
-    const batchSize = 4;
-    for (let i = 0; i < searchQueries.length; i += batchSize) {
+    const offset = Math.abs(query.queryOffset ?? 0) % plan.length;
+    const batchSize = 3;
+    const maxBatches = 2; // up to 6 queries total
+
+    for (let batch = 0; batch < maxBatches; batch++) {
       if (candidates.length >= query.limit) break;
-      const chunk = searchQueries.slice(i, i + batchSize);
+
+      const chunk: typeof plan = [];
+      for (let i = 0; i < batchSize; i++) {
+        const idx = (offset + batch * batchSize + i) % plan.length;
+        chunk.push(plan[idx]!);
+      }
 
       const results = await Promise.allSettled(
         chunk.map((q) =>
@@ -175,7 +187,7 @@ export class TavilyAdapter implements DiscoveryAdapter {
             maxResults: Math.min(Math.max(query.limit, 12), 20),
             seenDomains,
             excludeDomains: query.excludeDomains,
-            timeoutMs: 3200,
+            timeoutMs: 6500,
           })
         )
       );
@@ -198,8 +210,12 @@ export class TavilyAdapter implements DiscoveryAdapter {
           ) {
             throw err;
           }
+          console.warn("[Tavily Discovery] Query non-fatal failure:", err?.message || err);
         }
       }
+
+      // If we already have enough candidates to satisfy requested limit, don't execute next batch
+      if (candidates.length >= Math.min(query.limit, 15)) break;
     }
 
     return candidates;

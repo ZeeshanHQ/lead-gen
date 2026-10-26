@@ -38,7 +38,9 @@ const ENTITY_AND_JUNK_WORDS = new Set([
   "review", "reviews", "rating", "ratings", "testimonial", "testimonials", "feedback",
   "award", "awards", "accolade", "accolades", "recognition", "recipient", "recipients", "certified", "licensed", "bonded", "insured",
   "premier", "quality", "comfort", "expert", "experts", "pro", "pros", "professional", "professionals",
-  "welcome", "read", "more", "click", "here", "view", "see", "meet", "join", "follow", "share"
+  "welcome", "read", "more", "click", "here", "view", "see", "meet", "join", "follow", "share",
+  "work", "with", "us", "get", "know", "me", "you", "our", "your", "my", "we", "who", "what", "how", "why", "experience", "visionary", "partnership",
+  "senior", "living", "passion", "connect", "let", "lets"
 ]);
 
 const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "md", "phd", "esq"]);

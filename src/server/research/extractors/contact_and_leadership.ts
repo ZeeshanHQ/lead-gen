@@ -11,8 +11,8 @@ import { classifyTitle, isDecisionMaker } from "@/server/domain/contact";
 import { normalizeUsPhone, normalizeCompanyName } from "@/server/domain/normalize";
 import { cleanPersonName } from "@/server/enrichment/people";
 
-const LEADERSHIP_TITLE_REGEX =
-  /\b(owner|co-owner|president|vice president|vp|founder|co-founder|general manager|operations manager|sales manager|comfort advisor|master technician)\b/i;
+export const LEADERSHIP_TITLE_REGEX =
+  /\b(owner|co-owner|president|vice president|vp|founder|co-founder|general manager|operations manager|sales manager|comfort advisor|master technician|managing partner|principal|broker|managing broker|principal broker|designated broker|broker[\s-]owner|realtor|property manager|managing director|partner|executive director)\b/i;
 
 export function extractCompanyInfo(pages: CrawledPage[]): CompanyInfoCandidate {
   let foundPhone: string | null = null;
@@ -150,7 +150,7 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
     }
 
     // 2. Scan structured team cards / headings
-    $("h2, h3, h4, strong, .name, .team-name, .member-name").each((_, el) => {
+    $("h1, h2, h3, h4, strong, .name, .team-name, .member-name, [class*='agent-name'], [class*='member-name'], [class*='person-name']").each((_, el) => {
       const elText = $(el).text().replace(/\s+/g, " ").trim();
       if (!elText || elText.length < 3 || elText.length > 40) return;
 
@@ -158,18 +158,24 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
       if (!cleanedName || seenNames.has(cleanedName.toLowerCase())) return;
 
       let siblingText = "";
-      const nextEl = $(el).next();
-      if (nextEl.length > 0) {
-        siblingText = nextEl.text().replace(/\s+/g, " ").trim();
-      }
-      if (!siblingText) {
-        const parent = $(el).parent();
-        siblingText = parent.text().replace(/\s+/g, " ").trim();
+      const container = $(el).closest(
+        ".team-member, .person, .team-card, .bio, .profile, .agent-detail, [class*='agent'], [class*='member'], [class*='team'], [class*='bio'], section, article, div.container"
+      );
+      if (container.length > 0) {
+        siblingText = container.text().replace(/\s+/g, " ").trim();
+      } else {
+        const nextEl = $(el).next();
+        siblingText = nextEl.length > 0 ? nextEl.text().replace(/\s+/g, " ").trim() : $(el).parent().text().replace(/\s+/g, " ").trim();
       }
 
-      const titleMatch = LEADERSHIP_TITLE_REGEX.exec(siblingText);
-      if (titleMatch) {
-        const titleCandidate = titleMatch[0];
+      let titleMatch = LEADERSHIP_TITLE_REGEX.exec(siblingText);
+      let titleCandidate: string | null = titleMatch ? titleMatch[0] : null;
+
+      if (!titleCandidate && (/license\s+(?:number|no|#)|dre\s*#|bre\s*#|realtor|broker/i.test(siblingText) || $(el).closest("[class*='agent'], [class*='realtor']").length > 0)) {
+        titleCandidate = "Licensed Agent / Broker";
+      }
+
+      if (titleCandidate) {
         const role = classifyTitle(titleCandidate);
         if (isDecisionMaker(role)) {
           seenNames.add(cleanedName.toLowerCase());
@@ -204,7 +210,7 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
 
     // 3. Regex scan for direct pattern: "John Smith, Owner" or "John Smith - President"
     const text = page.cleanText;
-    const directPattern = /\b([A-Z][a-z]+ [A-Z][a-z]+)\s*(?:,|-|–|—|\|)\s*(Owner|Co-Owner|President|Founder|Co-Founder|General Manager|Operations Manager|Sales Manager)\b/g;
+    const directPattern = /\b([A-Z][a-z]+ [A-Z][a-z]+)\s*(?:,|-|–|—|\|)\s*(Owner|Co-Owner|President|Vice President|VP|Founder|Co-Founder|General Manager|Operations Manager|Sales Manager|Broker|Managing Broker|Principal Broker|Designated Broker|Broker[\s-]Owner|Managing Director|Property Manager|Principal|Partner|Realtor)\b/g;
     let m;
     while ((m = directPattern.exec(text)) !== null) {
       if (!m[1] || !m[2]) continue;
@@ -218,6 +224,27 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
             fullName: cleanedName,
             title,
             confidence: 0.89,
+            sourceUrl: page.url,
+          });
+        }
+      }
+    }
+
+    // 3b. Narrative pattern: "Monica Defortuna is Vice President of Fortune International Realty"
+    const isPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+is\s+(?:the\s+)?(?:an?\s+)?(Owner|Co-Owner|President|Vice President|VP|Founder|Co-Founder|General Manager|Operations Manager|Sales Manager|Broker|Managing Broker|Principal Broker|Designated Broker|Broker[\s-]Owner|Managing Director|Property Manager|Principal|Partner)\b/gi;
+    let isMatch;
+    while ((isMatch = isPattern.exec(text)) !== null) {
+      if (!isMatch[1] || !isMatch[2]) continue;
+      const cleanedName = cleanPersonName(isMatch[1]);
+      const title = isMatch[2].trim();
+      if (cleanedName && !seenNames.has(cleanedName.toLowerCase())) {
+        const role = classifyTitle(title);
+        if (isDecisionMaker(role)) {
+          seenNames.add(cleanedName.toLowerCase());
+          candidates.push({
+            fullName: cleanedName,
+            title,
+            confidence: 0.92,
             sourceUrl: page.url,
           });
         }

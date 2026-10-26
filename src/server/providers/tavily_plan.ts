@@ -37,6 +37,13 @@ const STATE_CITIES: Record<string, string[]> = {
   UT: ["Salt Lake City", "Provo", "Ogden", "St. George"],
 };
 
+const CITY_TO_STATE: Record<string, string> = {};
+for (const [st, cities] of Object.entries(STATE_CITIES)) {
+  for (const c of cities) {
+    CITY_TO_STATE[c.toLowerCase()] = st;
+  }
+}
+
 const TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> = [
   (kw, city, st) => `${kw} in ${city}, ${st}`,
   (kw, city, st) => `${kw} company official website phone number ${city} ${st}`,
@@ -59,11 +66,36 @@ export function buildQueryPlan(input: {
   const ownerCities = input.cities.map((c) => c.trim()).filter(Boolean);
 
   const places: Array<{ city: string; state: string }> = [];
-  states.forEach((st, idx) => {
-    const cities = idx === 0 && ownerCities.length > 0 ? ownerCities : (STATE_CITIES[st] ?? []);
-    if (cities.length === 0) places.push({ city: "", state: st });
-    for (const city of cities) places.push({ city, state: st });
-  });
+  const seenPlace = new Set<string>();
+
+  // 1. Prioritize owner-specified cities, accurately mapped to their true state
+  for (const city of ownerCities) {
+    const matchedState = CITY_TO_STATE[city.toLowerCase()] || states[0] || "TX";
+    const key = `${city.toLowerCase()}|${matchedState}`;
+    if (!seenPlace.has(key)) {
+      seenPlace.add(key);
+      places.push({ city, state: matchedState });
+    }
+  }
+
+  // 2. Add major cities from targeted states as rotation/expansion
+  for (const st of states) {
+    const stateCities = STATE_CITIES[st] ?? [];
+    for (const city of stateCities) {
+      const key = `${city.toLowerCase()}|${st}`;
+      if (!seenPlace.has(key)) {
+        seenPlace.add(key);
+        places.push({ city, state: st });
+      }
+    }
+    if (stateCities.length === 0) {
+      const key = `|${st}`;
+      if (!seenPlace.has(key)) {
+        seenPlace.add(key);
+        places.push({ city: "", state: st });
+      }
+    }
+  }
 
   const plan: PlannedQuery[] = [];
   for (const template of TEMPLATES) {

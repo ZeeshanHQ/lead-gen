@@ -362,7 +362,7 @@ export function LeadProspector({
           setTotalReviewCount(totalQualified);
           setCrmReadyCount(readyInCrm);
 
-          const scanned = res.counters?.totalCandidates || finalCount;
+          const scanned = res.counters?.totalCandidates ?? 0;
           const approvedNew = (res.counters as any)?.approvedCount ?? res.counters?.createdCompanies ?? 0;
           const rejectedNew = Math.max(0, scanned - approvedNew);
 
@@ -373,9 +373,15 @@ export function LeadProspector({
             crmReadyCount: readyInCrm,
           });
 
-          setSuccessBanner(
-            `Discovery complete for ${nicheInfo?.name || "Active Niche"}: ${approvedNew} qualified leads passed your Must-Have Quality Gate and are ready in your CRM.`
-          );
+          if (approvedNew > 0) {
+            setSuccessBanner(
+              `Discovery complete for ${nicheInfo?.name || "Active Niche"}: ${approvedNew} qualified leads passed your Must-Have Quality Gate.`
+            );
+          } else {
+            setSuccessBanner(
+              `Discovery scanned ${scanned} candidates. No new leads met all strict quality gate criteria in this run.`
+            );
+          }
         } else {
           setErrorMsg(res.error || "Discovery run encountered an issue. Please try again.");
         }

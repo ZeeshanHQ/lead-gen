@@ -247,8 +247,8 @@ export async function runLeadDiscoveryAction(
     });
 
     const counters = await executeRun(db, runId, {
-      timeoutMs: 2000,
-      maxWallClockMs: 10000,
+      timeoutMs: 2800,
+      maxWallClockMs: 25000,
       autoEnrich: false,
     });
 
