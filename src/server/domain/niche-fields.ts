@@ -109,10 +109,48 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       options: [
         "Follow Up Boss",
         "kvCORE",
+        "AppFolio",
+        "Buildium",
         "Sierra Interactive",
         "BoomTown",
         "Lofty / Chime",
         "GoHighLevel",
+        "Ask on Call",
+      ],
+    },
+    {
+      key: "adSpend",
+      label: "Paid Ads & Bleeding Spend",
+      shortLabel: "Ad Spend",
+      options: [
+        "Google Ads Active",
+        "Zillow Premier Agent",
+        "Both Google + Zillow",
+        "Organic / No Ads",
+        "Ask on Call",
+      ],
+    },
+    {
+      key: "doorsManaged",
+      label: "Doors / Units (PM)",
+      shortLabel: "Doors",
+      options: [
+        "50+ Doors Managed",
+        "100+ Doors Managed",
+        "25-49 Doors",
+        "Under 25 Doors",
+        "Ask on Call",
+      ],
+    },
+    {
+      key: "avgPropertyPrice",
+      label: "Average Listing Price",
+      shortLabel: "Avg Price",
+      options: [
+        "$400k+ Median List Price",
+        "$600k+ Luxury Focus",
+        "$1M+ Ultra Luxury",
+        "Under $400k",
         "Ask on Call",
       ],
     },
@@ -354,6 +392,41 @@ export function resolveSmartFieldValue(
   if (field.key === "serviceFocus") {
     if (lead.installSignalObserved) return "High-Ticket Core Service";
     return "Verify on Call";
+  }
+
+  if (field.key === "adSpend") {
+    const hasGoogle = lead.facts?.["google_ads"] === "YES";
+    const hasZillow = lead.facts?.["zillow_advertiser"] === "YES" || lead.facts?.["bleeding_ads"] === "YES";
+    if (hasGoogle && hasZillow) return "Both Google + Zillow";
+    if (hasGoogle) return "Google Ads Active";
+    if (hasZillow) return "Zillow Premier Agent";
+    if (summary.includes("google ads") || summary.includes("adwords")) return "Google Ads Active";
+    if (summary.includes("zillow")) return "Zillow Premier Agent";
+    return "Ask on Call";
+  }
+
+  if (field.key === "doorsManaged") {
+    const doors = lead.facts?.["doors_managed"];
+    if (doors) {
+      const num = parseInt(doors, 10);
+      if (num >= 100) return "100+ Doors Managed";
+      if (num >= 50) return "50+ Doors Managed";
+      if (num >= 25) return "25-49 Doors";
+      return `${doors} Doors`;
+    }
+    if (summary.includes("100+ doors") || summary.includes("100+ units")) return "100+ Doors Managed";
+    if (summary.includes("50+ doors") || summary.includes("50+ units")) return "50+ Doors Managed";
+    return "Ask on Call";
+  }
+
+  if (field.key === "avgPropertyPrice") {
+    const avgVal = lead.facts?.["avg_property_value"];
+    if (avgVal === "$400k+" || lead.facts?.["luxury_high_value"] === "YES") {
+      return "$400k+ Median List Price";
+    }
+    if (summary.includes("luxury") || summary.includes("million dollar")) return "$600k+ Luxury Focus";
+    if (summary.includes("$400k") || summary.includes("$500k")) return "$400k+ Median List Price";
+    return "Ask on Call";
   }
 
   return field.options[field.options.length - 1] || "Ask on Call";

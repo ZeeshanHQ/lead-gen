@@ -80,6 +80,9 @@ export const SCORE_SIGNALS = [
   "company_phone_verified",
   "strong_presence",
   "established_business",
+  "bleeding_ad_spend",
+  "high_volume_doors",
+  "high_ticket_property",
 ] as const;
 export type ScoreSignal = (typeof SCORE_SIGNALS)[number];
 
@@ -97,6 +100,9 @@ export const SCORE_SIGNAL_LABEL: Record<ScoreSignal, string> = {
   company_phone_verified: "Company phone verified",
   strong_presence: "Strong public business presence",
   established_business: "Established business",
+  bleeding_ad_spend: "Bleeding ad spend (Google Ads / Zillow)",
+  high_volume_doors: "High volume (50+ doors managed)",
+  high_ticket_property: "High-ticket property ($400k+ avg)",
 };
 
 const int = z.number().int();
@@ -120,6 +126,7 @@ export const ruleConfigSchema = z.object({
   size: z.object({
     minEmployees: int.nonnegative().nullable(),
     maxEmployees: int.nonnegative().nullable(),
+    minDoors: int.nonnegative().nullable().optional(),
     allowUnknown: z.boolean(),
   }),
   signals: z.object({ preferred: z.array(z.enum(SIGNAL_KEYS)) }),
@@ -241,6 +248,9 @@ export function defaultHvacRuleConfig(): RuleConfig {
         company_phone_verified: 5,
         strong_presence: 5,
         established_business: 5,
+        bleeding_ad_spend: 15,
+        high_volume_doors: 10,
+        high_ticket_property: 10,
       },
     },
   };
@@ -261,6 +271,9 @@ export const SIGNAL_CATEGORY: Record<ScoreSignal, ScoreCategory> = {
   owner_or_president: "decision_maker",
   professional_direct_contact: "contactability",
   company_phone_verified: "contactability",
+  bleeding_ad_spend: "icp_fit",
+  high_volume_doors: "operational_complexity",
+  high_ticket_property: "service_fit",
 };
 
 // ------------------------------------------------------------ evaluation ----
@@ -596,6 +609,15 @@ export function calculateLeadScore(
   checkSignal("strong_presence", yes(f, "strong_presence") || hasValidSite);
   checkSignal("established_business", yes(f, "established_business") || hasLocation);
 
+  const isBleeding = yes(f, "bleeding_ads") || yes(f, "google_ads") || yes(f, "zillow_advertiser");
+  checkSignal("bleeding_ad_spend", isBleeding);
+
+  const rawDoors = f.doors_managed?.value ? parseInt(f.doors_managed.value, 10) : 0;
+  const hasAppFolio = f.software?.value?.toLowerCase().includes("appfolio");
+  checkSignal("high_volume_doors", rawDoors >= 50 || Boolean(hasAppFolio));
+
+  checkSignal("high_ticket_property", yes(f, "luxury_high_value") || f.avg_property_value?.value === "$400k+");
+
   const categoryScores: Record<ScoreCategory, { points: number; cap: number }> = {
     icp_fit: { points: 0, cap: caps.icp_fit },
     service_fit: { points: 0, cap: caps.service_fit },
@@ -604,9 +626,15 @@ export function calculateLeadScore(
     contactability: { points: 0, cap: caps.contactability },
   };
 
+  const defaultSignalBonuses: Partial<Record<ScoreSignal, number>> = {
+    bleeding_ad_spend: 15,
+    high_volume_doors: 10,
+    high_ticket_property: 10,
+  };
+
   for (const sig of present) {
     const cat = SIGNAL_CATEGORY[sig];
-    const pt = points[sig] ?? 0;
+    const pt = points[sig] ?? defaultSignalBonuses[sig] ?? 0;
     categoryScores[cat].points += pt;
   }
 

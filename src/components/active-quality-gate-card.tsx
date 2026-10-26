@@ -67,6 +67,9 @@ export function ActiveQualityGateCard({
   const [maxEmployees, setMaxEmployees] = useState<number | null>(
     initialRuleConfig?.size?.maxEmployees ?? null
   );
+  const [minDoors, setMinDoors] = useState<number | null>(
+    initialRuleConfig?.size?.minDoors ?? null
+  );
   const [gate, setGate] = useState<LeadGate>(() =>
     resolveGate(initialRuleConfig?.gate)
   );
@@ -93,6 +96,7 @@ export function ActiveQualityGateCard({
           gate,
           minEmployees,
           maxEmployees,
+          minDoors,
         });
 
         if (res.ok) {
@@ -237,6 +241,26 @@ export function ActiveQualityGateCard({
                 className="w-full bg-[#141418] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
               />
             </div>
+          </div>
+
+          {/* Real Estate Specific: Min Doors / Units Managed */}
+          <div className="space-y-1.5 pt-1 border-t border-zinc-800/60">
+            <label className="text-zinc-300 font-medium flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <span className="text-sm">🏢</span>
+                <span>Min Doors / Units Managed (Property Management)</span>
+              </span>
+              <span className="text-[10px] text-zinc-500">e.g. 50</span>
+            </label>
+            <input
+              type="number"
+              min="10"
+              max="5000"
+              value={minDoors ?? ""}
+              onChange={(e) => setMinDoors(e.target.value ? Number(e.target.value) : null)}
+              placeholder="e.g. 50 (targets mid-to-large PM firms with AppFolio/Buildium scale)"
+              className="w-full bg-[#141418] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
+            />
           </div>
 
           {/* 4. Min ICP Score Slider */}

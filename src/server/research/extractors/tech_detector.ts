@@ -38,6 +38,26 @@ const SIGNATURES: TechSignature[] = [
     label: "Housecall Pro",
   },
   {
+    key: "appfolio",
+    patterns: [/appfolio\.com/i, /appfoliomedia/i, /appfolio/i],
+    label: "AppFolio",
+  },
+  {
+    key: "buildium",
+    patterns: [/buildium\.com/i],
+    label: "Buildium",
+  },
+  {
+    key: "followupboss",
+    patterns: [/followupboss\.com/i, /fub-embed/i],
+    label: "Follow Up Boss",
+  },
+  {
+    key: "kvcore",
+    patterns: [/kvcore\.com/i, /insiderealestate\.com/i],
+    label: "kvCORE",
+  },
+  {
     key: "other",
     patterns: [
       /scheduleengine\.com/i,
@@ -45,6 +65,10 @@ const SIGNATURES: TechSignature[] = [
       /chiirp\.com/i,
       /fieldedge\.com/i,
       /successware\.com/i,
+      /rentmanager\.com/i,
+      /rentvine\.com/i,
+      /doorloop\.com/i,
+      /propertyware\.com/i,
     ],
     label: "FSM/Chat Tool",
   },

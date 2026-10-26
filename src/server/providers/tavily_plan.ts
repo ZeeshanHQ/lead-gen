@@ -51,6 +51,8 @@ const TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> 
   (kw, city, st) => `${kw} local services commercial residential ${city} ${st}`,
   (kw, city, st) => `${kw} top rated local business ${city} ${st} official website`,
   (kw, city, st) => `${kw} specialists office location ${city} ${st}`,
+  (kw, city, st) => `${kw} in ${city}, ${st} "Premier Agent" OR "featured" official website`,
+  (kw, city, st) => `${kw} property management in ${city}, ${st} "doors" OR "units" official website`,
 ];
 
 /** Ordered, deterministic list of search queries for the owner's targeting. */

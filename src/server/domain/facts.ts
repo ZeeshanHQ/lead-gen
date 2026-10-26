@@ -60,11 +60,23 @@ export const TRI_FACT_KEYS = [
   "quote_form",
   "established_business",
   "strong_presence",
+  "google_ads",
+  "zillow_advertiser",
+  "bleeding_ads",
+  "luxury_high_value",
 ] as const;
 export type TriFactKey = (typeof TRI_FACT_KEYS)[number];
 
 /** Non-boolean facts. */
-export const VALUE_FACT_KEYS = ["employees", "software", "reputation", "rating"] as const;
+export const VALUE_FACT_KEYS = [
+  "employees",
+  "software",
+  "reputation",
+  "rating",
+  "doors_managed",
+  "avg_property_value",
+  "property_mgmt_software",
+] as const;
 export type ValueFactKey = (typeof VALUE_FACT_KEYS)[number];
 
 export type FactKey = TriFactKey | ValueFactKey;
@@ -93,6 +105,13 @@ export const FACT_LABELS: Record<FactKey, string> = {
   quote_form: "Quote / request form",
   established_business: "Established business",
   strong_presence: "Strong public presence",
+  google_ads: "Google Ads active",
+  zillow_advertiser: "Zillow Premier Agent / Advertiser",
+  bleeding_ads: "Bleeding ad spend (Google/Zillow)",
+  luxury_high_value: "High-ticket / luxury properties ($400k+)",
+  doors_managed: "Doors / units managed",
+  avg_property_value: "Average property value",
+  property_mgmt_software: "Property management software",
   employees: "Employees",
   software: "Software",
   reputation: "Reviews / reputation",
@@ -161,12 +180,25 @@ export function parseEmployeeRange(value: string | null | undefined): EmployeeRa
   return null;
 }
 
-export const SOFTWARE_KEYS = ["servicetitan", "jobber", "housecall_pro", "other"] as const;
+export const SOFTWARE_KEYS = [
+  "servicetitan",
+  "jobber",
+  "housecall_pro",
+  "appfolio",
+  "buildium",
+  "followupboss",
+  "kvcore",
+  "other",
+] as const;
 export type SoftwareKey = (typeof SOFTWARE_KEYS)[number];
 export const SOFTWARE_LABELS: Record<SoftwareKey, string> = {
   servicetitan: "ServiceTitan",
   jobber: "Jobber",
   housecall_pro: "Housecall Pro",
+  appfolio: "AppFolio",
+  buildium: "Buildium",
+  followupboss: "Follow Up Boss",
+  kvcore: "kvCORE",
   other: "Other",
 };
 

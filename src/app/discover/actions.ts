@@ -32,6 +32,16 @@ function passesLeadRowGate(lead: LeadRow, gate: LeadGate): boolean {
   if (gate.requireLocation) {
     if (!lead.city || !lead.state) return false;
   }
+  if (gate.requireBleedingAds) {
+    const f = (lead as any).facts || {};
+    const hasAds = f.bleeding_ads?.value === "YES" || f.google_ads?.value === "YES" || f.zillow_advertiser?.value === "YES" || f.bleeding_ads === "YES" || f.google_ads === "YES" || f.zillow_advertiser === "YES";
+    if (!hasAds) return false;
+  }
+  if (gate.requireHighValueProperty) {
+    const f = (lead as any).facts || {};
+    const isHigh = f.luxury_high_value?.value === "YES" || f.avg_property_value?.value === "$400k+" || f.luxury_high_value === "YES" || f.avg_property_value === "$400k+";
+    if (!isHigh) return false;
+  }
   return true;
 }
 
@@ -535,6 +545,7 @@ export async function updateRuleTargetingAction(params: {
   gate?: Partial<LeadGate>;
   minEmployees?: number | null;
   maxEmployees?: number | null;
+  minDoors?: number | null;
 }) {
   try {
     const db = await getDb();
@@ -569,6 +580,7 @@ export async function updateRuleTargetingAction(params: {
         ...cfg.size,
         minEmployees: params.minEmployees !== undefined ? params.minEmployees : cfg.size?.minEmployees ?? null,
         maxEmployees: params.maxEmployees !== undefined ? params.maxEmployees : cfg.size?.maxEmployees ?? null,
+        minDoors: params.minDoors !== undefined ? params.minDoors : cfg.size?.minDoors ?? null,
       },
       gate: mergedGate,
     };

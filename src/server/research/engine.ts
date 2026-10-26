@@ -69,6 +69,9 @@ export function buildColdCallerBattlecard(params: {
   const isHiring = f.hiring?.value === "YES";
   const software = f.software?.value && f.software.value !== "UNKNOWN" ? f.software.value : null;
   const brandSnippet = f.strong_presence?.value === "YES" ? "Premier Verified Presence" : null;
+  const isBleedingAds = f.bleeding_ads?.value === "YES" || f.google_ads?.value === "YES" || f.zillow_advertiser?.value === "YES";
+  const doorsManaged = f.doors_managed?.value;
+  const avgPropertyVal = f.avg_property_value?.value || (f.luxury_high_value?.value === "YES" ? "$400k+" : null);
 
   // Synthesize executive bullet points for caller screen
   const bullets: string[] = [];
@@ -79,6 +82,23 @@ export function buildColdCallerBattlecard(params: {
   const hasStrongPresence = f.strong_presence?.value === "YES";
   if (hasStrongPresence) {
     bullets.push(`Reputation: Verified Strong Public Presence & Local Reviews`);
+  }
+
+  if (isBleedingAds) {
+    const adSource = f.google_ads?.value === "YES" && f.zillow_advertiser?.value === "YES"
+      ? "Google Ads & Zillow Premier"
+      : f.google_ads?.value === "YES"
+      ? "Google Ads"
+      : "Zillow Premier Agent";
+    bullets.push(`🔥 Bleeding Ad Spend: Active ${adSource} Advertiser (High Urgency for 24/7 AI Lead Capture)`);
+  }
+
+  if (doorsManaged) {
+    bullets.push(`🏢 Portfolio Scale: ~${doorsManaged} Doors/Units Managed`);
+  }
+
+  if (avgPropertyVal) {
+    bullets.push(`🏡 High-Ticket Inventory: Average Property Value ${avgPropertyVal} (High Commission Potential)`);
   }
 
   if (isRealEstate) {

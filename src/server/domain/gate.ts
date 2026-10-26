@@ -15,6 +15,8 @@ export const GATE_FIELDS = [
   "requireDecisionMaker",
   "requireEmail",
   "requireLocation",
+  "requireBleedingAds",
+  "requireHighValueProperty",
 ] as const;
 export type GateField = (typeof GATE_FIELDS)[number];
 
@@ -24,6 +26,8 @@ export const gateSchema = z.object({
   requireDecisionMaker: z.boolean(),
   requireEmail: z.boolean(),
   requireLocation: z.boolean(),
+  requireBleedingAds: z.boolean().optional(),
+  requireHighValueProperty: z.boolean().optional(),
   customMustHaves: z.array(z.string()).optional(),
 });
 export type LeadGate = z.infer<typeof gateSchema>;
@@ -35,6 +39,8 @@ export function defaultGate(): LeadGate {
     requireDecisionMaker: false,
     requireEmail: false,
     requireLocation: false,
+    requireBleedingAds: false,
+    requireHighValueProperty: false,
     customMustHaves: [],
   };
 }
@@ -83,6 +89,18 @@ export const GATE_META: Record<
     missingLabel: "no city/state",
     description: "Both city and state must be known.",
   },
+  requireBleedingAds: {
+    label: "Bleeding Ads (Google/Zillow)",
+    shortLabel: "Bleeding Ads",
+    missingLabel: "no active Google Ads or Zillow spending",
+    description: "Must have active Google Ads tracking pixels or Zillow Premier Agent presence verified.",
+  },
+  requireHighValueProperty: {
+    label: "High-ticket property deals ($400k+)",
+    shortLabel: "$400k+ Property",
+    missingLabel: "listing inventory under $400k",
+    description: "Average listing or portfolio price must be $400k+.",
+  },
 };
 
 export interface GateInput {
@@ -93,6 +111,7 @@ export interface GateInput {
   city?: string | null;
   state?: string | null;
   contacts: ContactInput[];
+  facts?: Record<string, string>;
 }
 
 export interface GateResult {
@@ -145,6 +164,18 @@ export function evaluateGate(gateIn: Partial<LeadGate> | null | undefined, input
   if (gate.requireLocation) {
     const ok = Boolean(input.city && input.city.trim()) && Boolean(input.state && input.state.trim());
     if (!ok) missing.push("requireLocation");
+  }
+
+  if (gate.requireBleedingAds) {
+    const f = input.facts || {};
+    const ok = f.bleeding_ads === "YES" || f.google_ads === "YES" || f.zillow_advertiser === "YES";
+    if (!ok) missing.push("requireBleedingAds");
+  }
+
+  if (gate.requireHighValueProperty) {
+    const f = input.facts || {};
+    const ok = f.luxury_high_value === "YES" || f.avg_property_value === "$400k+";
+    if (!ok) missing.push("requireHighValueProperty");
   }
 
   return {

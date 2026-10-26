@@ -1480,6 +1480,42 @@ export function CallerClient({
                             )}
                           </div>
                         </div>
+
+                        {/* Bleeding Ad Spend & Real Estate Scale Badges */}
+                        {(lead.facts?.["bleeding_ads"] === "YES" ||
+                          lead.facts?.["google_ads"] === "YES" ||
+                          lead.facts?.["zillow_advertiser"] === "YES" ||
+                          lead.facts?.["doors_managed"] ||
+                          lead.facts?.["avg_property_value"] ||
+                          lead.facts?.["luxury_high_value"] === "YES") && (
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                            {(lead.facts?.["bleeding_ads"] === "YES" || lead.facts?.["google_ads"] === "YES" || lead.facts?.["zillow_advertiser"] === "YES") && (
+                              <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[11px] font-semibold text-rose-300">
+                                <span>🔥</span>
+                                <span>
+                                  {lead.facts?.["google_ads"] === "YES" && lead.facts?.["zillow_advertiser"] === "YES"
+                                    ? "Bleeding Ads: Google + Zillow"
+                                    : lead.facts?.["google_ads"] === "YES"
+                                    ? "Bleeding Ads: Google Ads Active"
+                                    : "Bleeding Ads: Zillow Premier"}
+                                </span>
+                              </span>
+                            )}
+                            {lead.facts?.["doors_managed"] && (
+                              <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">
+                                <span>🏢</span>
+                                <span>{lead.facts["doors_managed"]} Units/Doors Managed</span>
+                              </span>
+                            )}
+                            {(lead.facts?.["avg_property_value"] || lead.facts?.["luxury_high_value"] === "YES") && (
+                              <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
+                                <span>🏡</span>
+                                <span>{lead.facts?.["avg_property_value"] || "$400k+ High-Ticket Deals"}</span>
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                       </div>
 
                       <div className="flex items-center gap-2">

@@ -162,6 +162,9 @@ export function LeadProspector({
   const [editMaxEmployees, setEditMaxEmployees] = useState<number | null>(
     initialRule?.size?.maxEmployees ?? null
   );
+  const [editMinDoors, setEditMinDoors] = useState<number | null>(
+    initialRule?.size?.minDoors ?? null
+  );
   const [savingFilters, setSavingFilters] = useState(false);
 
   // Manual URL accordion toggle
@@ -231,6 +234,7 @@ export function LeadProspector({
         setEditMinScore(res.rule.scoring?.minScore ?? 60);
         setEditMinEmployees(res.rule.size?.minEmployees ?? null);
         setEditMaxEmployees(res.rule.size?.maxEmployees ?? null);
+        setEditMinDoors(res.rule.size?.minDoors ?? null);
         setGate(resolveGate((res.rule as any).gate));
       }
     });
@@ -512,6 +516,7 @@ export function LeadProspector({
       gate,
       minEmployees: editMinEmployees,
       maxEmployees: editMaxEmployees,
+      minDoors: editMinDoors,
     });
     setSavingFilters(false);
 
@@ -856,6 +861,25 @@ export function LeadProspector({
                   className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
                 />
               </div>
+            </div>
+
+            <div className="space-y-1.5 text-xs pt-1 border-t border-zinc-800/60">
+              <label className="text-zinc-300 font-medium flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <span className="text-sm">🏢</span>
+                  <span>Min Doors / Units Managed (Property Management)</span>
+                </span>
+                <span className="text-zinc-500 font-normal">e.g. 50+ doors (AppFolio scale)</span>
+              </label>
+              <input
+                type="number"
+                min="10"
+                max="5000"
+                value={editMinDoors ?? ""}
+                onChange={(e) => setEditMinDoors(e.target.value ? Number(e.target.value) : null)}
+                placeholder="e.g. 50 (leave empty for all)"
+                className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
+              />
             </div>
 
             <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-zinc-800/80">

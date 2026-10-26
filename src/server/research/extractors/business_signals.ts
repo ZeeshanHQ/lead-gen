@@ -260,6 +260,119 @@ export function extractBusinessSignals(pages: CrawledPage[]): FactCandidate[] {
         discovered.add("one_person_operation");
       }
     }
+
+    // 12. Google Ads & Search Marketing Tracking (Bleeding Ad Spend Indicator)
+    if (!discovered.has("google_ads")) {
+      const googleAdsPat = /(?:googleads\.g\.doubleclick\.net|google_conversion_id|googletagmanager\.com\/gtag\/js\?id=AW-|gtag\s*\(\s*['"]config['"],\s*['"]AW-[A-Za-z0-9_-]+['"]|data-google-ad-click)/i;
+      const snippet = extractSnippet(html, googleAdsPat);
+      if (snippet || html.includes("googletagmanager.com/gtag/js?id=AW-") || /gtag\s*\(\s*['"]config['"],\s*['"]AW-/i.test(html)) {
+        facts.push({
+          key: "google_ads",
+          value: "YES",
+          confidence: 0.96,
+          evidenceSnippet: "Active Google Ads Conversion Tracking (AW tag / AdWords) detected on website",
+          sourceUrl: page.url,
+        });
+        facts.push({
+          key: "bleeding_ads",
+          value: "YES",
+          confidence: 0.96,
+          evidenceSnippet: "Actively spending budget on Google Ads / search advertising",
+          sourceUrl: page.url,
+        });
+        discovered.add("google_ads");
+        discovered.add("bleeding_ads");
+      }
+    }
+
+    // 13. Zillow Premier Agent & Real Estate Portal Advertising
+    if (!discovered.has("zillow_advertiser")) {
+      const zillowPat = /(?:zillow\.com\/profile\/|zillow\.com\/agent-reviews\/|zillow\s+premier\s+agent|find\s+(?:us|me)\s+on\s+zillow|premier\s+agent\s+on\s+zillow|zillow\s+5-star|zillow-badge)/i;
+      const snippet = extractSnippet(html, zillowPat) || extractSnippet(text, zillowPat);
+      if (snippet) {
+        facts.push({
+          key: "zillow_advertiser",
+          value: "YES",
+          confidence: 0.94,
+          evidenceSnippet: `Zillow Premier Agent / profile presence identified: "${snippet}"`,
+          sourceUrl: page.url,
+        });
+        if (!discovered.has("bleeding_ads")) {
+          facts.push({
+            key: "bleeding_ads",
+            value: "YES",
+            confidence: 0.94,
+            evidenceSnippet: "Actively investing in Zillow Premier Agent / Real Estate portal lead gen",
+            sourceUrl: page.url,
+          });
+          discovered.add("bleeding_ads");
+        }
+        discovered.add("zillow_advertiser");
+      }
+    }
+
+    // 14. Property Management: Units / Doors Managed (Scale & Affordability)
+    if (!discovered.has("doors_managed")) {
+      const doorsPat = /\b(?:managing|manage|over|portfolio\s+of|more\s+than)\s+(\d{2,4})\s+(?:doors|units|properties|homes|rentals)\b/i;
+      const match = doorsPat.exec(text);
+      if (match && match[1]) {
+        const count = parseInt(match[1], 10);
+        if (count >= 15 && count <= 5000) {
+          facts.push({
+            key: "doors_managed",
+            value: `${count}`,
+            confidence: 0.91,
+            evidenceSnippet: match[0],
+            sourceUrl: page.url,
+          });
+          discovered.add("doors_managed");
+        }
+      } else {
+        const doorsPlusPat = /\b(\d{2,4})\+\s*(?:doors|units|properties|rentals)\b/i;
+        const plusMatch = doorsPlusPat.exec(text);
+        if (plusMatch && plusMatch[1]) {
+          const count = parseInt(plusMatch[1], 10);
+          if (count >= 20 && count <= 5000) {
+            facts.push({
+              key: "doors_managed",
+              value: `${count}+`,
+              confidence: 0.88,
+              evidenceSnippet: plusMatch[0],
+              sourceUrl: page.url,
+            });
+            discovered.add("doors_managed");
+          }
+        }
+      }
+    }
+
+    // 15. Real Estate: Average Property Value & High-Ticket Inventory ($400k+)
+    if (!discovered.has("avg_property_value")) {
+      const luxuryPat = /\b(?:luxury\s+portfolio|sotheby's\s+international|million\s+dollar\s+guild|christie's\s+international|luxury\s+homes?|high-end\s+estates?)\b/i;
+      const luxurySnippet = extractSnippet(text, luxuryPat);
+      
+      const highPriceMatches = text.match(/\$(?:[4-9]\d{2}|[1-9]\d{3}),\d{3}\b/g) || [];
+      const medPriceMatches = text.match(/\$\d{3},\d{3}\b/g) || [];
+
+      if (luxurySnippet || highPriceMatches.length >= 2 || (highPriceMatches.length >= 1 && highPriceMatches.length >= medPriceMatches.length * 0.5)) {
+        facts.push({
+          key: "avg_property_value",
+          value: "$400k+",
+          confidence: luxurySnippet ? 0.95 : 0.88,
+          evidenceSnippet: luxurySnippet ? `Luxury brokerage affiliation: "${luxurySnippet}"` : `Multiple inventory listings in $400k+ bracket (${highPriceMatches.slice(0, 3).join(", ")})`,
+          sourceUrl: page.url,
+        });
+        facts.push({
+          key: "luxury_high_value",
+          value: "YES",
+          confidence: luxurySnippet ? 0.95 : 0.88,
+          evidenceSnippet: luxurySnippet ? `Luxury affiliation: "${luxurySnippet}"` : "High-ticket property portfolio",
+          sourceUrl: page.url,
+        });
+        discovered.add("avg_property_value");
+        discovered.add("luxury_high_value");
+      }
+    }
   }
 
   return facts;
