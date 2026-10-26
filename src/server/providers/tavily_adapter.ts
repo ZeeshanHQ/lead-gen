@@ -187,7 +187,7 @@ export class TavilyAdapter implements DiscoveryAdapter {
             maxResults: Math.min(Math.max(query.limit, 12), 20),
             seenDomains,
             excludeDomains: query.excludeDomains,
-            timeoutMs: 6500,
+            timeoutMs: 8500,
           })
         )
       );

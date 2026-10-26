@@ -130,7 +130,7 @@ function isEditorialHeadline(text: string): boolean {
 }
 
 const GENERIC_NAME =
-  /^(home|homepage|welcome|index|official site|official website|contact us|about us|contact|about|roster|agents|reviews|realtor reviews|real estate|services|locations|staff|meet the team|our team|customer reviews|client reviews|privacy policy|terms of service)$/i;
+  /^(home|homepage|welcome|index|official site|official website|contact us|about us|contact|about|roster|agents|our agents|team members|leadership|leadership team|meet our team|reviews|realtor reviews|real estate|services|locations|staff|meet the team|our team|customer reviews|client reviews|privacy policy|terms of service)$/i;
 
 function titleCase(s: string): string {
   return s
@@ -217,9 +217,9 @@ export async function runPlannedQuery(
   const dynamicExcludes = Array.from(
     new Set([
       ...EXCLUDED_AGGREGATOR_DOMAINS,
-      ...(opts.excludeDomains ?? []).map((d) => d.toLowerCase().replace(/^www\./, "")).slice(0, 80),
+      ...(opts.excludeDomains ?? []).map((d) => d.toLowerCase().replace(/^www\./, "")),
     ])
-  );
+  ).slice(0, 140);
 
   const response = await fetch("https://api.tavily.com/search", {
     method: "POST",
