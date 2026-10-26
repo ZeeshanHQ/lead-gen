@@ -9,6 +9,7 @@ import {
 } from "./text_utils";
 import { classifyTitle, isDecisionMaker } from "@/server/domain/contact";
 import { normalizeUsPhone, normalizeCompanyName } from "@/server/domain/normalize";
+import { cleanPersonName } from "@/server/enrichment/people";
 
 const LEADERSHIP_TITLE_REGEX =
   /\b(owner|co-owner|president|vice president|vp|founder|co-founder|general manager|operations manager|sales manager|comfort advisor|master technician)\b/i;
@@ -113,13 +114,13 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
     const jsonLds = extractJsonLd(page.html);
     for (const item of jsonLds) {
       if (item["@type"] === "Person" && item.name && item.jobTitle) {
-        const name = String(item.name).trim();
+        const cleanedName = cleanPersonName(String(item.name));
         const title = String(item.jobTitle).trim();
         const role = classifyTitle(title);
-        if (isDecisionMaker(role) && !seenNames.has(name.toLowerCase())) {
-          seenNames.add(name.toLowerCase());
+        if (cleanedName && isDecisionMaker(role) && !seenNames.has(cleanedName.toLowerCase())) {
+          seenNames.add(cleanedName.toLowerCase());
           candidates.push({
-            fullName: name,
+            fullName: cleanedName,
             title,
             email: item.email ? String(item.email).trim().toLowerCase() : null,
             phone: item.telephone ? normalizeUsPhone(String(item.telephone))?.display ?? null : null,
@@ -133,11 +134,11 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
       if (item.founder) {
         const founderObj = typeof item.founder === "object" ? item.founder : { name: item.founder };
         if (founderObj.name) {
-          const name = String(founderObj.name).trim();
-          if (name.length > 3 && !seenNames.has(name.toLowerCase())) {
-            seenNames.add(name.toLowerCase());
+          const cleanedName = cleanPersonName(String(founderObj.name));
+          if (cleanedName && !seenNames.has(cleanedName.toLowerCase())) {
+            seenNames.add(cleanedName.toLowerCase());
             candidates.push({
-              fullName: name,
+              fullName: cleanedName,
               title: "Founder / Owner",
               email: founderObj.email ? String(founderObj.email).trim().toLowerCase() : null,
               confidence: 0.96,
@@ -153,9 +154,8 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
       const elText = $(el).text().replace(/\s+/g, " ").trim();
       if (!elText || elText.length < 3 || elText.length > 40) return;
 
-      const nameParts = elText.split(" ");
-      if (nameParts.length < 2 || nameParts.length > 4) return;
-      if (seenNames.has(elText.toLowerCase())) return;
+      const cleanedName = cleanPersonName(elText);
+      if (!cleanedName || seenNames.has(cleanedName.toLowerCase())) return;
 
       let siblingText = "";
       const nextEl = $(el).next();
@@ -172,7 +172,7 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
         const titleCandidate = titleMatch[0];
         const role = classifyTitle(titleCandidate);
         if (isDecisionMaker(role)) {
-          seenNames.add(elText.toLowerCase());
+          seenNames.add(cleanedName.toLowerCase());
 
           let containerHtml = $(el).closest(".team-member, .person, .team-card, div, section, article, li").html() || "";
           let emails = extractEmailsFromHtml(containerHtml);
@@ -191,7 +191,7 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
           }
 
           candidates.push({
-            fullName: elText,
+            fullName: cleanedName,
             title: titleCandidate,
             email: emails.length > 0 ? emails[0] : null,
             phone: phones.length > 0 ? phones[0] : null,
@@ -208,14 +208,14 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
     let m;
     while ((m = directPattern.exec(text)) !== null) {
       if (!m[1] || !m[2]) continue;
-      const name = m[1].trim();
+      const cleanedName = cleanPersonName(m[1]);
       const title = m[2].trim();
-      if (!seenNames.has(name.toLowerCase())) {
+      if (cleanedName && !seenNames.has(cleanedName.toLowerCase())) {
         const role = classifyTitle(title);
         if (isDecisionMaker(role)) {
-          seenNames.add(name.toLowerCase());
+          seenNames.add(cleanedName.toLowerCase());
           candidates.push({
-            fullName: name,
+            fullName: cleanedName,
             title,
             confidence: 0.89,
             sourceUrl: page.url,
@@ -256,15 +256,11 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
     for (const np of narrativePatterns) {
       const match = np.regex.exec(text);
       if (match && match[1]) {
-        const rawName = match[1].trim();
-        // Disqualify common false positives like "Air Conditioning" or "HVAC Services"
-        if (
-          !/^(air|hvac|heating|cooling|comfort|services|contractor|texas|family|dallas|houston)/i.test(rawName) &&
-          !seenNames.has(rawName.toLowerCase())
-        ) {
-          seenNames.add(rawName.toLowerCase());
+        const cleanedName = cleanPersonName(match[1]);
+        if (cleanedName && !seenNames.has(cleanedName.toLowerCase())) {
+          seenNames.add(cleanedName.toLowerCase());
           candidates.push({
-            fullName: rawName,
+            fullName: cleanedName,
             title: np.defaultTitle,
             confidence: np.confidence,
             sourceUrl: page.url,

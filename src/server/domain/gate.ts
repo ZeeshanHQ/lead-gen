@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 import { type ContactInput, isDecisionMaker } from "./contact";
+import { isValidPersonName } from "@/server/enrichment/people";
 
 export const GATE_FIELDS = [
   "requirePhone",
@@ -106,7 +107,12 @@ function hasDialableNumber(value: string | null | undefined): boolean {
   if (!value) return false;
   const digits = value.replace(/\D/g, "");
   const national = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
-  return national.length >= 10;
+  if (national.length !== 10) return false;
+  // Reject identical dummy numbers like 0000000000 or 1111111111
+  if (/^(\d)\1{9}$/.test(national)) return false;
+  // Area code and exchange cannot start with 0 or 1
+  if (/^[01]/.test(national) || /^[01]/.test(national.slice(3, 4))) return false;
+  return true;
 }
 
 export function evaluateGate(gateIn: Partial<LeadGate> | null | undefined, input: GateInput): GateResult {
@@ -125,7 +131,9 @@ export function evaluateGate(gateIn: Partial<LeadGate> | null | undefined, input
   }
 
   if (gate.requireDecisionMaker) {
-    const ok = input.contacts.some((c) => Boolean(c.name && c.name.trim()) && isDecisionMaker(c.roleClass));
+    const ok = input.contacts.some(
+      (c) => Boolean(c.name && isValidPersonName(c.name)) && isDecisionMaker(c.roleClass)
+    );
     if (!ok) missing.push("requireDecisionMaker");
   }
 

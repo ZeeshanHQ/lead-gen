@@ -13,6 +13,7 @@ import {
   ROLE_CLASSES,
 } from "../domain/contact";
 import { cleanPhone, normalizeUsPhone, normalizeWebsite } from "../domain/normalize";
+import { cleanPersonName } from "../enrichment/people";
 import { audit } from "./audit";
 
 export type ContactRow = typeof contacts.$inferSelect;
@@ -65,11 +66,12 @@ export async function addContact(
   actor: string,
 ): Promise<{ ok: true; id: string } | { ok: false; errors: ContactErrors }> {
   const errors: ContactErrors = {};
-  const name = input.name?.trim() || null;
+  const rawName = input.name?.trim() || null;
+  const name = rawName ? cleanPersonName(rawName) : null;
   const title = input.title?.trim() || null;
   const email = input.email?.trim().toLowerCase() || null;
 
-  if (!name && !input.phone?.trim() && !email) errors.form = "Provide at least a name, phone or email.";
+  if (!name && !input.phone?.trim() && !email) errors.form = "Provide at least a valid person name, phone or email.";
   if (email && !isValidEmail(email)) errors.email = "Not a valid email address.";
 
   let phoneDisplay: string | null = null;

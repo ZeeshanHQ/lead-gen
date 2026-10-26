@@ -123,8 +123,9 @@ export function cleanPhone(raw: string | null | undefined): NormalizedPhone | nu
 
 // --------------------------------------------------------------- domains ----
 
-/** Hosts that are directories/social pages, never a company's own website. */
+/** Hosts that are directories/social pages/manufacturers, never a local company's own website. */
 const NON_COMPANY_HOSTS = new Set([
+  // Social media & search
   "facebook.com",
   "m.facebook.com",
   "instagram.com",
@@ -133,6 +134,17 @@ const NON_COMPANY_HOSTS = new Set([
   "x.com",
   "youtube.com",
   "tiktok.com",
+  "google.com",
+  "maps.google.com",
+  "g.page",
+  "goo.gl",
+  "maps.app.goo.gl",
+  "bing.com",
+  "linktr.ee",
+  "wixsite.com",
+  "wordpress.com",
+
+  // Review & Lead Aggregators
   "yelp.com",
   "angi.com",
   "angieslist.com",
@@ -142,13 +154,62 @@ const NON_COMPANY_HOSTS = new Set([
   "nextdoor.com",
   "yellowpages.com",
   "mapquest.com",
-  "google.com",
-  "maps.google.com",
-  "g.page",
-  "goo.gl",
-  "maps.app.goo.gl",
-  "linktr.ee",
-  "wixsite.com",
+  "superpages.com",
+  "expertise.com",
+  "porch.com",
+  "houzz.com",
+  "bark.com",
+  "networx.com",
+  "birdeye.com",
+  "trustpilot.com",
+  "consumeraffairs.com",
+  "manta.com",
+  "chamberofcommerce.com",
+  "yellowbot.com",
+  "citysearch.com",
+  "merchantcircle.com",
+  "alignable.com",
+
+  // Real Estate Portals & Marketplaces
+  "zillow.com",
+  "realtor.com",
+  "redfin.com",
+  "trulia.com",
+  "homes.com",
+  "apartments.com",
+  "loopnet.com",
+  "nar.realtor",
+  "crexi.com",
+  "commercialexchange.com",
+  "rent.com",
+
+  // Equipment Manufacturers (Not local service contractors)
+  "lennox.com",
+  "carrier.com",
+  "trane.com",
+  "daikin.com",
+  "goodmanmfg.com",
+  "york.com",
+  "rheem.com",
+  "ruud.com",
+  "bryant.com",
+  "americanstandardair.com",
+  "mitsubishicomfort.com",
+  "amana-hac.com",
+
+  // Jobs, Wiki & B2B Databases
+  "indeed.com",
+  "glassdoor.com",
+  "ziprecruiter.com",
+  "wikipedia.org",
+  "reddit.com",
+  "quora.com",
+  "zoominfo.com",
+  "dnb.com",
+  "crunchbase.com",
+  "opencorporates.com",
+  "bizapedia.com",
+  "buzzfile.com",
 ]);
 
 export interface NormalizedWebsite {
@@ -195,7 +256,7 @@ export function normalizeWebsite(raw: string | null | undefined): WebsiteNormali
 export function isNonCompanyHost(domain: string): boolean {
   if (NON_COMPANY_HOSTS.has(domain)) return true;
   for (const blocked of NON_COMPANY_HOSTS) {
-    if (domain.endsWith(`.${blocked}`)) return true;
+    if (domain === blocked || domain.endsWith(`.${blocked}`)) return true;
   }
   return false;
 }

@@ -82,8 +82,20 @@ export function buildQueryPlan(input: {
 
 const JUNK_PATH = /\/(blog|news|article|articles|post|posts|guide|guides|best|top|directory|category|categories|tag|tags|compare|comparison|review|reviews|answers|questions|forum|wiki|careers|jobs)(\/|-|$)/i;
 const LISTICLE_TITLE =
-  /\b(top|best)\s+\d+|\b\d+\s+(best|top)\b|^\s*(top|best)\b|\blist of\b|\bdirectory\b|\bnear me\b|\bcompar(e|ison)\b|\bvs\.?\s|\bhow (to|much)\b|\bcost of\b|\bguide\b|\bwhat is\b/i;
-const GENERIC_NAME = /^(home|homepage|welcome|index|official site|official website|contact us|about us|contact|about)$/i;
+  /\b(top|best)\s+\d+|\b\d+\s+(best|top)\b|^\s*(top|best)\b|\blist of\b|\bdirectory\b|\bnear me\b|\bcompar(e|ison)\b|\bvs\.?\s|\bhow (to|much)\b|\bcost of\b|\bguide\b|\bwhat is\b|\bwhat it means\b|\bwhy (you|hire|choose)\b|\breasons to\b|\btips (for|to)\b|\bsigns (of|you)\b|\bbenefits of\b|\beverything you need\b/i;
+
+const HEADLINE_PATTERNS = [
+  /\b(what it means|why you should|why hire|why choose|top reasons|reasons to|how to|things to know|tips for|signs you need|when to replace|is it time|pros and cons|difference between|everything you need|guide to|benefits of|reviews for|complaints about)\b/i,
+  /\b(best|top)\s+\d+/i,
+  /\?$/,
+];
+
+function isEditorialHeadline(text: string): boolean {
+  return HEADLINE_PATTERNS.some((p) => p.test(text));
+}
+
+const GENERIC_NAME =
+  /^(home|homepage|welcome|index|official site|official website|contact us|about us|contact|about|roster|agents|reviews|realtor reviews|real estate|services|locations|staff|meet the team|our team|customer reviews|client reviews|privacy policy|terms of service)$/i;
 
 function titleCase(s: string): string {
   return s
@@ -92,14 +104,52 @@ function titleCase(s: string): string {
     .join(" ");
 }
 
-function companyNameFrom(title: string | undefined, domain: string): string {
-  const fromDomain = titleCase((domain.split(".")[0] || domain).replace(/[-_]+/g, " "));
+function cleanDomainBrand(domain: string): string {
+  const base = (domain.split(".")[0] || domain)
+    .replace(/^www\./i, "")
+    .replace(/[-_]+/g, " ");
+  return titleCase(base);
+}
+
+export function companyNameFrom(title: string | undefined, domain: string): string {
+  const fromDomain = cleanDomainBrand(domain);
   if (!title) return fromDomain;
-  let name = (title.split(/\s[-–—|:•]\s|[|•]/)[0] ?? "").trim();
-  name = name.replace(/\b(in|near|for|serving)\s+[A-Z][\w\s,.]*$/i, "").trim();
-  name = name.replace(/[®™]/g, "").trim();
-  if (name.length < 2 || name.length > 60 || GENERIC_NAME.test(name) || /^\d/.test(name)) return fromDomain;
-  return name;
+
+  // Split by common title separators
+  const segments = title
+    .split(/\s+[-–—|:•]\s+|[|•]/)
+    .map((s) => s.trim().replace(/[®™]/g, "").trim())
+    .filter(Boolean);
+
+  if (segments.length === 0) return fromDomain;
+
+  // If first segment looks like an article headline and last segment looks like a brand
+  let candidate = segments[0]!;
+  if (isEditorialHeadline(candidate) && segments.length > 1) {
+    const lastSeg = segments[segments.length - 1]!;
+    if (!isEditorialHeadline(lastSeg)) {
+      candidate = lastSeg;
+    }
+  }
+
+  // Strip trailing geo clauses like "in Dallas TX", "near Austin", "serving Houston"
+  candidate = candidate.replace(/\b(in|near|for|serving)\s+[A-Z][\w\s,.]*$/i, "").trim();
+
+  // If candidate still looks like an editorial headline or listicle, fallback to domain brand
+  if (isEditorialHeadline(candidate)) return fromDomain;
+
+  // Reject URL paths (e.g. "roster/Agents"), pure cities, pure digits, generic buttons
+  if (
+    candidate.includes("/") ||
+    candidate.length < 2 ||
+    candidate.length > 55 ||
+    GENERIC_NAME.test(candidate) ||
+    /^\d/.test(candidate)
+  ) {
+    return fromDomain;
+  }
+
+  return candidate;
 }
 
 const PHONE_REGEX = /(?:\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/;

@@ -5,6 +5,7 @@ import { type LifecycleStatus } from "../domain/lifecycle";
 import { getContactsForCompanies, toContactInput } from "./contacts";
 import { classifyEmail, classifyTitle, pickBestContact } from "../domain/contact";
 import { cleanPhone, normalizeCompanyName, normalizeWebsite } from "../domain/normalize";
+import { cleanPersonName } from "../enrichment/people";
 import { evaluateGate, type LeadGate } from "../domain/gate";
 import { type FactMap, factValue } from "../domain/facts";
 import { type CustomCrmColumn } from "../domain/niche-fields";
@@ -598,9 +599,10 @@ export async function createManualCrmLead(
   const cEmail = input.contactEmail?.trim().toLowerCase() || null;
 
   if (cName || cEmail || phoneDisplay) {
+    const validContactName = cName ? (cleanPersonName(cName) || cName) : null;
     await db.insert(contacts).values({
       companyId,
-      name: cName || "Owner / Managing Director",
+      name: validContactName,
       title: cTitle,
       roleClass: classifyTitle(cTitle),
       email: cEmail,

@@ -7,6 +7,7 @@ import { leadScores, companies } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { audit } from "./audit";
 import { cleanPhone } from "../domain/normalize";
+import { cleanPersonName } from "../enrichment/people";
 
 export interface RawLeadRow {
   name: string;
@@ -513,11 +514,12 @@ export async function executeBulkImport(
 
       // 2. Add Decision Maker Contact if provided or if phone is available
       if (row.contactName || phoneToUse || row.contactEmail) {
+        const validName = row.contactName ? (cleanPersonName(row.contactName) || row.contactName) : null;
         await addContact(
           db,
           {
             companyId: targetCompanyId,
-            name: row.contactName || "Decision Maker",
+            name: validName,
             title: row.contactTitle || "Owner / Principal",
             phone: phoneToUse,
             email: row.contactEmail,
