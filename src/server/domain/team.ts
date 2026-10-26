@@ -89,8 +89,8 @@ export function getMemberLivePresence(
   const diffHours = Math.floor(diffMinutes / 60);
   const diffDays = Math.floor(diffHours / 24);
 
-  // Active within last 5 minutes -> Online Now!
-  if (diffMinutes < 5) {
+  // Active within last 2 minutes -> Online Now!
+  if (diffMinutes < 2) {
     return {
       state: "online",
       label: "Active now",

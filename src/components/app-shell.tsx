@@ -235,14 +235,36 @@ function AppShellInner({
   }, []);
 
   useEffect(() => {
-    // Keep user's active session timestamp fresh in background every 2 minutes
+    // 1. Keep user's active session timestamp fresh in background every 45s while tab is visible
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
         fetch("/api/auth/me").catch(() => {});
       }
-    }, 120000);
-    return () => clearInterval(interval);
-  }, []);
+    }, 45000);
+
+    // 2. Immediately mark user inactive when they close the tab or leave
+    const handleLeave = () => {
+      if (liveMember?.id && liveMember.id !== "guest" && typeof navigator !== "undefined" && navigator.sendBeacon) {
+        try {
+          const blob = new Blob([JSON.stringify({ memberId: liveMember.id })], {
+            type: "application/json",
+          });
+          navigator.sendBeacon("/api/auth/leave", blob);
+        } catch {
+          // Ignore transient beacon error
+        }
+      }
+    };
+
+    window.addEventListener("pagehide", handleLeave);
+    window.addEventListener("beforeunload", handleLeave);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("pagehide", handleLeave);
+      window.removeEventListener("beforeunload", handleLeave);
+    };
+  }, [liveMember?.id]);
 
   const toggleCollapsed = () => {
     const next = !collapsed;

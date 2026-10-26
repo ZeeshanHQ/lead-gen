@@ -819,26 +819,24 @@ export function CrmLeadSheet({
                     {/* Phone */}
                     <td className="px-3 py-3.5 whitespace-nowrap">
                       {phone ? (
-                        <div className="flex items-center gap-1.5">
-                          <a
-                            href={`tel:${phone}`}
-                            className="font-mono font-bold text-emerald-400 hover:text-emerald-300"
-                          >
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(phone, lead.id)}
+                          className="group inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#09090b] hover:bg-zinc-800 border border-zinc-800/80 hover:border-emerald-500/30 transition text-left cursor-pointer"
+                          title="Click to copy phone number"
+                        >
+                          <span className="font-mono font-bold text-xs text-emerald-400 group-hover:text-emerald-300">
                             {phone}
-                          </a>
-                          <button
-                            type="button"
-                            onClick={() => copyToClipboard(phone, lead.id)}
-                            className="p-1 rounded text-zinc-500 hover:text-zinc-300 transition-colors"
-                            title="Copy phone"
-                          >
-                            {copiedId === lead.id ? (
+                          </span>
+                          {copiedId === lead.id ? (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-400 font-sans font-bold">
                               <Check className="w-3 h-3 text-emerald-400" />
-                            ) : (
-                              <Copy className="w-3 h-3" />
-                            )}
-                          </button>
-                        </div>
+                              <span>Copied</span>
+                            </span>
+                          ) : (
+                            <Copy className="w-3 h-3 text-zinc-500 group-hover:text-emerald-400 transition" />
+                          )}
+                        </button>
                       ) : (
                         <button
                           type="button"
@@ -983,20 +981,11 @@ export function CrmLeadSheet({
                     {/* Quick Actions */}
                     <td className="px-4 py-3.5 text-right whitespace-nowrap">
                       <div className="inline-flex items-center justify-end gap-1.5">
-                        {phone && (
-                          <a
-                            href={`tel:${phone}`}
-                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 px-2.5 py-1 text-[11px] font-bold text-black transition"
-                          >
-                            <Phone className="w-3 h-3" />
-                            <span>Call</span>
-                          </a>
-                        )}
                         {canCall && (
                           <button
                             type="button"
                             onClick={() => openCallModal(lead)}
-                            className="inline-flex items-center gap-1 rounded-lg bg-white hover:bg-zinc-200 px-2.5 py-1 text-[11px] font-bold text-black transition"
+                            className="inline-flex items-center gap-1 rounded-lg bg-white hover:bg-zinc-200 px-3 py-1.5 text-xs font-bold text-black transition shadow-sm"
                           >
                             <span>Log Call</span>
                           </button>

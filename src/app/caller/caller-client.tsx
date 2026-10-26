@@ -1506,26 +1506,24 @@ export function CallerClient({
                       <div className="flex flex-col items-start md:items-center">
                         <div className="text-[11px] text-zinc-500 mb-1">Direct Phone Number</div>
                         {dialPhone ? (
-                          <div className="flex items-center gap-2">
-                            <a
-                              href={`tel:${dialPhone}`}
-                              className="font-mono font-bold text-base text-emerald-400 hover:text-emerald-300"
-                            >
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(dialPhone, lead.companyId)}
+                            className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 transition cursor-pointer text-left"
+                            title="Click to copy phone number to clipboard"
+                          >
+                            <span className="font-mono font-bold text-base text-emerald-400 group-hover:text-emerald-300">
                               {dialPhone}
-                            </a>
-                            <button
-                              type="button"
-                              onClick={() => copyToClipboard(dialPhone, lead.companyId)}
-                              className="p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white"
-                              title="Copy Phone Number"
-                            >
-                              {copiedId === lead.companyId ? (
-                                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                          </div>
+                            </span>
+                            {copiedId === lead.companyId ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-sans font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                                <Check className="w-3 h-3 text-emerald-400" />
+                                <span>Copied!</span>
+                              </span>
+                            ) : (
+                              <Copy className="w-3.5 h-3.5 text-zinc-500 group-hover:text-emerald-400 transition" />
+                            )}
+                          </button>
                         ) : (
                           <button
                             type="button"

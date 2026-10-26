@@ -1207,29 +1207,29 @@ export function LeadProspector({
                       </div>
                     )}
 
-                    {/* Phone Number (Prominent & Click-to-Call) */}
+                    {/* Phone Number (1-Click Copy, No External Dial Trigger) */}
                     {phone ? (
-                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#09090b] border border-zinc-800 text-xs">
-                        <a
-                          href={`tel:${phone}`}
-                          className="font-mono text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1.5"
-                        >
+                      <button
+                        type="button"
+                        onClick={() => copyPhone(phone, lead.id)}
+                        className="flex items-center justify-between w-full p-2.5 rounded-lg bg-[#09090b] hover:bg-zinc-900 border border-zinc-800 hover:border-emerald-500/40 text-xs transition cursor-pointer text-left group"
+                        title="Click to copy phone number"
+                      >
+                        <div className="font-mono text-emerald-400 group-hover:text-emerald-300 font-bold flex items-center gap-1.5">
                           <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                           <span>{phone}</span>
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => copyPhone(phone, lead.id)}
-                          className="text-zinc-400 hover:text-white p-1 rounded transition-colors"
-                          title="Copy phone number"
-                        >
+                        </div>
+                        <div className="text-zinc-400 group-hover:text-white flex items-center gap-1 text-[11px]">
                           {copiedPhoneId === lead.id ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                            <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Copied!</span>
+                            </span>
                           ) : (
                             <Copy className="w-3.5 h-3.5" />
                           )}
-                        </button>
-                      </div>
+                        </div>
+                      </button>
                     ) : (
                       <div className="text-[11px] text-zinc-500 italic p-2 rounded bg-[#09090b]/60 border border-zinc-800/60">
                         No published phone number found

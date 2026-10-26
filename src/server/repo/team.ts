@@ -119,6 +119,20 @@ export async function touchMemberActivity(db: Db, memberId: string): Promise<voi
   await writeSettingRaw(db, "team_members_registry", nextList);
 }
 
+export async function markMemberInactive(db: Db, memberId: string): Promise<void> {
+  if (!memberId || memberId === "guest") return;
+  const allMembers = await listTeamMembers(db);
+  const target = allMembers.find((m) => m.id === memberId);
+  if (!target || target.status === "SUSPENDED") return;
+
+  // Set timestamp to 2.5 minutes ago so presence immediately flips to "Inactive for 2m"
+  const inactiveTimestamp = new Date(Date.now() - 150 * 1000).toISOString();
+  const nextList = allMembers.map((m) =>
+    m.id === memberId ? { ...m, lastActiveAt: inactiveTimestamp } : m
+  );
+  await writeSettingRaw(db, "team_members_registry", nextList);
+}
+
 export async function getActiveTeamMember(db: Db): Promise<{
   activeMember: TeamMember;
   allMembers: TeamMember[];
