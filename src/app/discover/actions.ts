@@ -252,25 +252,18 @@ export async function runLeadDiscoveryAction(
       autoEnrich: false,
     });
 
-    // Promote qualified leads from this live pass directly to APPROVED CRM status
-    // (and assign to the Caller if a non-Owner Caller initiated discovery)
+    // If a Caller initiated discovery, pre-assign the qualified leads to them, but leave in NEEDS_REVIEW
+    // so they display the "Approve & Move to CRM" button awaiting user approval
     const assignMemberId = !isOwnerOrManager && activeMember.id !== "guest" ? activeMember.id : null;
     const assignMemberName =
       !isOwnerOrManager && activeMember.id !== "guest" ? activeMember.name : null;
 
-    if (counters.qualifiedCompanyIds && counters.qualifiedCompanyIds.length > 0) {
+    if (assignMemberId && counters.qualifiedCompanyIds && counters.qualifiedCompanyIds.length > 0) {
       await db
         .update(companies)
         .set({
-          ...(assignMemberId
-            ? {
-                assignedMemberId: assignMemberId,
-                assignedMemberName: assignMemberName,
-              }
-            : {}),
-          status: "APPROVED",
-          approvedAt: new Date(),
-          approvedBy: actorName,
+          assignedMemberId: assignMemberId,
+          assignedMemberName: assignMemberName,
         })
         .where(inArray(companies.id, counters.qualifiedCompanyIds));
     }
@@ -346,6 +339,7 @@ export async function runLeadDiscoveryAction(
 
     const postApprovalSet = new Set<string>(POST_APPROVAL as readonly string[]);
     const qualifiedLeads = scopedRows.filter((l) => passesLeadRowGate(l, mergedGate));
+    const pendingLeads = qualifiedLeads.filter((l) => !postApprovalSet.has(l.status));
     const crmReadyCount = qualifiedLeads.filter((l) => postApprovalSet.has(l.status)).length;
 
     revalidatePath("/caller");
@@ -362,8 +356,8 @@ export async function runLeadDiscoveryAction(
       counters: enrichedCounters,
       targetCount,
       gate: mergedGate,
-      leads: qualifiedLeads.slice(0, 100),
-      totalReviewCount: qualifiedLeads.length,
+      leads: pendingLeads.slice(0, 100),
+      totalReviewCount: pendingLeads.length,
       crmReadyCount,
     };
   } catch (err: any) {
@@ -389,13 +383,14 @@ export async function getLatestReviewLeadsAction() {
       : allMarketRows.filter((l) => l.assignedMemberId === activeMember.id);
 
     const postApprovalSet = new Set<string>(POST_APPROVAL as readonly string[]);
-    const leads = scopedRows.filter((l) => passesLeadRowGate(l, activeGate));
-    const crmReadyCount = leads.filter((l) => postApprovalSet.has(l.status)).length;
+    const qualifiedLeads = scopedRows.filter((l) => passesLeadRowGate(l, activeGate));
+    const pendingLeads = qualifiedLeads.filter((l) => !postApprovalSet.has(l.status));
+    const crmReadyCount = qualifiedLeads.filter((l) => postApprovalSet.has(l.status)).length;
 
     return {
       ok: true,
-      leads: leads.slice(0, 100),
-      totalCount: leads.length,
+      leads: pendingLeads.slice(0, 100),
+      totalCount: pendingLeads.length,
       crmReadyCount,
       gate: activeGate,
     };
@@ -458,13 +453,13 @@ export async function approveAllReviewLeadsAction(options?: {
     const { approveCompany } = await import("@/server/repo/approvals");
     const activeGate = resolveGate((rule.config as any)?.gate);
 
-    const reviewRows = await loadLeadRows(db, "review", market.id);
-    const eligible = reviewRows.filter((l) => {
-      if (options?.leadIds && options.leadIds.length > 0) {
-        return options.leadIds.includes(l.id);
-      }
-      return passesLeadRowGate(l, activeGate);
-    });
+    let eligibleIds: string[] = [];
+    if (options?.leadIds && options.leadIds.length > 0) {
+      eligibleIds = options.leadIds;
+    } else {
+      const reviewRows = await loadLeadRows(db, "review", market.id);
+      eligibleIds = reviewRows.filter((l) => passesLeadRowGate(l, activeGate)).map((l) => l.id);
+    }
 
     const targetMemberId =
       options?.assignToMemberId ??
@@ -474,8 +469,8 @@ export async function approveAllReviewLeadsAction(options?: {
       (!isOwnerOrManager && activeMember.id !== "guest" ? activeMember.name : null);
 
     let count = 0;
-    for (const row of eligible) {
-      await approveCompany(db, row.id, {
+    for (const companyId of eligibleIds) {
+      await approveCompany(db, companyId, {
         actor,
         note: "Bulk approved via Lead Prospector",
         acknowledgeUnresearched: true,

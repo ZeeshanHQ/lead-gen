@@ -401,75 +401,68 @@ export function LeadProspector({
     }
   };
 
-  // Quick Approve Lead from this page
+  // Quick Approve Lead from this page: moves lead directly into Leads CRM and removes from staging
   const handleQuickApprove = async (id: string) => {
     setActionLoadingId(id);
     const caller = allMembers.find((m) => m.id === selectedCallerId);
+    const targetLead = leads.find((l) => l.id === id);
     const res = await quickApproveLeadAction(id, {
       memberId: caller ? caller.id : null,
       memberName: caller ? caller.name : null,
     });
     setActionLoadingId(null);
     if (res.ok) {
-      setLeads((prev) =>
-        prev.map((l) =>
-          l.id === id
-            ? ({
-                ...l,
-                status: "APPROVED",
-                assignedMemberId: caller ? caller.id : (l as any).assignedMemberId,
-                assignedMemberName: caller ? caller.name : (l as any).assignedMemberName,
-              } as any)
-            : l
-        )
-      );
+      setLeads((prev) => prev.filter((l) => l.id !== id));
+      setTotalReviewCount((prev) => Math.max(0, prev - 1));
       setCrmReadyCount((prev) => prev + 1);
+      setSuccessBanner(
+        caller
+          ? `Moved "${targetLead?.name || "Lead"}" to Leads CRM (Assigned to ${caller.name})! Ready to dial.`
+          : `Moved "${targetLead?.name || "Lead"}" to Leads CRM! Ready to dial.`
+      );
     } else {
       setErrorMsg(res.error || "Failed to approve lead");
     }
   };
 
-  // Bulk Approve All Pending Leads into CRM
+  // Bulk Approve All Pending Leads into CRM: moves all staged leads to CRM queue
   const handleBulkApproveAll = async () => {
     setBulkApproving(true);
     const caller = allMembers.find((m) => m.id === selectedCallerId);
+    const pendingIds = leads.map((l) => l.id);
     const res = await approveAllReviewLeadsAction({
+      leadIds: pendingIds,
       assignToMemberId: caller ? caller.id : null,
       assignToMemberName: caller ? caller.name : null,
     });
     setBulkApproving(false);
     if (res.ok) {
-      setLeads((prev) =>
-        prev.map((l) =>
-          l.status === "APPROVED" || l.status === "CALLING" || l.status === "CONNECTED" || l.status === "MEETING_BOOKED"
-            ? l
-            : ({
-                ...l,
-                status: "APPROVED",
-                assignedMemberId: caller ? caller.id : (l as any).assignedMemberId,
-                assignedMemberName: caller ? caller.name : (l as any).assignedMemberName,
-              } as any)
-        )
-      );
-      setCrmReadyCount((prev) => prev + (res.approvedCount || 0));
+      const count = res.approvedCount || pendingIds.length;
+      setLeads((prev) => prev.filter((l) => !pendingIds.includes(l.id)));
+      setTotalReviewCount((prev) => Math.max(0, prev - count));
+      setCrmReadyCount((prev) => prev + count);
       setSuccessBanner(
         caller
-          ? `Approved ${res.approvedCount || 0} leads into CRM and assigned them to ${caller.name}!`
-          : `Approved ${res.approvedCount || 0} leads into your Leads CRM queue!`
+          ? `Moved ${count} leads to Leads CRM assigned to ${caller.name}! Ready for dialing.`
+          : `Moved ${count} leads to Leads CRM queue! Ready for dialing.`
       );
     } else {
       setErrorMsg(res.error || "Failed to bulk approve leads");
     }
   };
 
-  // Quick Reject Lead from this page
+  // Quick Reject / Discard Lead from this page
   const handleQuickReject = async (id: string) => {
     setActionLoadingId(id);
+    const targetLead = leads.find((l) => l.id === id);
     const res = await quickRejectLeadAction(id);
     setActionLoadingId(null);
     if (res.ok) {
       setLeads((prev) => prev.filter((l) => l.id !== id));
       setTotalReviewCount((prev) => Math.max(0, prev - 1));
+      setSuccessBanner(`Discarded "${targetLead?.name || "Lead"}" from staging.`);
+    } else {
+      setErrorMsg(res.error || "Failed to discard lead");
     }
   };
 
@@ -1085,13 +1078,7 @@ export function LeadProspector({
               </div>
             )}
 
-            {leads.some(
-              (l) =>
-                l.status !== "APPROVED" &&
-                l.status !== "CALLING" &&
-                l.status !== "CONNECTED" &&
-                l.status !== "MEETING_BOOKED"
-            ) && (
+            {leads.length > 0 && (
               <button
                 type="button"
                 disabled={bulkApproving}
@@ -1104,17 +1091,7 @@ export function LeadProspector({
                   <CheckCircle className="w-3.5 h-3.5" />
                 )}
                 <span>
-                  Approve All Pending &amp; Move to CRM (
-                  {
-                    leads.filter(
-                      (l) =>
-                        l.status !== "APPROVED" &&
-                        l.status !== "CALLING" &&
-                        l.status !== "CONNECTED" &&
-                        l.status !== "MEETING_BOOKED"
-                    ).length
-                  }
-                  )
+                  Approve All ({leads.length}) &amp; Move to CRM
                 </span>
               </button>
             )}
@@ -1133,11 +1110,24 @@ export function LeadProspector({
           <div className="p-12 rounded-2xl border border-zinc-800 bg-[#121215] text-center space-y-3">
             <Search className="w-8 h-8 text-zinc-600 mx-auto" />
             <h3 className="text-sm font-semibold text-zinc-200">
-              No qualified {activeNicheName} leads matching your current Must-Have Gate yet
+              No leads waiting in staging
             </h3>
             <p className="text-xs text-zinc-500 max-w-md mx-auto">
-              Choose your desired lead quantity above and click &ldquo;Find &amp; Qualify {targetCount} {activeNicheName} Leads&rdquo; to discover verified companies with dialable phone numbers.
+              {crmReadyCount > 0
+                ? `All approved leads have been moved to your Leads CRM queue (${crmReadyCount} ready to dial). Find more leads above whenever you want.`
+                : `Choose your desired lead quantity above and click "Find & Qualify Leads" to discover verified companies.`}
             </p>
+            {crmReadyCount > 0 && (
+              <div className="pt-2">
+                <Link
+                  href="/caller"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white hover:bg-zinc-200 text-black font-bold text-xs shadow-md transition"
+                >
+                  <span>Open Leads CRM ({crmReadyCount} Ready)</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1307,36 +1297,26 @@ export function LeadProspector({
                         type="button"
                         disabled={actionLoadingId === lead.id}
                         onClick={() => handleQuickReject(lead.id)}
-                        className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-zinc-900 hover:bg-rose-950/60 text-zinc-400 hover:text-rose-300 border border-zinc-800 hover:border-rose-800 transition-colors"
-                        title="Remove lead from CRM"
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-zinc-900 hover:bg-rose-950/60 text-zinc-400 hover:text-rose-300 border border-zinc-800 hover:border-rose-800 transition-colors"
+                        title="Discard lead from staging"
                       >
-                        Remove
+                        Discard
                       </button>
 
-                      {isApprovedInCrm ? (
-                        <Link
-                          href="/caller"
-                          className="px-3 py-1 rounded-lg text-xs font-bold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-colors flex items-center gap-1"
-                        >
-                          <CheckCircle className="w-3 h-3" />
-                          <span>In CRM &rarr;</span>
-                        </Link>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={actionLoadingId === lead.id}
-                          onClick={() => handleQuickApprove(lead.id)}
-                          className="px-3 py-1 rounded-lg text-xs font-bold bg-white hover:bg-zinc-200 text-black shadow-sm transition-colors flex items-center gap-1"
-                          title="Approve and move lead into Caller CRM"
-                        >
-                          {actionLoadingId === lead.id ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <CheckCircle className="w-3 h-3" />
-                          )}
-                          <span>Approve &rarr; CRM</span>
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        disabled={actionLoadingId === lead.id}
+                        onClick={() => handleQuickApprove(lead.id)}
+                        className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-black shadow-sm transition-colors flex items-center gap-1.5"
+                        title="Approve and move lead into Leads CRM"
+                      >
+                        {actionLoadingId === lead.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <CheckCircle className="w-3.5 h-3.5" />
+                        )}
+                        <span>Approve &amp; Move to CRM &rarr;</span>
+                      </button>
                     </div>
                   </div>
                 </div>

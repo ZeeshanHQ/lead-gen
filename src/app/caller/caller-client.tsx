@@ -108,6 +108,25 @@ export function CallerClient({
   );
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [expandedScriptId, setExpandedScriptId] = useState<string | null>(null);
+  const [expandedNotesIds, setExpandedNotesIds] = useState<Record<string, boolean>>({});
+  const [expandAllNotes, setExpandAllNotes] = useState(false);
+
+  const toggleNotesExpanded = (companyId: string) => {
+    setExpandedNotesIds((prev) => ({
+      ...prev,
+      [companyId]: !prev[companyId],
+    }));
+  };
+
+  const handleToggleExpandAllNotes = () => {
+    const next = !expandAllNotes;
+    setExpandAllNotes(next);
+    const updated: Record<string, boolean> = {};
+    queue.forEach((l) => {
+      updated[l.companyId] = next;
+    });
+    setExpandedNotesIds(updated);
+  };
 
   const smartFields = getSmartFieldsForNiche(nicheCategory, nicheName, customColumns);
 
@@ -1174,15 +1193,27 @@ export function CallerClient({
               ))}
             </div>
 
-            <div className="relative w-full sm:w-72">
-              <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-2.5" />
-              <input
-                type="text"
-                placeholder="Search company, contact, phone, notes..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded-lg border border-zinc-800 bg-[#09090b] pl-8 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:border-zinc-600 focus:outline-none"
-              />
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={handleToggleExpandAllNotes}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-800 bg-[#09090b] hover:bg-zinc-900 text-xs text-zinc-300 hover:text-white font-medium transition"
+                title="Expand or collapse all lead notes & battlecards"
+              >
+                <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{expandAllNotes ? "Collapse Notes" : "Expand All Notes"}</span>
+              </button>
+
+              <div className="relative w-full sm:w-72">
+                <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search company, contact, phone, notes..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-800 bg-[#09090b] pl-8 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:border-zinc-600 focus:outline-none"
+                />
+              </div>
             </div>
           </div>
 
@@ -1232,9 +1263,20 @@ export function CallerClient({
                     <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-800/80 pb-3">
                       <div className="space-y-1.5">
                         <div className="flex flex-wrap items-center gap-2.5">
-                          <h2 className="text-base font-bold text-white hover:underline">
-                            <Link href={`/company/${lead.companyId}`}>{lead.name}</Link>
-                          </h2>
+                          <div className="flex items-center gap-2">
+                            <h2 className="text-base font-bold text-white tracking-tight">
+                              {lead.name}
+                            </h2>
+                            <a
+                              href={`/company/${lead.companyId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-zinc-500 hover:text-zinc-300 p-1 rounded-md hover:bg-zinc-800 transition-colors inline-flex items-center"
+                              title="Open Full Company Dossier (in new tab)"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
 
                           {lead.marketName && (
                             <span className="inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-[#09090b] px-2 py-0.5 text-[10px] font-medium text-zinc-300">
@@ -1560,90 +1602,166 @@ export function CallerClient({
                       </div>
                     </div>
 
-                    {/* Interactive Notes, Follow-Up & Compact Script Bar */}
-                    <div className="rounded-lg border border-zinc-800/70 bg-[#09090b]/50 px-3.5 py-2.5 text-xs space-y-2.5">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <FileText className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                          {cleanNotes ? (
-                            <span className="text-zinc-300 truncate" title={cleanNotes}>
-                              <strong className="text-zinc-400 font-medium mr-1.5">
-                                Notes:
-                              </strong>
-                              {cleanNotes.split("\n").pop()}
-                            </span>
-                          ) : (
-                            <span className="text-zinc-500">
-                              No call notes logged yet for this lead.
-                            </span>
-                          )}
-                        </div>
+                    {/* Interactive Notes & Cold Caller Battlecard Section */}
+                    {(() => {
+                      const isNotesExpanded = expandAllNotes || Boolean(expandedNotesIds[lead.companyId]);
+                      const noteLines = cleanNotes ? cleanNotes.split("\n").filter((l) => l.trim().length > 0) : [];
+                      const isMultiLine = noteLines.length > 2 || (cleanNotes && cleanNotes.length > 120);
 
-                        <div className="flex flex-wrap items-center gap-3 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setExpandedScriptId(
-                                expandedScriptId === lead.companyId ? null : lead.companyId
-                              )
-                            }
-                            className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1"
-                          >
-                            {expandedScriptId === lead.companyId ? (
-                              <ChevronUp className="w-3 h-3" />
-                            ) : (
-                              <ChevronDown className="w-3 h-3" />
-                            )}
-                            <span>Call Script</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => copyToClipboard(scriptText, `script_${lead.companyId}`)}
-                            className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1"
-                          >
-                            {copiedId === `script_${lead.companyId}` ? (
-                              <>
-                                <Check className="w-3 h-3 text-emerald-400" />
-                                <span>Copied</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3 h-3" />
-                                <span>Copy Script</span>
-                              </>
-                            )}
-                          </button>
-                          {canEditContacts && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => openFollowUpModal(lead)}
-                                className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1"
-                              >
-                                <Clock className="w-3 h-3" />
-                                <span>
-                                  {lead.nextFollowUp ? "Reschedule Follow-Up" : "Set Follow-Up"}
+                      return (
+                        <div className="rounded-xl border border-zinc-800/80 bg-[#09090b]/80 p-4 text-xs space-y-3 shadow-inner">
+                          {/* Header row of the notes box */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/80 pb-2.5">
+                            <div className="flex items-center gap-2">
+                              <FileText className="w-4 h-4 text-emerald-400 shrink-0" />
+                              <span className="font-bold text-zinc-100 text-xs">
+                                Cold Caller Brief &amp; Notes
+                              </span>
+                              {cleanNotes && (
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 font-semibold border border-zinc-700/60">
+                                  {noteLines.length} {noteLines.length === 1 ? "line" : "lines"}
                                 </span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => openEditModal(lead)}
-                                className="text-[11px] font-semibold text-zinc-300 hover:text-white flex items-center gap-1"
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              {cleanNotes && isMultiLine && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleNotesExpanded(lead.companyId)}
+                                  className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 transition"
+                                >
+                                  {isNotesExpanded ? (
+                                    <>
+                                      <ChevronUp className="w-3.5 h-3.5" />
+                                      <span>Collapse</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ChevronDown className="w-3.5 h-3.5" />
+                                      <span>View Full Pitch &amp; Brief</span>
+                                    </>
+                                  )}
+                                </button>
+                              )}
+
+                              {cleanNotes && (
+                                <button
+                                  type="button"
+                                  onClick={() => copyToClipboard(cleanNotes, `notes_${lead.companyId}`)}
+                                  className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1 px-2 py-1 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 transition"
+                                  title="Copy full notes to clipboard"
+                                >
+                                  {copiedId === `notes_${lead.companyId}` ? (
+                                    <>
+                                      <Check className="w-3 h-3 text-emerald-400" />
+                                      <span className="text-emerald-400">Copied</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-3 h-3" />
+                                      <span>Copy Notes</span>
+                                    </>
+                                  )}
+                                </button>
+                              )}
+
+                              {canEditContacts && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => openFollowUpModal(lead)}
+                                    className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 transition"
+                                  >
+                                    <Clock className="w-3 h-3" />
+                                    <span>{lead.nextFollowUp ? "Reschedule" : "Set Follow-Up"}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditModal(lead)}
+                                    className="text-[11px] font-semibold text-zinc-300 hover:text-white flex items-center gap-1 px-2 py-1 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 transition"
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                    <span>{cleanNotes ? "Edit Notes" : "+ Add Note"}</span>
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Notes Body: Full readable view without cutting off */}
+                          {cleanNotes ? (
+                            isNotesExpanded || !isMultiLine ? (
+                              <div className="p-3.5 rounded-lg bg-zinc-950/90 border border-zinc-800 text-zinc-200 text-xs leading-relaxed whitespace-pre-wrap select-text max-h-72 overflow-y-auto font-sans shadow-inner">
+                                {cleanNotes}
+                              </div>
+                            ) : (
+                              <div
+                                onClick={() => toggleNotesExpanded(lead.companyId)}
+                                className="p-3 rounded-lg bg-zinc-950/50 border border-zinc-800/80 text-zinc-300 text-xs leading-relaxed cursor-pointer hover:border-zinc-700 hover:text-white transition group space-y-1"
+                                title="Click to view complete brief and pitch"
                               >
-                                <Pencil className="w-3 h-3" />
-                                <span>{cleanNotes ? "Edit Notes" : "+ Add Note"}</span>
-                              </button>
-                            </>
+                                <div className="line-clamp-3 select-text font-sans whitespace-pre-wrap">
+                                  {cleanNotes}
+                                </div>
+                                <div className="pt-1 text-[11px] font-semibold text-emerald-400 group-hover:underline flex items-center gap-1">
+                                  <span>Read complete caller battlecard ({noteLines.length} lines)...</span>
+                                  <ChevronDown className="w-3 h-3" />
+                                </div>
+                              </div>
+                            )
+                          ) : (
+                            <div className="text-xs text-zinc-500 italic py-1">
+                              No call notes logged yet for this lead. Click &ldquo;+ Add Note&rdquo; to record conversation notes.
+                            </div>
+                          )}
+
+                          {/* Quick 15-second opening pitch script toolbar */}
+                          <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedScriptId(
+                                  expandedScriptId === lead.companyId ? null : lead.companyId
+                                )
+                              }
+                              className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-200 flex items-center gap-1"
+                            >
+                              {expandedScriptId === lead.companyId ? (
+                                <ChevronUp className="w-3 h-3" />
+                              ) : (
+                                <ChevronDown className="w-3 h-3" />
+                              )}
+                              <span>15-Sec Cold Opening Script (Quick Template)</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(scriptText, `script_${lead.companyId}`)}
+                              className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1"
+                            >
+                              {copiedId === `script_${lead.companyId}` ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                  <span className="text-emerald-400">Copied</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3" />
+                                  <span>Copy Script</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+
+                          {expandedScriptId === lead.companyId && (
+                            <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/20 text-emerald-200 text-xs leading-relaxed font-sans select-text">
+                              &ldquo;{scriptText}&rdquo;
+                            </div>
                           )}
                         </div>
-                      </div>
-
-                      {expandedScriptId === lead.companyId && (
-                        <div className="pt-2 border-t border-zinc-800/80 text-zinc-400 leading-relaxed">
-                          &ldquo;{scriptText}&rdquo;
-                        </div>
-                      )}
-                    </div>
+                      );
+                    })()}
                   </div>
                 );
               })}

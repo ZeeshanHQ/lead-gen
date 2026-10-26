@@ -102,7 +102,8 @@ export default async function DiscoverPage() {
   const review = visibleRows.filter((l) => !postApprovalSet.has(l.status));
   const approved = visibleRows.filter((l) => postApprovalSet.has(l.status));
 
-  const qualifiedLeads = [...review, ...approved].filter((l) => passesLeadRowGate(l, activeGate));
+  // The Discover Prospector presents leads in staging waiting for human review & approval
+  const pendingLeads = review.filter((l) => passesLeadRowGate(l, activeGate));
   const crmReadyCount = approved.filter((l) => passesLeadRowGate(l, activeGate)).length;
 
   const resolvedMarket = ctx?.market || {
@@ -121,8 +122,8 @@ export default async function DiscoverPage() {
         allMarkets={ctx?.allMarkets || [resolvedMarket]}
         initialRule={ctx?.rule?.config}
         initialGate={activeGate}
-        initialLeads={qualifiedLeads.slice(0, 80) as any}
-        initialTotalCount={qualifiedLeads.length}
+        initialLeads={pendingLeads.slice(0, 80) as any}
+        initialTotalCount={pendingLeads.length}
         initialCrmReadyCount={crmReadyCount}
         canEditRules={activeMember.role === "OWNER" || Boolean(activeMember.permissions?.editRules)}
         allMembers={isOwnerOrManager ? allMembers : []}
