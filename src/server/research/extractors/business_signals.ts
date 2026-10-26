@@ -191,22 +191,73 @@ export function extractBusinessSignals(pages: CrawledPage[]): FactCandidate[] {
       }
     }
 
-    // 10. Employee count hints (e.g. "team of 15 technicians")
+    // 10. Employee & Team Size Extraction (Real-time Affordability Signal)
     if (!discovered.has("employees")) {
-      const empPat = /\bteam\s+of\s+(\d{1,3})\s+(?:technicians|specialists|professionals|employees)\b/i;
-      const match = empPat.exec(text);
-      if (match && match[1]) {
-        const count = parseInt(match[1], 10);
-        if (count >= 2 && count <= 200) {
+      // 10a. Schema.org JSON-LD numberOfEmployees check
+      const schemaEmp = html.match(/"numberOfEmployees"\s*:\s*(?:\{\s*"@type":\s*"QuantitativeValue",\s*"value":\s*"?(\d{1,4})"?|"?(\d{1,4})"?)/i);
+      if (schemaEmp) {
+        const empVal = schemaEmp[1] || schemaEmp[2];
+        if (empVal && parseInt(empVal, 10) >= 1) {
           facts.push({
             key: "employees",
-            value: `${count}`,
-            confidence: 0.85,
-            evidenceSnippet: match[0],
+            value: empVal,
+            confidence: 0.95,
+            evidenceSnippet: `Schema.org declared employee count: ${empVal}`,
             sourceUrl: page.url,
           });
           discovered.add("employees");
         }
+      }
+
+      // 10b. Natural language team count statements (e.g. "team of 15 agents", "over 25 specialists")
+      if (!discovered.has("employees")) {
+        const empPat = /\b(?:team\s+of|staff\s+of|more\s+than|over|employing|consisting\s+of)\s+(\d{1,3})\s+(?:agents?|realtors?|brokers?|technicians?|specialists?|professionals?|employees?|members?|associates?)\b/i;
+        const match = empPat.exec(text);
+        if (match && match[1]) {
+          const count = parseInt(match[1], 10);
+          if (count >= 2 && count <= 500) {
+            facts.push({
+              key: "employees",
+              value: `${count}`,
+              confidence: 0.88,
+              evidenceSnippet: match[0],
+              sourceUrl: page.url,
+            });
+            discovered.add("employees");
+          }
+        }
+      }
+
+      // 10c. Team roster / agent cards count on team or about pages
+      if (!discovered.has("employees") && (page.path.includes("team") || page.path.includes("agent") || page.path.includes("about") || page.path.includes("staff") || page.path.includes("realtor"))) {
+        const $ = cheerio.load(html);
+        const cardCount = $(".team-member, .team-card, [class*='agent-card'], [class*='member-card'], [class*='agent-item'], .person-card, .bio-card").length;
+        if (cardCount >= 3 && cardCount <= 150) {
+          facts.push({
+            key: "employees",
+            value: `${cardCount}`,
+            confidence: 0.85,
+            evidenceSnippet: `${cardCount} team member profiles displayed on roster page`,
+            sourceUrl: page.url,
+          });
+          discovered.add("employees");
+        }
+      }
+    }
+
+    // 11. Solo / 1-Person Operation detection
+    if (!discovered.has("one_person_operation")) {
+      const soloPat = /\b(?:solo\s+practitioner|individual\s+agent|individual\s+broker|one-person\s+operation|sole\s+proprietorship)\b/i;
+      const snippet = extractSnippet(text, soloPat);
+      if (snippet) {
+        facts.push({
+          key: "one_person_operation",
+          value: "YES",
+          confidence: 0.90,
+          evidenceSnippet: snippet,
+          sourceUrl: page.url,
+        });
+        discovered.add("one_person_operation");
       }
     }
   }
