@@ -130,7 +130,7 @@ function isEditorialHeadline(text: string): boolean {
 }
 
 const GENERIC_NAME =
-  /^(home|homepage|welcome|index|official site|official website|contact us|about us|contact|about|roster|agents|our agents|team members|leadership|leadership team|meet our team|reviews|realtor reviews|real estate|services|locations|staff|meet the team|our team|customer reviews|client reviews|privacy policy|terms of service)$/i;
+  /^(home|homepage|welcome|index|official site|official website|contact us|about us|contact|about|roster|agents|our agents|meet our agents|team members|leadership|leadership team|meet our team|reviews|realtor reviews|real estate|services|locations|staff|meet the team|our team|customer reviews|client reviews|privacy policy|terms of service|realtor|realtors|broker|brokers|listings|featured listings|search|properties|property|idx)$/i;
 
 function titleCase(s: string): string {
   return s
@@ -158,14 +158,22 @@ export function companyNameFrom(title: string | undefined, domain: string): stri
 
   if (segments.length === 0) return fromDomain;
 
-  // If first segment looks like an article headline and last segment looks like a brand
+  // If first segment looks like an article headline or generic label, find brand segment
   let candidate = segments[0]!;
-  if (isEditorialHeadline(candidate) && segments.length > 1) {
-    const lastSeg = segments[segments.length - 1]!;
-    if (!isEditorialHeadline(lastSeg)) {
-      candidate = lastSeg;
+  if ((isEditorialHeadline(candidate) || GENERIC_NAME.test(candidate)) && segments.length > 1) {
+    const brandSeg = segments.find((s) => !isEditorialHeadline(s) && !GENERIC_NAME.test(s));
+    if (brandSeg) {
+      candidate = brandSeg;
+    } else {
+      const lastSeg = segments[segments.length - 1]!;
+      if (!isEditorialHeadline(lastSeg)) {
+        candidate = lastSeg;
+      }
     }
   }
+
+  // Strip leading utility phrases
+  candidate = candidate.replace(/^(?:Contact|Meet our Team:?|Meet the Team:?|Meet\s+|Welcome to)\s+/i, "").trim();
 
   // Strip trailing geo clauses like "in Dallas TX", "near Austin", "serving Houston"
   candidate = candidate.replace(/\b(in|near|for|serving)\s+[A-Z][\w\s,.]*$/i, "").trim();

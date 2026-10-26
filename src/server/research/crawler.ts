@@ -162,7 +162,7 @@ export async function crawlWebsite(
   // 1. Fetch robots.txt if requested
   let disallowedPaths: string[] = [];
   let robotsAllowed = true;
-  if (respectRobots) {
+  if (respectRobots && maxPages > 1) {
     try {
       const robotsUrl = `${baseOrigin}/robots.txt`;
       const ctrl = new AbortController();
@@ -238,7 +238,40 @@ export async function crawlWebsite(
       clearTimeout(timer);
 
       if (!response.ok) {
-        errors.push(`HTTP ${response.status} at ${currentUrl}`);
+        let recovered = false;
+        if (response.status === 403 || response.status === 503 || response.status === 429 || response.status === 520) {
+          try {
+            const ctrlJina = new AbortController();
+            const timerJina = setTimeout(() => ctrlJina.abort(), 3500);
+            const jinaRes = await fetch(`https://r.jina.ai/${currentUrl}`, {
+              headers: { Accept: "text/plain" },
+              signal: ctrlJina.signal,
+            });
+            clearTimeout(timerJina);
+            if (jinaRes.ok) {
+              const jinaText = await jinaRes.text();
+              if (jinaText.length > 200) {
+                recovered = true;
+                pages.push({
+                  url: currentUrl,
+                  path: parsedCurrent.pathname,
+                  status: 200,
+                  title: baseHost,
+                  metaDescription: "",
+                  cleanText: jinaText,
+                  html: `<html><head><title>${baseHost}</title></head><body><div class="jina-content">${jinaText}</div></body></html>`,
+                  links: [],
+                  fetchedAt: new Date().toISOString(),
+                });
+              }
+            }
+          } catch {
+            // non-blocking
+          }
+        }
+        if (!recovered) {
+          errors.push(`HTTP ${response.status} at ${currentUrl}`);
+        }
         continue;
       }
 
@@ -333,7 +366,38 @@ export async function crawlWebsite(
         fetchedAt: new Date().toISOString(),
       });
     } catch (err: any) {
-      errors.push(`Failed to fetch ${currentUrl}: ${err.message || String(err)}`);
+      let recovered = false;
+      try {
+        const ctrlJina = new AbortController();
+        const timerJina = setTimeout(() => ctrlJina.abort(), 3500);
+        const jinaRes = await fetch(`https://r.jina.ai/${currentUrl}`, {
+          headers: { Accept: "text/plain" },
+          signal: ctrlJina.signal,
+        });
+        clearTimeout(timerJina);
+        if (jinaRes.ok) {
+          const jinaText = await jinaRes.text();
+          if (jinaText.length > 200) {
+            recovered = true;
+            pages.push({
+              url: currentUrl,
+              path: parsedCurrent.pathname,
+              status: 200,
+              title: baseHost,
+              metaDescription: "",
+              cleanText: jinaText,
+              html: `<html><head><title>${baseHost}</title></head><body><div class="jina-content">${jinaText}</div></body></html>`,
+              links: [],
+              fetchedAt: new Date().toISOString(),
+            });
+          }
+        }
+      } catch {
+        // non-blocking
+      }
+      if (!recovered) {
+        errors.push(`Failed to fetch ${currentUrl}: ${err.message || String(err)}`);
+      }
     }
   }
 

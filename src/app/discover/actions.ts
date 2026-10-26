@@ -241,14 +241,14 @@ export async function runLeadDiscoveryAction(
       marketId: market.id,
       actor: `${actorName} (${market.name})`,
       maxCandidates: targetCount,
-      concurrency: 6,
+      concurrency: 10,
       pagesPerCompany: 1,
       providerFilter: undefined,
     });
 
     const counters = await executeRun(db, runId, {
-      timeoutMs: 2800,
-      maxWallClockMs: 30000,
+      timeoutMs: 2500,
+      maxWallClockMs: targetCount <= 25 ? 65000 : targetCount <= 50 ? 120000 : 240000,
       autoEnrich: false,
     });
 

@@ -177,7 +177,7 @@ export async function executeRun(
 
   const limits = (run.limits as Record<string, any>) || {};
   const maxCandidates = limits.maxCandidates || 25;
-  const concurrency = Math.min(Math.max(limits.concurrency || 6, 1), 6);
+  const concurrency = Math.min(Math.max(limits.concurrency || 8, 1), 10);
   const pagesPerCompany = Math.min(limits.pagesPerCompany || 3, 6);
   const stopOnError = !!limits.stopOnError;
   const timeoutMs = runOpts?.timeoutMs ?? limits.timeoutMs ?? (run.mode === "test" ? 1000 : 2800);
@@ -210,6 +210,7 @@ export async function executeRun(
   };
 
   const companyIdsToResearch: string[] = [];
+  let baseQueryOffset = 0;
 
   // Step 1: Candidate intake according to mode
   if (run.mode === "stale") {
@@ -242,7 +243,7 @@ export async function executeRun(
     // Pull a larger candidate pool so filtering/deduping still yields the requested qualified count
     const poolLimit = runOpts?.mockPages
       ? maxCandidates
-      : Math.min(Math.max(Math.ceil(maxCandidates * 2), maxCandidates + 2), 40);
+      : Math.min(Math.max(Math.ceil(maxCandidates * 3.0), 40), 300);
 
     // Query existing domains for this market and past run count for query plan rotation
     const [existingDomainRows, priorRunRows] = await Promise.all([
@@ -260,7 +261,7 @@ export async function executeRun(
       .map((r) => r.domain?.toLowerCase())
       .filter(Boolean) as string[];
 
-    const queryOffset = Math.max(0, (priorRunRows.length - 1) * 3);
+    baseQueryOffset = Math.max(0, (priorRunRows.length - 1) * 3);
 
     const discovered = await executeDiscovery(
       db,
@@ -272,7 +273,7 @@ export async function executeRun(
         zips: ruleConfig.geography.zips,
         limit: poolLimit,
         excludeDomains,
-        queryOffset,
+        queryOffset: baseQueryOffset,
       },
       limits.providerFilter
     );
@@ -309,7 +310,7 @@ export async function executeRun(
   // Deduplicate target company IDs
   const maxPoolToInspect = runOpts?.mockPages
     ? maxCandidates
-    : Math.min(Math.max(maxCandidates * 2, maxCandidates + 2), 25);
+    : Math.min(Math.max(Math.ceil(maxCandidates * 3.0), 40), 300);
   const uniqueCompanyIds = Array.from(new Set(companyIdsToResearch)).slice(0, maxPoolToInspect);
 
   // Step 2: Create research jobs in DB in a single bulk insert
@@ -333,7 +334,7 @@ export async function executeRun(
 
   // Step 3: Run jobs with concurrency pool bounded to remaining wall clock time
   const remainingMs = Math.max(0, deadline - Date.now());
-  const jobDeadline = Date.now() + Math.max(remainingMs, 5_000);
+  const jobDeadline = Date.now() + Math.max(remainingMs, 50_000);
   let activeIndex = 0;
   let encounteredError: string | null = null;
 
@@ -412,6 +413,155 @@ export async function executeRun(
 
   const workers = Array.from({ length: concurrency }, () => worker());
   await Promise.all(workers);
+
+  // Step 4: Dynamic replenishment loop — if qualified leads < target, pull next batches until target reached
+  let replenishRound = 1;
+  while (
+    (counters.approvedCount || 0) < maxCandidates &&
+    Date.now() + 15_000 < jobDeadline &&
+    !runOpts?.mockPages &&
+    run.mode !== "stale" &&
+    run.mode !== "rejected" &&
+    run.mode !== "retry"
+  ) {
+    const needed = maxCandidates - (counters.approvedCount || 0);
+    const replenishLimit = Math.min(Math.max(Math.ceil(needed * 2.8), 25), 120);
+    const roundQueryOffset = baseQueryOffset + replenishRound * 4;
+    replenishRound++;
+
+    const freshDomainRows = await db
+      .select({ domain: companies.domain })
+      .from(companies)
+      .where(run.marketId ? eq(companies.marketId, run.marketId) : undefined);
+    const freshExcludes = freshDomainRows.map((r) => r.domain?.toLowerCase()).filter(Boolean) as string[];
+
+    const replenishDiscovered = await executeDiscovery(
+      db,
+      {
+        rule: ruleConfig,
+        keywords: ruleConfig.discovery.keywords,
+        states: ruleConfig.geography.states,
+        cities: ruleConfig.geography.cities,
+        zips: ruleConfig.geography.zips,
+        limit: replenishLimit,
+        excludeDomains: freshExcludes,
+        queryOffset: roundQueryOffset,
+      },
+      limits.providerFilter
+    );
+
+    if (replenishDiscovered.length === 0) break;
+    counters.totalCandidates += replenishDiscovered.length;
+
+    const replenishIntake = await createCandidatesBatch(
+      db,
+      replenishDiscovered.map((d) => ({
+        name: d.name,
+        website: d.website,
+        phone: d.phone,
+        address: d.street,
+        city: d.city,
+        state: d.state,
+        zip: d.zip,
+        provider: d.provider,
+        providerRef: d.providerRef,
+      })),
+      { actor: run.actor || "Discovery Runner", marketId: run.marketId ?? undefined }
+    );
+
+    counters.createdCompanies += replenishIntake.createdCount;
+    counters.duplicatesMerged += replenishIntake.duplicateCount;
+    counters.excludedCount += replenishIntake.excludedCount;
+
+    const roundCompanyIds = Array.from(new Set([...replenishIntake.createdIds, ...replenishIntake.duplicateIds]));
+    if (roundCompanyIds.length === 0) break;
+
+    const roundJobIds: string[] = [];
+    const insertedRound = await db
+      .insert(researchJobs)
+      .values(
+        roundCompanyIds.map((cid) => ({
+          runId,
+          companyId: cid,
+          kind: "research",
+          status: "QUEUED",
+        }))
+      )
+      .returning({ id: researchJobs.id });
+    for (const j of insertedRound) {
+      roundJobIds.push(j.id);
+    }
+
+    let roundActiveIndex = 0;
+    async function roundWorker() {
+      while (roundActiveIndex < roundCompanyIds.length) {
+        if (stopOnError && encounteredError) break;
+        if ((counters.approvedCount || 0) >= maxCandidates) break;
+        if (Date.now() >= jobDeadline) break;
+
+        const idx = roundActiveIndex++;
+        const companyId = roundCompanyIds[idx];
+        const jobId = roundJobIds[idx];
+        if (!companyId || !jobId) continue;
+
+        await db
+          .update(researchJobs)
+          .set({ status: "RUNNING", startedAt: new Date() })
+          .where(eq(researchJobs.id, jobId));
+
+        try {
+          const result: ResearchResult = await researchCompany(db, companyId, {
+            runId,
+            ruleConfig,
+            maxPages: pagesPerCompany,
+            timeoutMs,
+            actor: runActor,
+          });
+
+          counters.completedJobs++;
+          counters.factsRecorded += result.factsRecorded;
+          counters.contactsDiscovered += result.contactsDiscovered;
+
+          if (result.status === "APPROVED" || result.status === "NEEDS_REVIEW") {
+            counters.approvedCount = (counters.approvedCount || 0) + 1;
+            counters.qualifiedCompanyIds?.push(companyId);
+          }
+
+          if (runOpts?.autoEnrich && result.status !== "DISQUALIFIED" && Date.now() + 2000 < jobDeadline) {
+            try {
+              const { enrichCompany } = await import("../enrichment/pipeline");
+              await enrichCompany(db, companyId, { actor: `${runActor} (Auto-Enrich)` });
+            } catch {
+              // Non-blocking
+            }
+          }
+
+          await db
+            .update(researchJobs)
+            .set({
+              status: "COMPLETED",
+              finishedAt: new Date(),
+              result: result as any,
+            })
+            .where(eq(researchJobs.id, jobId));
+        } catch (err: any) {
+          counters.failedJobs++;
+          encounteredError = err.message || String(err);
+          await db
+            .update(researchJobs)
+            .set({
+              status: "FAILED",
+              finishedAt: new Date(),
+              lastError: encounteredError,
+            })
+            .where(eq(researchJobs.id, jobId));
+        }
+      }
+    }
+
+    const roundWorkers = Array.from({ length: concurrency }, () => roundWorker());
+    await Promise.all(roundWorkers);
+  }
 
   // Finalize run
   const finalStatus =

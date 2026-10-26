@@ -88,6 +88,43 @@ export const EXCLUDED_AGGREGATOR_DOMAINS = [
   "opencorporates.com",
   "bizapedia.com",
   "buzzfile.com",
+  "datanyze.com",
+  "businesswire.com",
+  "pdf4pro.com",
+  "thesolardirectory.com",
+  "seamless.ai",
+  "npino.com",
+  "unpan.org",
+  "allbiz.com",
+  "rocketreach.co",
+  "apollo.io",
+  "upcity.com",
+  "goodfirms.co",
+  "yelp.com",
+  "dexknows.com",
+  "cylex.us.com",
+  "ezlocal.com",
+  "citysquares.com",
+  "hotfrog.com",
+  "brownbook.net",
+  "hub.biz",
+  "us-business.info",
+  "opengovus.com",
+  "corporationwiki.com",
+  "bizstanding.com",
+  "b2bhint.com",
+  "company-detail.com",
+  "find-us-here.com",
+  "showmelocal.com",
+  "local.com",
+  "pr.com",
+  "prnewswire.com",
+  "globenewswire.com",
+  "openpr.com",
+  "24-7pressrelease.com",
+  "issuewire.com",
+  "einpresswire.com",
+  "newstracklive.com",
 ];
 
 export const STATE_NAMES: Record<string, string> = {
@@ -169,8 +206,8 @@ export class TavilyAdapter implements DiscoveryAdapter {
     );
 
     const offset = Math.abs(query.queryOffset ?? 0) % plan.length;
-    const batchSize = 3;
-    const maxBatches = 2; // up to 6 queries total
+    const batchSize = 5;
+    const maxBatches = Math.min(Math.max(Math.ceil(query.limit / 15), 2), 4);
 
     for (let batch = 0; batch < maxBatches; batch++) {
       if (candidates.length >= query.limit) break;
@@ -215,7 +252,7 @@ export class TavilyAdapter implements DiscoveryAdapter {
       }
 
       // If we already have enough candidates to satisfy requested limit, don't execute next batch
-      if (candidates.length >= Math.min(query.limit, 15)) break;
+      if (candidates.length >= query.limit) break;
     }
 
     return candidates;

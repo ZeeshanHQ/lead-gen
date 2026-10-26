@@ -10,7 +10,7 @@ import { POST_APPROVAL } from "@/server/domain/lifecycle";
 import { LeadProspector } from "./lead-prospector";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 function passesLeadRowGate(lead: LeadRow, gate: LeadGate): boolean {
   if (!lead || !gate) return true;

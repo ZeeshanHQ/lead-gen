@@ -254,9 +254,14 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
     // 4. Narrative Prose & Bio extraction: "Founded in 1999 by David Miller", "Owned and operated by Mike Smith"
     const narrativePatterns = [
       {
-        regex: /(?:founded|started|established)\s+(?:in\s+\d{4}\s+)?by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})/i,
+        regex: /(?:founded|started|established|launched)\s+(?:the\s+firm|the\s+company|the\s+agency|the\s+brokerage)?\s*(?:in\s+\d{4}\s+)?by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})/i,
         defaultTitle: "Founder / Owner",
-        confidence: 0.92,
+        confidence: 0.94,
+      },
+      {
+        regex: /\b([A-Z][a-z]+(?:\s+and\s+[A-Z][a-z]+)?\s+[A-Z][a-z]+),?\s+(?:two\s+[\w\s]+,?\s+)?(?:founded|launched|started|established)\s+(?:the\s+firm|the\s+company|the\s+agency|the\s+brokerage|the\s+business)\b/i,
+        defaultTitle: "Founder / Principal",
+        confidence: 0.94,
       },
       {
         regex: /(?:owned\s+(?:and|&)\s+operated\s+by)\s+(?:the\s+[A-Z][a-z]+\s+family,?\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})/i,
@@ -278,21 +283,76 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
         defaultTitle: "Owner",
         confidence: 0.90,
       },
+      {
+        regex: /(?:led|headed|directed|managed)\s+by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})/i,
+        defaultTitle: "Team Lead / Principal",
+        confidence: 0.92,
+      },
+      {
+        regex: /(?:team\s+leader|team\s+lead|managing\s+director|broker\s+associate|designated\s+broker|principal\s+broker)\s*[:–-]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})/i,
+        defaultTitle: "Managing Broker / Principal",
+        confidence: 0.93,
+      },
     ];
 
     for (const np of narrativePatterns) {
       const match = np.regex.exec(text);
       if (match && match[1]) {
-        const cleanedName = cleanPersonName(match[1]);
-        if (cleanedName && !seenNames.has(cleanedName.toLowerCase())) {
-          seenNames.add(cleanedName.toLowerCase());
-          candidates.push({
-            fullName: cleanedName,
-            title: np.defaultTitle,
-            confidence: np.confidence,
-            sourceUrl: page.url,
-          });
+        const rawName = match[1].trim();
+        const names = /\s+(?:and|&)\s+/i.test(rawName)
+          ? (() => {
+              const parts = rawName.split(/\s+(?:and|&)\s+/i);
+              const lastPart = parts[parts.length - 1] ?? "";
+              const lastName = lastPart.trim().split(/\s+/).pop() ?? "";
+              return parts.map((p) => (p.trim().includes(" ") ? p.trim() : `${p.trim()} ${lastName}`));
+            })()
+          : [rawName];
+
+        for (const nm of names) {
+          const cleanedName = cleanPersonName(nm);
+          if (cleanedName && !seenNames.has(cleanedName.toLowerCase())) {
+            seenNames.add(cleanedName.toLowerCase());
+            candidates.push({
+              fullName: cleanedName,
+              title: np.defaultTitle,
+              confidence: np.confidence,
+              sourceUrl: page.url,
+            });
+          }
         }
+      }
+    }
+
+    // 5. Markdown team / agent links from Jina Reader or markdown pages
+    const mdRegex = /\*\s+\[([A-Z][a-z]+ [A-Z][a-z]+)\]\(https?:\/\/[^\s)]*(?:team|agent|bio|profile|about)[^\s)]*\)/gi;
+    let mdMatch;
+    while ((mdMatch = mdRegex.exec(text)) !== null) {
+      if (!mdMatch[1]) continue;
+      const clean = cleanPersonName(mdMatch[1]);
+      if (clean && !seenNames.has(clean.toLowerCase())) {
+        seenNames.add(clean.toLowerCase());
+        candidates.push({
+          fullName: clean,
+          title: "Licensed Agent / Broker",
+          confidence: 0.90,
+          sourceUrl: page.url,
+        });
+      }
+    }
+
+    // 6. Brand name extraction: If page title has "The John Doe Team" or "John Doe & Associates" or "John Doe Group"
+    const brandPattern = /^(?:Meet\s+(?:the\s+|our\s+team\s+at\s+)?|The\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+(?:Group|Team|& Associates|Associates|Realty|Real Estate|Partners|Properties|Brokerage|Advisors)\b/i;
+    const brandMatch = brandPattern.exec(page.title);
+    if (brandMatch && brandMatch[1]) {
+      const cleanBrandLead = cleanPersonName(brandMatch[1]);
+      if (cleanBrandLead && !seenNames.has(cleanBrandLead.toLowerCase()) && text.includes(cleanBrandLead)) {
+        seenNames.add(cleanBrandLead.toLowerCase());
+        candidates.push({
+          fullName: cleanBrandLead,
+          title: "Principal Broker / Founder",
+          confidence: 0.94,
+          sourceUrl: page.url,
+        });
       }
     }
   }

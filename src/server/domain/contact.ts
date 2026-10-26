@@ -69,7 +69,7 @@ export function classifyTitle(title: string | null | undefined): RoleClass {
   if (/general\s+manager|\bgm\b|managing\s+broker|principal\s+broker|designated\s+broker/.test(t)) return "general_manager";
   if (/operations?\s+(manager|director)|\bcoo\b|director of operations|property\s+manager/.test(t))
     return "operations_manager";
-  if (/sales\s+(manager|director)|director of sales|comfort\s+advisor\s+manager|\bbroker\b|\brealtor\b|licensed\s+(?:real\s+estate\s+)?agent|broker\s+associate/.test(t))
+  if (/sales\s+(manager|director)|director of sales|comfort\s+advisor\s+manager|\bbroker\b|\brealtor\b|licensed\s+(?:real\s+estate\s+)?agent|broker\s+associate|team\s+lead(?:er)?/.test(t))
     return "sales_manager";
   return "other";
 }
