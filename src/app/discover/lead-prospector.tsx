@@ -156,6 +156,12 @@ export function LeadProspector({
   const [editMinScore, setEditMinScore] = useState<number>(
     initialRule?.scoring?.minScore ?? 60
   );
+  const [editMinEmployees, setEditMinEmployees] = useState<number | null>(
+    initialRule?.size?.minEmployees ?? null
+  );
+  const [editMaxEmployees, setEditMaxEmployees] = useState<number | null>(
+    initialRule?.size?.maxEmployees ?? null
+  );
   const [savingFilters, setSavingFilters] = useState(false);
 
   // Manual URL accordion toggle
@@ -178,6 +184,8 @@ export function LeadProspector({
         setEditKeywords(activeMarket.keywords.join(", "));
       }
       setEditMinScore(initialRule.scoring?.minScore ?? 60);
+      setEditMinEmployees(initialRule.size?.minEmployees ?? null);
+      setEditMaxEmployees(initialRule.size?.maxEmployees ?? null);
       setGate(resolveGate(initialGate ?? initialRule.gate));
     }
     if (initialLeads) {
@@ -221,6 +229,8 @@ export function LeadProspector({
           setEditKeywords((res as any).market.keywords.join(", "));
         }
         setEditMinScore(res.rule.scoring?.minScore ?? 60);
+        setEditMinEmployees(res.rule.size?.minEmployees ?? null);
+        setEditMaxEmployees(res.rule.size?.maxEmployees ?? null);
         setGate(resolveGate((res.rule as any).gate));
       }
     });
@@ -352,6 +362,8 @@ export function LeadProspector({
           cities: citiesArr,
           minScore: editMinScore,
           gate,
+          minEmployees: editMinEmployees,
+          maxEmployees: editMaxEmployees,
         });
 
         if (res.ok) {
@@ -498,6 +510,8 @@ export function LeadProspector({
       minScore: editMinScore,
       keywords: kwsArr,
       gate,
+      minEmployees: editMinEmployees,
+      maxEmployees: editMaxEmployees,
     });
     setSavingFilters(false);
 
@@ -592,7 +606,7 @@ export function LeadProspector({
               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition shadow-sm"
             >
               <SlidersHorizontal className="w-3.5 h-3.5 text-zinc-400" />
-              <span>{isEditingFilters ? "Close Targeting" : "Edit Locations & Keywords"}</span>
+              <span>{isEditingFilters ? "Close Targeting" : "Edit Targeting & Team Size"}</span>
             </button>
             <Link
               href="/caller"
@@ -804,6 +818,46 @@ export function LeadProspector({
               </div>
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-1 border-t border-zinc-800/60">
+              <div className="space-y-1.5">
+                <label className="text-zinc-300 font-medium flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Min Team Size / Staff</span>
+                  </span>
+                  <span className="text-zinc-500 font-normal">e.g. 5 (filter out 1-person solos)</span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="500"
+                  value={editMinEmployees ?? ""}
+                  onChange={(e) => setEditMinEmployees(e.target.value ? Number(e.target.value) : null)}
+                  placeholder="e.g. 5"
+                  className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-zinc-300 font-medium flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Max Team Size / Staff</span>
+                  </span>
+                  <span className="text-zinc-500 font-normal">e.g. 50 (boutique sweet-spot)</span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="1000"
+                  value={editMaxEmployees ?? ""}
+                  onChange={(e) => setEditMaxEmployees(e.target.value ? Number(e.target.value) : null)}
+                  placeholder="e.g. 50 (leave empty for no upper limit)"
+                  className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
+                />
+              </div>
+            </div>
+
             <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-zinc-800/80">
               <button
                 type="button"
@@ -826,7 +880,7 @@ export function LeadProspector({
         )}
 
         {/* Active Rules Snapshot Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 p-3.5 rounded-xl bg-[#09090b] border border-zinc-800 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 p-3.5 rounded-xl bg-[#09090b] border border-zinc-800 text-xs">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
               <MapPin className="w-3.5 h-3.5 text-zinc-400" />
@@ -875,6 +929,19 @@ export function LeadProspector({
                   .map((f) => GATE_META[f].shortLabel)
                   .join(" + ") || "Score"}{" "}
                 &bull; &ge;{minScore}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
+              <Users className="w-3.5 h-3.5 text-cyan-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Target Team Size</div>
+              <div className="text-zinc-200 font-medium truncate">
+                {editMinEmployees ? `${editMinEmployees}+` : "1+"}
+                {editMaxEmployees ? ` to ${editMaxEmployees}` : "+"} Staff
               </div>
             </div>
           </div>

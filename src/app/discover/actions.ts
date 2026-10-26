@@ -155,6 +155,8 @@ export async function runLeadDiscoveryAction(
     keywords?: string[];
     minScore?: number;
     gate?: Partial<LeadGate>;
+    minEmployees?: number | null;
+    maxEmployees?: number | null;
   } = {}
 ) {
   const startedAtMs = Date.now();
@@ -195,6 +197,14 @@ export async function runLeadDiscoveryAction(
         : [market.name];
     const minScoreToUse: number =
       options.minScore !== undefined ? options.minScore : ruleConfig?.scoring?.minScore ?? 60;
+    const minEmployeesToUse: number | null =
+      options.minEmployees !== undefined
+        ? options.minEmployees
+        : ruleConfig?.size?.minEmployees ?? null;
+    const maxEmployeesToUse: number | null =
+      options.maxEmployees !== undefined
+        ? options.maxEmployees
+        : ruleConfig?.size?.maxEmployees ?? null;
 
     // Update rule config if user has permission
     if (
@@ -203,6 +213,8 @@ export async function runLeadDiscoveryAction(
         (options.states && options.states.length > 0) ||
         options.minScore !== undefined ||
         (options.keywords && options.keywords.length > 0) ||
+        options.minEmployees !== undefined ||
+        options.maxEmployees !== undefined ||
         options.gate !== undefined)
     ) {
       ruleConfig = {
@@ -219,6 +231,11 @@ export async function runLeadDiscoveryAction(
         scoring: {
           ...ruleConfig.scoring,
           minScore: minScoreToUse,
+        },
+        size: {
+          ...ruleConfig.size,
+          minEmployees: minEmployeesToUse,
+          maxEmployees: maxEmployeesToUse,
         },
         gate: mergedGate,
       };
@@ -516,6 +533,8 @@ export async function updateRuleTargetingAction(params: {
   minScore: number;
   keywords?: string[];
   gate?: Partial<LeadGate>;
+  minEmployees?: number | null;
+  maxEmployees?: number | null;
 }) {
   try {
     const db = await getDb();
@@ -545,6 +564,11 @@ export async function updateRuleTargetingAction(params: {
       scoring: {
         ...cfg.scoring,
         minScore: params.minScore,
+      },
+      size: {
+        ...cfg.size,
+        minEmployees: params.minEmployees !== undefined ? params.minEmployees : cfg.size?.minEmployees ?? null,
+        maxEmployees: params.maxEmployees !== undefined ? params.maxEmployees : cfg.size?.maxEmployees ?? null,
       },
       gate: mergedGate,
     };
