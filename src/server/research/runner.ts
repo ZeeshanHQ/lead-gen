@@ -244,6 +244,24 @@ export async function executeRun(
       ? maxCandidates
       : Math.min(Math.max(Math.ceil(maxCandidates * 2), maxCandidates + 2), 40);
 
+    // Query existing domains for this market and past run count for query plan rotation
+    const [existingDomainRows, priorRunRows] = await Promise.all([
+      db
+        .select({ domain: companies.domain })
+        .from(companies)
+        .where(run.marketId ? eq(companies.marketId, run.marketId) : undefined),
+      db
+        .select({ id: researchRuns.id })
+        .from(researchRuns)
+        .where(run.marketId ? eq(researchRuns.marketId, run.marketId) : undefined),
+    ]);
+
+    const excludeDomains = existingDomainRows
+      .map((r) => r.domain?.toLowerCase())
+      .filter(Boolean) as string[];
+
+    const queryOffset = Math.max(0, (priorRunRows.length - 1) * 3);
+
     const discovered = await executeDiscovery(
       db,
       {
@@ -253,6 +271,8 @@ export async function executeRun(
         cities: ruleConfig.geography.cities,
         zips: ruleConfig.geography.zips,
         limit: poolLimit,
+        excludeDomains,
+        queryOffset,
       },
       limits.providerFilter
     );

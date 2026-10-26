@@ -135,9 +135,17 @@ export class TavilyAdapter implements DiscoveryAdapter {
       states: query.states,
       cities: query.cities,
     });
+    if (plan.length === 0) return [];
+
     // Return enough queries to satisfy the requested limit in 1 parallel batch
     const maxQueries = Math.min(Math.max(Math.ceil((query.limit || 25) / 10), 2), 3);
-    return plan.slice(0, maxQueries);
+    const offset = Math.abs(query.queryOffset ?? 0) % plan.length;
+
+    const selected: typeof plan = [];
+    for (let i = 0; i < maxQueries; i++) {
+      selected.push(plan[(offset + i) % plan.length]!);
+    }
+    return selected;
   }
 
   async discover(query: DiscoveryQuery, config: Record<string, unknown>): Promise<DiscoveredCandidate[]> {
@@ -150,7 +158,10 @@ export class TavilyAdapter implements DiscoveryAdapter {
 
     const searchQueries = this.generateQueries(query);
     const candidates: DiscoveredCandidate[] = [];
-    const seenDomains = new Set<string>();
+    // Seed seenDomains with existing database domains so previously acquired leads are NEVER re-added
+    const seenDomains = new Set<string>(
+      (query.excludeDomains ?? []).map((d) => d.toLowerCase().replace(/^www\./, ""))
+    );
 
     // Execute planned queries in parallel batches of 4 to minimize total discovery latency
     const batchSize = 4;
@@ -163,6 +174,7 @@ export class TavilyAdapter implements DiscoveryAdapter {
           runPlannedQuery(q, apiKey, {
             maxResults: Math.min(Math.max(query.limit, 12), 20),
             seenDomains,
+            excludeDomains: query.excludeDomains,
             timeoutMs: 3200,
           })
         )

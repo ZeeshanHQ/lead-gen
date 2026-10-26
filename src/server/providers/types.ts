@@ -18,6 +18,8 @@ export interface DiscoveryQuery {
   cities: string[];
   zips: string[];
   limit: number;
+  excludeDomains?: string[];
+  queryOffset?: number;
 }
 
 export interface DiscoveredCandidate {

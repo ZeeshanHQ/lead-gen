@@ -41,6 +41,9 @@ const TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> 
   (kw, city, st) => `${kw} in ${city}, ${st}`,
   (kw, city, st) => `${kw} company official website phone number ${city} ${st}`,
   (kw, city, st) => `${kw} ${city} ${st} contact us meet our team`,
+  (kw, city, st) => `${kw} local services commercial residential ${city} ${st}`,
+  (kw, city, st) => `${kw} top rated local business ${city} ${st} official website`,
+  (kw, city, st) => `${kw} specialists office location ${city} ${st}`,
 ];
 
 /** Ordered, deterministic list of search queries for the owner's targeting. */
@@ -170,9 +173,21 @@ export class SearchProviderError extends Error {
 export async function runPlannedQuery(
   item: PlannedQuery,
   apiKey: string,
-  opts: { maxResults?: number; seenDomains?: Set<string>; timeoutMs?: number } = {},
+  opts: {
+    maxResults?: number;
+    seenDomains?: Set<string>;
+    excludeDomains?: string[];
+    timeoutMs?: number;
+  } = {},
 ): Promise<DiscoveredCandidate[]> {
   const seen = opts.seenDomains ?? new Set<string>();
+
+  const dynamicExcludes = Array.from(
+    new Set([
+      ...EXCLUDED_AGGREGATOR_DOMAINS,
+      ...(opts.excludeDomains ?? []).map((d) => d.toLowerCase().replace(/^www\./, "")).slice(0, 80),
+    ])
+  );
 
   const response = await fetch("https://api.tavily.com/search", {
     method: "POST",
@@ -182,7 +197,7 @@ export async function runPlannedQuery(
       query: item.queryText,
       search_depth: "basic",
       max_results: Math.min(Math.max(opts.maxResults ?? 10, 1), 20),
-      exclude_domains: EXCLUDED_AGGREGATOR_DOMAINS,
+      exclude_domains: dynamicExcludes,
     }),
     signal: AbortSignal.timeout(opts.timeoutMs ?? 12_000),
   });
