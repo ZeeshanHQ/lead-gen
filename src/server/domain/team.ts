@@ -33,6 +33,105 @@ export interface TeamMember {
   lastActiveAt?: string | null;
 }
 
+export interface MemberPresenceInfo {
+  state: "online" | "idle" | "offline" | "invited";
+  label: string;
+  detail: string;
+  color: "emerald" | "amber" | "zinc" | "rose";
+  isLive: boolean;
+}
+
+export function getMemberLivePresence(
+  lastActiveAt?: string | null,
+  status: MemberStatus = "ACTIVE"
+): MemberPresenceInfo {
+  if (status === "SUSPENDED") {
+    return {
+      state: "offline",
+      label: "Paused",
+      detail: "Suspended by admin",
+      color: "rose",
+      isLive: false,
+    };
+  }
+  if (status === "INVITED") {
+    return {
+      state: "invited",
+      label: "Pending Invite",
+      detail: "Invite not accepted",
+      color: "amber",
+      isLive: false,
+    };
+  }
+  if (!lastActiveAt) {
+    return {
+      state: "offline",
+      label: "Offline",
+      detail: "Never logged in",
+      color: "zinc",
+      isLive: false,
+    };
+  }
+
+  const lastMs = new Date(lastActiveAt).getTime();
+  if (isNaN(lastMs)) {
+    return {
+      state: "offline",
+      label: "Offline",
+      detail: "Never logged in",
+      color: "zinc",
+      isLive: false,
+    };
+  }
+
+  const diffMs = Math.max(0, Date.now() - lastMs);
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  // Active within last 5 minutes -> Online Now!
+  if (diffMinutes < 5) {
+    return {
+      state: "online",
+      label: "Active now",
+      detail: "Online in workspace",
+      color: "emerald",
+      isLive: true,
+    };
+  }
+
+  // Inactive between 5 and 60 minutes
+  if (diffMinutes < 60) {
+    return {
+      state: "idle",
+      label: `Inactive for ${diffMinutes}m`,
+      detail: `Last active ${diffMinutes} min ago`,
+      color: "amber",
+      isLive: false,
+    };
+  }
+
+  // Inactive between 1 and 24 hours
+  if (diffHours < 24) {
+    return {
+      state: "offline",
+      label: `Inactive for ${diffHours}h`,
+      detail: `Last active ${diffHours} hr${diffHours > 1 ? "s" : ""} ago`,
+      color: "zinc",
+      isLive: false,
+    };
+  }
+
+  // Inactive for days
+  return {
+    state: "offline",
+    label: `Inactive for ${diffDays}d`,
+    detail: `Last active ${diffDays} day${diffDays > 1 ? "s" : ""} ago`,
+    color: "zinc",
+    isLive: false,
+  };
+}
+
 export interface RolePresetMeta {
   role: TeamRole;
   label: string;

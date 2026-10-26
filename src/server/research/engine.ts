@@ -36,6 +36,7 @@ export function buildColdCallerBattlecard(params: {
   facts: FactMap;
   score: number;
   nicheName?: string;
+  keywords?: string[];
 }): { summary: string; notes: string } {
   const dmName = params.primaryContact?.name;
   const dmTitle = params.primaryContact?.title || "Owner / Managing Principal";
@@ -43,7 +44,24 @@ export function buildColdCallerBattlecard(params: {
   const state = params.state || "";
   const location = state ? `${city}, ${state}` : city;
   const nicheName = params.nicheName || "Target Industry";
-  const isHvac = /hvac|heating|air conditioning|cooling/i.test(nicheName);
+  const lowerNiche = nicheName.toLowerCase();
+  const kwList = (params.keywords || []).map((k) => k.toLowerCase());
+
+  const isHvac =
+    /hvac|heating|air conditioning|cooling|plumbing|roofing|electric|contractor/i.test(lowerNiche) ||
+    kwList.some((k) => /hvac|heating|cooling|plumbing|roofing|electric/i.test(k));
+
+  const isRealEstate =
+    /real estate|property management|realty|realtor|brokerage|leasing/i.test(lowerNiche) ||
+    kwList.some((k) => /real estate|property|realty|rental|tenant|listing/i.test(k));
+
+  const isMedical =
+    /medical|clinic|healthcare|doctor|physician|dental|dentist|wellness/i.test(lowerNiche) ||
+    kwList.some((k) => /clinic|patient|dental|medical|health/i.test(k));
+
+  const isLegal =
+    /law|legal|attorney|lawyer/i.test(lowerNiche) ||
+    kwList.some((k) => /law|legal|attorney/i.test(k));
 
   const f = params.facts;
   const hasReplacement = f.replacement?.value === "YES" || f.installation?.value === "YES";
@@ -63,12 +81,20 @@ export function buildColdCallerBattlecard(params: {
     bullets.push(`Reputation: Verified Strong Public Presence & Local Reviews`);
   }
 
-  if (isHvac) {
+  if (isRealEstate) {
+    bullets.push(`Focus: Verified Real Estate & Property Management Services`);
+  } else if (isHvac) {
     if (hasReplacement) bullets.push(`Focus: Residential HVAC Replacement & Installs`);
+    else bullets.push(`Focus: Verified Mechanical & Home Services (${nicheName})`);
+  } else if (isMedical) {
+    bullets.push(`Focus: Verified Healthcare & Clinical Patient Practice`);
+  } else if (isLegal) {
+    bullets.push(`Focus: Legal Representation & Client Consultations`);
   } else {
-    if (hasReplacement) bullets.push(`Focus: Verified High-Value Core Services (${nicheName})`);
+    bullets.push(`Focus: Verified Core Services (${nicheName})`);
   }
-  if (hasFinancing) bullets.push(`Financing / Plans: Active client financing or payment plans verified`);
+
+  if (hasFinancing) bullets.push(`Financing / Payment Plans: Active client financing verified`);
   if (isHiring) bullets.push(`Growth Signal: Actively recruiting staff / expanding team`);
   if (software) bullets.push(`Tech Stack: Uses ${software} for operations / scheduling`);
   if (brandSnippet) bullets.push(`Authority: ${brandSnippet}`);
@@ -78,19 +104,33 @@ export function buildColdCallerBattlecard(params: {
   const repHook = hasStrongPresence ? " and solid local reputation" : "";
 
   let script: string;
-  if (isHvac) {
+  if (isRealEstate) {
+    const hookPain = isHiring
+      ? "with agents busy showing properties in the field, open listing inquiries and rental application requests often sit for hours, losing qualified deals"
+      : "after-hours listing inquiries and buyer/tenant requests often wait until the next day, losing high-intent deals to competing brokerages";
+    script = `${targetGreeting}, noticed ${params.companyName} manages active property listings and real estate client operations in ${location}${repHook}. The reason for my call: established real estate and property management principals tell us that ${hookPain}. We deploy custom backend AI intake engines that qualify inbound buyer, seller, and tenant leads and book appointments onto your calendar 24/7. Do you guys currently have an automated instant response system for your property inquiries?`;
+  } else if (isHvac) {
     const hookService = hasReplacement ? "residential system replacements" : "residential HVAC";
     const hookPain = isHiring
       ? "with lead techs swamped in the field, open replacement quotes take days before dispatchers follow up, losing big-ticket installs"
       : software
       ? `using ${software}, inbound quote triage and after-hours estimate follow-ups often fall through the cracks`
       : "after-hours replacement estimates sit idle before dispatchers can follow up, losing high-ticket installs to competitors";
-    script = `${targetGreeting}, noticed your team handles ${hookService} in ${location}${repHook}${hasFinancing ? " with customer financing" : ""}. The reason for my call: a lot of established HVAC owners in the area tell us that ${hookPain}. We build custom backend AI agents for contractors to automatically follow up on and book open replacement estimates. Do you guys currently have an automated follow-up system in place for your open installation bids?`;
-  } else {
+    script = `${targetGreeting}, noticed your team handles ${hookService} in ${location}${repHook}${hasFinancing ? " with customer financing" : ""}. The reason for my call: a lot of established trade owners in the area tell us that ${hookPain}. We build custom backend AI agents for contractors to automatically follow up on and book open replacement estimates. Do you guys currently have an automated follow-up system in place for your open installation bids?`;
+  } else if (isMedical) {
     const hookPain = isHiring
-      ? "as the team grows, inbound inquiries and after-hours consultations often wait hours before a follow-up, losing high-value clients"
-      : "inbound web inquiries and open consultations often sit idle after hours before staff can follow up and book them";
-    script = `${targetGreeting}, noticed ${params.companyName} is a leading ${nicheName} group in ${location}${repHook}. The reason for my call: many top ${nicheName} leaders tell us that ${hookPain}. We deploy custom AI intake & follow-up engines that qualify and book inbound leads onto your calendar 24/7. Do you currently have an automated instant follow-up system for your inbound inquiries?`;
+      ? "front-desk staff are overwhelmed with patient check-ins, meaning inbound consultation inquiries and callback requests get delayed"
+      : "after-hours patient consultation requests and online appointment inquiries often sit unconfirmed overnight, leading to no-shows";
+    script = `${targetGreeting}, noticed ${params.companyName} provides specialized healthcare and clinical care in ${location}${repHook}. The reason for my call: clinical directors tell us that ${hookPain}. We deploy HIPAA-compliant AI intake assistants that answer questions, triage inquiries, and schedule qualified consultations 24/7. Does your clinic currently use automated 24/7 intake for new patient inquiries?`;
+  } else if (isLegal) {
+    const hookPain = "prospective clients seeking urgent legal counsel contact multiple firms at once, and whoever responds first secures the retainer";
+    script = `${targetGreeting}, noticed ${params.companyName} handles legal counsel and client representation in ${location}${repHook}. The reason for my call: managing partners tell us that ${hookPain}. We deploy secure AI client intake systems that screen potential matters and book qualified consultations onto your calendar 24/7. Do you currently have an automated instant intake system in place for your prospective client inquiries?`;
+  } else {
+    const serviceSnippet = params.keywords && params.keywords.length > 0 ? params.keywords.slice(0, 2).join(" and ") : nicheName;
+    const hookPain = isHiring
+      ? "as your team scales, inbound inquiries and quotation requests often wait hours before a follow-up, losing high-value clients"
+      : "inbound web inquiries and consultation requests often sit idle after hours before staff can follow up and book them";
+    script = `${targetGreeting}, noticed ${params.companyName} is an established provider of ${serviceSnippet} in ${location}${repHook}. The reason for my call: many top leaders in your space tell us that ${hookPain}. We deploy custom AI intake & follow-up engines that qualify and book inbound leads onto your calendar 24/7. Do you currently have an automated instant follow-up system for your inbound inquiries?`;
   }
 
   const summary = bullets.join(" · ");
@@ -426,6 +466,11 @@ export async function researchCompany(
   updates.status = finalStatus;
 
   // Synthesize Cold Caller Battlecard & 15-second opening pitch hook
+  const marketCfg = (marketRow?.config as Record<string, unknown>) || {};
+  const kwList = [
+    ...(Array.isArray(activeRule?.discovery?.keywords) ? activeRule.discovery.keywords : []),
+    ...(Array.isArray(marketCfg.keywords) ? (marketCfg.keywords as string[]) : []),
+  ];
 
   const battlecard = buildColdCallerBattlecard({
     companyName: refreshed.name,
@@ -435,6 +480,7 @@ export async function researchCompany(
     facts: (refreshed.facts as FactMap) || {},
     score: scoreBreakdown.icpScore,
     nicheName: marketRow?.name,
+    keywords: kwList,
   });
 
   updates.researchSummary = battlecard.summary;

@@ -131,9 +131,15 @@ export async function listMarkets(db: Db, tenantId?: string): Promise<MarketView
   for (const sc of statusCounts) {
     const entry = countMap.get(sc.marketId) ?? { total: 0, review: 0, approved: 0 };
     const n = Number(sc.n);
-    entry.total += n;
-    if (REVIEWABLE.includes(sc.status as any)) entry.review += n;
-    if (POST_APPROVAL.includes(sc.status as any)) entry.approved += n;
+    // Only count approved leads in CRM and pending review leads in staging as real leads
+    // Disqualified and Rejected rows are discarded crawl attempts, NOT valid leads
+    if (POST_APPROVAL.includes(sc.status as any)) {
+      entry.approved += n;
+      entry.total += n;
+    } else if (REVIEWABLE.includes(sc.status as any)) {
+      entry.review += n;
+      entry.total += n;
+    }
     countMap.set(sc.marketId, entry);
   }
 
@@ -155,7 +161,7 @@ export async function listMarkets(db: Db, tenantId?: string): Promise<MarketView
       category,
       icon,
       keywords,
-      leadCount: c.total,
+      leadCount: c.approved,
       reviewCount: c.review,
       approvedCount: c.approved,
     };

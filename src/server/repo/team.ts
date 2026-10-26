@@ -103,6 +103,22 @@ export async function listTeamMembers(db: Db): Promise<TeamMember[]> {
   });
 }
 
+export async function touchMemberActivity(db: Db, memberId: string): Promise<void> {
+  if (!memberId || memberId === "guest") return;
+  const allMembers = await listTeamMembers(db);
+  const target = allMembers.find((m) => m.id === memberId);
+  if (!target || target.status === "SUSPENDED") return;
+
+  const lastMs = target.lastActiveAt ? new Date(target.lastActiveAt).getTime() : 0;
+  // Throttle updates: write at most once per 60 seconds
+  if (Date.now() - lastMs < 60 * 1000) return;
+
+  const nextList = allMembers.map((m) =>
+    m.id === memberId ? { ...m, lastActiveAt: new Date().toISOString() } : m
+  );
+  await writeSettingRaw(db, "team_members_registry", nextList);
+}
+
 export async function getActiveTeamMember(db: Db): Promise<{
   activeMember: TeamMember;
   allMembers: TeamMember[];
@@ -111,6 +127,11 @@ export async function getActiveTeamMember(db: Db): Promise<{
   const sessionId = await getMemberCookieId();
   const activeMember =
     allMembers.find((m) => m.id === sessionId && m.status !== "SUSPENDED") ?? GUEST_MEMBER;
+
+  if (activeMember && activeMember.id !== "guest") {
+    touchMemberActivity(db, activeMember.id).catch(() => {});
+  }
+
   return { activeMember, allMembers };
 }
 

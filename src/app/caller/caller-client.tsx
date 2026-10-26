@@ -81,6 +81,50 @@ interface CallerClientProps {
   permissions?: TeamPermissions;
 }
 
+function getSmartOpeningScript({
+  companyName,
+  contactName,
+  city,
+  state,
+  nicheName = "Target Niche",
+  cleanNotes,
+}: {
+  companyName: string;
+  contactName?: string | null;
+  city?: string | null;
+  state?: string | null;
+  nicheName?: string;
+  cleanNotes?: string | null;
+}): string {
+  // 1. If an AI-researched battlecard already generated a tailored 15-second opening script, use it!
+  if (cleanNotes) {
+    const match = cleanNotes.match(/15-SECOND OPENING SCRIPT:\s*["“]?([^"”\n\r]+(?:\r?\n[^"”\n\r]+)*)["”]?/i);
+    if (match && match[1]) {
+      const extracted = match[1].trim().replace(/^["“]|["”]$/g, "");
+      if (extracted.length > 20) return extracted;
+    }
+  }
+
+  // 2. Synthesize an authentic, high-intent script tailored to the exact industry / niche!
+  const targetGreeting = contactName ? `Hey ${contactName.split(" ")[0]}` : "Hey there";
+  const location = [city, state].filter(Boolean).join(", ") || "your local area";
+  const lowerNiche = (nicheName || "").toLowerCase();
+
+  if (/real estate|property management|realty|realtor|brokerage|leasing/i.test(lowerNiche)) {
+    return `${targetGreeting}, noticed ${companyName} manages active property listings and real estate client operations in ${location}. The reason for my call: established real estate and property management principals tell us that after-hours buyer inquiries and tenant placement requests often wait hours for response, losing high-value deals. We build custom backend AI intake engines that qualify inbound buyer, seller, and tenant leads and book appointments onto your calendar 24/7. Do you guys currently have an automated instant response system for your property inquiries?`;
+  }
+
+  if (/hvac|heating|air conditioning|cooling|plumbing|roofing|electric|contractor/i.test(lowerNiche)) {
+    return `${targetGreeting}, noticed ${companyName} handles residential installations and mechanical services in ${location}. The reason for my call: established trade owners in the area tell us that after-hours estimate follow-ups often sit idle while techs are in the field, losing big-ticket installation bids to competitors. We build custom AI follow-up engines that automatically re-engage open replacement estimates and book installation jobs onto your schedule. Do you guys currently have an automated follow-up system in place for your open bids?`;
+  }
+
+  if (/medical|clinic|healthcare|doctor|physician|dental|dentist|wellness/i.test(lowerNiche)) {
+    return `${targetGreeting}, noticed ${companyName} provides specialized clinical care in ${location}. The reason for my call: clinical directors tell us that front-desk staff are often tied up with in-person patients, meaning inbound new-patient inquiries and consultation requests get delayed. We deploy HIPAA-compliant AI intake assistants that pre-qualify inquiries and schedule consultations directly onto the calendar 24/7. Does your clinic currently use automated 24/7 intake for new patient inquiries?`;
+  }
+
+  return `${targetGreeting}, noticed ${companyName} is an established provider in ${location}. The reason for my call: many top leaders in ${nicheName} tell us that inbound web inquiries and consultation requests often sit idle after hours before staff can follow up. We deploy custom backend AI intake & follow-up engines that qualify high-intent inquiries and book appointments onto your calendar 24/7. Do you currently have an automated instant follow-up system for your inbound inquiries?`;
+}
+
 export function CallerClient({
   initialQueue,
   initialCallerFilter = "ALL",
@@ -1250,9 +1294,14 @@ export function CallerClient({
                 const followUpInfo = formatFollowUpLabel(lead.nextFollowUp);
                 const cleanNotes = stripFollowUpTagFromNotes(lead.notes);
 
-                const scriptText = `Hi ${dmName || "there"}, I noticed ${lead.name} serves ${
-                  lead.city || "your area"
-                } in ${nicheName}. We help ${nicheName} businesses capture high-intent inquiries and book more qualified appointments automatically. Do you have 2 minutes to see how it works?`;
+                const scriptText = getSmartOpeningScript({
+                  companyName: lead.name,
+                  contactName: dmName,
+                  city: lead.city,
+                  state: lead.state,
+                  nicheName: lead.marketName || nicheName,
+                  cleanNotes,
+                });
 
                 return (
                   <div
@@ -1263,20 +1312,9 @@ export function CallerClient({
                     <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-800/80 pb-3">
                       <div className="space-y-1.5">
                         <div className="flex flex-wrap items-center gap-2.5">
-                          <div className="flex items-center gap-2">
-                            <h2 className="text-base font-bold text-white tracking-tight">
-                              {lead.name}
-                            </h2>
-                            <a
-                              href={`/company/${lead.companyId}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-zinc-500 hover:text-zinc-300 p-1 rounded-md hover:bg-zinc-800 transition-colors inline-flex items-center"
-                              title="Open Full Company Dossier (in new tab)"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </a>
-                          </div>
+                          <h2 className="text-base font-bold text-white tracking-tight">
+                            {lead.name}
+                          </h2>
 
                           {lead.marketName && (
                             <span className="inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-[#09090b] px-2 py-0.5 text-[10px] font-medium text-zinc-300">
@@ -1500,15 +1538,6 @@ export function CallerClient({
                       </div>
 
                       <div className="flex flex-wrap items-center justify-start md:justify-end gap-2">
-                        {dialPhone && (
-                          <a
-                            href={`tel:${dialPhone}`}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 px-4 py-2 text-xs font-bold text-black transition shadow-sm"
-                          >
-                            <Phone className="w-3.5 h-3.5" />
-                            <span>Call Now</span>
-                          </a>
-                        )}
                         <button
                           type="button"
                           onClick={() => openLogCallModal(lead)}

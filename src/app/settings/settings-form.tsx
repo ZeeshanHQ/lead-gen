@@ -35,6 +35,7 @@ import {
   ROLE_PRESETS,
   PERMISSION_DEFINITIONS,
   getPermissionsForRole,
+  getMemberLivePresence,
   type TeamMember,
   type TeamRole,
   type TeamPermissions,
@@ -1009,46 +1010,80 @@ export function SettingsForm({
                           )}
                         </td>
 
-                        {/* Status */}
+                        {/* Status & Live Activity */}
                         <td className="px-4 py-4">
-                          {member.status === "ACTIVE" && (
-                            <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400">
-                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                              Active
-                            </span>
-                          )}
-                          {member.status === "INVITED" && (
-                            <div className="flex flex-col items-start gap-1">
-                              <span className="inline-flex items-center gap-1.5 text-xs text-amber-300 font-medium">
-                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                                Pending Invite
-                              </span>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopyInviteLink(member)}
-                                  className="text-[11px] text-slate-400 hover:text-white underline"
+                          {(() => {
+                            const presence = getMemberLivePresence(member.lastActiveAt, member.status);
+
+                            if (member.status === "INVITED") {
+                              return (
+                                <div className="flex flex-col items-start gap-1">
+                                  <span className="inline-flex items-center gap-1.5 text-xs text-amber-300 font-medium">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                                    Pending Invite
+                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopyInviteLink(member)}
+                                      className="text-[11px] text-slate-400 hover:text-white underline"
+                                    >
+                                      {copiedRowMemberId === member.id ? "✓ Copied!" : "Copy link"}
+                                    </button>
+                                    <span className="text-[10px] text-slate-600">•</span>
+                                    <button
+                                      type="button"
+                                      disabled={isSendingEmail}
+                                      onClick={() => handleSendInviteEmail(member.id)}
+                                      className="text-[11px] text-sky-400 hover:text-sky-300 underline font-medium disabled:opacity-50"
+                                    >
+                                      Send email
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (member.status === "SUSPENDED") {
+                              return (
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="inline-flex items-center gap-1.5 text-xs text-rose-400 font-semibold">
+                                    <span className="h-2 w-2 rounded-full bg-rose-500" />
+                                    Account Paused
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 pl-3.5">Suspended</span>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div className="flex flex-col gap-0.5">
+                                <span
+                                  className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
+                                    presence.isLive
+                                      ? "text-emerald-400"
+                                      : presence.state === "idle"
+                                      ? "text-amber-300"
+                                      : "text-slate-400"
+                                  }`}
                                 >
-                                  {copiedRowMemberId === member.id ? "✓ Copied!" : "Copy link"}
-                                </button>
-                                <span className="text-[10px] text-slate-600">•</span>
-                                <button
-                                  type="button"
-                                  disabled={isSendingEmail}
-                                  onClick={() => handleSendInviteEmail(member.id)}
-                                  className="text-[11px] text-sky-400 hover:text-sky-300 underline font-medium disabled:opacity-50"
-                                >
-                                  Send email
-                                </button>
+                                  <span
+                                    className={`h-2 w-2 rounded-full ${
+                                      presence.isLive
+                                        ? "bg-emerald-400 animate-pulse ring-2 ring-emerald-500/20"
+                                        : presence.state === "idle"
+                                        ? "bg-amber-400"
+                                        : "bg-slate-500"
+                                    }`}
+                                  />
+                                  <span>{presence.label}</span>
+                                </span>
+                                <span className="text-[10px] text-slate-500 pl-3.5">
+                                  {presence.detail}
+                                </span>
                               </div>
-                            </div>
-                          )}
-                          {member.status === "SUSPENDED" && (
-                            <span className="inline-flex items-center gap-1.5 text-xs text-rose-400">
-                              <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
-                              Paused
-                            </span>
-                          )}
+                            );
+                          })()}
                         </td>
 
                         {/* Actions */}

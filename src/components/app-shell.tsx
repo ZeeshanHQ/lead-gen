@@ -234,6 +234,16 @@ function AppShellInner({
     if (saved === "true") setCollapsed(true);
   }, []);
 
+  useEffect(() => {
+    // Keep user's active session timestamp fresh in background every 2 minutes
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        fetch("/api/auth/me").catch(() => {});
+      }
+    }, 120000);
+    return () => clearInterval(interval);
+  }, []);
+
   const toggleCollapsed = () => {
     const next = !collapsed;
     setCollapsed(next);
@@ -576,8 +586,8 @@ function AppShellInner({
                             {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />}
                             <span className="truncate">{n.name}</span>
                           </div>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-400 shrink-0">
-                            {n.leadCount}
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-400 shrink-0 font-medium">
+                            {n.approvedCount ?? n.leadCount ?? 0}
                           </span>
                         </button>
                       );
@@ -816,8 +826,8 @@ function AppShellInner({
                           )}
                         >
                           <span className="truncate pr-2">{n.name}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-400 shrink-0">
-                            {n.leadCount}
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-400 shrink-0 font-medium">
+                            {n.approvedCount ?? n.leadCount ?? 0}
                           </span>
                         </button>
                       );
