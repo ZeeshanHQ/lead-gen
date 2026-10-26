@@ -320,6 +320,7 @@ export async function executeRun(
   }
 
   // Step 3: Run jobs with concurrency pool
+  const jobDeadline = Date.now() + Math.max(maxWallClockMs, 35_000);
   let activeIndex = 0;
   let encounteredError: string | null = null;
 
@@ -327,7 +328,7 @@ export async function executeRun(
     while (activeIndex < uniqueCompanyIds.length) {
       if (stopOnError && encounteredError) break;
       if (!runOpts?.mockPages && (counters.approvedCount || 0) >= maxCandidates) break;
-      if (!runOpts?.mockPages && Date.now() >= deadline) break;
+      if (!runOpts?.mockPages && Date.now() >= jobDeadline) break;
 
       const idx = activeIndex++;
       const companyId = uniqueCompanyIds[idx];
@@ -361,7 +362,7 @@ export async function executeRun(
         if (
           runOpts?.autoEnrich &&
           result.status !== "DISQUALIFIED" &&
-          (runOpts?.mockPages || Date.now() + 2000 < deadline)
+          (runOpts?.mockPages || Date.now() + 2000 < jobDeadline)
         ) {
           try {
             const { enrichCompany } = await import("../enrichment/pipeline");

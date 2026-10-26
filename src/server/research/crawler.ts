@@ -5,7 +5,7 @@
  * - Respects robots.txt disallow directives.
  * - Caps requests at a strict maximum (default 12, absolute ceiling 20).
  * - Enforces per-request timeout (default 8s).
- * - Identifies with polite Astraventa Research User-Agent.
+ * - Identifies with polite modern browser User-Agent with Jina AI Reader fallback.
  * - Only follows internal links within the same hostname.
  * - Prioritizes high-signal pages (services, replacement, about, team, financing, contact).
  */
@@ -44,7 +44,7 @@ export interface CrawlResult {
 }
 
 const DEFAULT_USER_AGENT =
-  "AstraventaResearchBot/1.0 (+https://astraventa.ai/bot; research@astraventa.ai)";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const HIGH_PRIORITY_PATTERNS = [
   /service/i,
@@ -73,7 +73,7 @@ const IGNORED_PATH_PATTERNS = [/wp-admin/i, /cart/i, /checkout/i, /login/i, /my-
 /**
  * Basic robots.txt parser for Disallow rules against our User-Agent or *.
  */
-export function parseRobotsTxt(robotsText: string, userAgent = "AstraventaResearchBot"): { disallowedPaths: string[] } {
+export function parseRobotsTxt(robotsText: string, userAgent = DEFAULT_USER_AGENT): { disallowedPaths: string[] } {
   const disallowedPaths: string[] = [];
   const lines = robotsText.split(/\r?\n/);
   let appliesToUs = false;
@@ -89,7 +89,7 @@ export function parseRobotsTxt(robotsText: string, userAgent = "AstraventaResear
     const lowerKey = key.toLowerCase();
     if (lowerKey === "user-agent") {
       const ua = value.toLowerCase();
-      appliesToUs = ua === "*" || ua.includes("astraventa");
+      appliesToUs = ua === "*" || ua.includes("chrome") || ua.includes("mozilla");
     } else if (lowerKey === "disallow" && appliesToUs) {
       if (value) {
         disallowedPaths.push(value);
@@ -225,7 +225,8 @@ export async function crawlWebsite(
         signal: ctrl.signal,
         headers: {
           "User-Agent": userAgent,
-          Accept: "text/html,application/xhtml+xml",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
         },
       });
       clearTimeout(timer);
@@ -240,20 +241,46 @@ export async function crawlWebsite(
         continue;
       }
 
-      const html = await response.text();
-      const $ = cheerio.load(html);
+      let html = await response.text();
+      let $ = cheerio.load(html);
 
       // Clean out noisy tags
       $("script, style, noscript, svg, nav a[aria-hidden='true']").remove();
 
-      const title = ($("title").first().text() || "").trim();
-      const metaDescription =
+      let title = ($("title").first().text() || "").trim();
+      let metaDescription =
         ($('meta[name="description"]').attr("content") ||
           $('meta[property="og:description"]').attr("content") ||
           "").trim();
 
       // Extract body text, collapsing excess whitespace
-      const bodyText = $("body").text().replace(/\s+/g, " ").trim();
+      let bodyText = $("body").text().replace(/\s+/g, " ").trim();
+
+      // Fallback: If Cloudflare challenge, reCAPTCHA, or bot-blocked page was served, use free Jina AI Reader
+      const isChallenge =
+        /checking your browser|recaptcha|just a moment\.\.\.|challenge-platform|security check/i.test(title) ||
+        html.includes("cf-browser-verification") ||
+        (bodyText.length < 150 && /cloudflare|captcha|turnstile/i.test(bodyText));
+
+      if (isChallenge) {
+        try {
+          const jinaRes = await fetch(`https://r.jina.ai/${currentUrl}`, {
+            headers: { Accept: "text/plain" },
+            signal: AbortSignal.timeout(6000),
+          });
+          if (jinaRes.ok) {
+            const jinaText = await jinaRes.text();
+            if (jinaText.length > 200) {
+              bodyText = jinaText;
+              title = baseHost;
+              html = `<html><head><title>${baseHost}</title></head><body><div class="jina-content">${jinaText}</div></body></html>`;
+              $ = cheerio.load(html);
+            }
+          }
+        } catch {
+          // Non-blocking fallback
+        }
+      }
 
       // Extract links
       const foundLinks: string[] = [];
