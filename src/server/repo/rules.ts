@@ -7,6 +7,7 @@ import {
   ruleConfigSchema,
   evaluateRule,
   calculateLeadScore,
+  defaultHvacRuleConfig,
 } from "../domain/rules";
 import { type FactMap } from "../domain/facts";
 import { evaluateGate } from "../domain/gate";
@@ -82,7 +83,22 @@ export class RuleValidationError extends Error {
 }
 
 export function parseRuleConfig(input: unknown): RuleConfig {
-  const result = ruleConfigSchema.safeParse(input);
+  let normalizedInput = input;
+  if (input && typeof input === "object") {
+    const raw = { ...(input as any) };
+    if (raw.scoring) {
+      raw.scoring = {
+        ...raw.scoring,
+        signalPoints: {
+          ...defaultHvacRuleConfig().scoring.signalPoints,
+          ...(raw.scoring.signalPoints || {}),
+        },
+      };
+      normalizedInput = raw;
+    }
+  }
+
+  const result = ruleConfigSchema.safeParse(normalizedInput);
   if (!result.success) {
     throw new RuleValidationError(result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`));
   }

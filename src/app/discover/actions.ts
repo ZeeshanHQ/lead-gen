@@ -575,6 +575,12 @@ export async function updateRuleTargetingAction(params: {
       scoring: {
         ...cfg.scoring,
         minScore: params.minScore,
+        signalPoints: {
+          ...cfg.scoring?.signalPoints,
+          bleeding_ad_spend: cfg.scoring?.signalPoints?.bleeding_ad_spend ?? 15,
+          high_volume_doors: cfg.scoring?.signalPoints?.high_volume_doors ?? 10,
+          high_ticket_property: cfg.scoring?.signalPoints?.high_ticket_property ?? 10,
+        },
       },
       size: {
         ...cfg.size,

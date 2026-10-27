@@ -164,7 +164,7 @@ export const ruleConfigSchema = z.object({
   scoring: z.object({
     minScore: int.min(0).max(100),
     categoryCaps: z.record(z.enum(SCORE_CATEGORIES), int.min(0).max(100)),
-    signalPoints: z.record(z.enum(SCORE_SIGNALS), int.min(0).max(100)),
+    signalPoints: z.record(z.string(), int.min(0).max(100)),
   }),
 });
 export type RuleConfig = z.infer<typeof ruleConfigSchema>;
