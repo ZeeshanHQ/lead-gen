@@ -34,6 +34,7 @@ import {
   buildPresetFollowUpIso,
   stripFollowUpTagFromNotes,
 } from "@/components/crm-lead-sheet";
+import { classifyLeadDate, type LeadDateCategory } from "@/components/crm-date-utils";
 import {
   DEFAULT_DIALER_CONFIG,
   type DialerConfig,
@@ -373,6 +374,12 @@ export function CallerClient({
   const [selectedLead, setSelectedLead] = useState<CallerLeadView | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"CARDS" | "SHEET">("CARDS");
+  const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "YESTERDAY" | "OLDER">("ALL");
+  const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
+
+  const toggleCollapseDateGroup = (groupKey: string) => {
+    setCollapsedDateGroups((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }));
+  };
 
   React.useEffect(() => {
     const savedView = localStorage.getItem("astraventa_caller_default_view");
@@ -684,6 +691,13 @@ export function CallerClient({
       if (lead.status !== statusFilter) return false;
     }
 
+    if (dateFilter !== "ALL") {
+      const dateInfo = classifyLeadDate(lead);
+      if (dateFilter === "TODAY" && dateInfo.category !== "TODAY") return false;
+      if (dateFilter === "YESTERDAY" && dateInfo.category !== "YESTERDAY") return false;
+      if (dateFilter === "OLDER" && (dateInfo.category === "TODAY" || dateInfo.category === "YESTERDAY")) return false;
+    }
+
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     return (
@@ -807,10 +821,73 @@ export function CallerClient({
     notes: l.notes,
     nextFollowUp: l.nextFollowUp,
     researchSummary: l.researchSummary,
+    createdAt: l.createdAt,
+    approvedAt: l.approvedAt,
     assignedMemberId: l.assignedMemberId,
     assignedMemberName: l.assignedMemberName,
     marketName: l.marketName,
   }));
+
+  
+  // Date Intake Counts
+  const { todayCount, yesterdayCount, olderCount } = React.useMemo(() => {
+    let today = 0;
+    let yesterday = 0;
+    let older = 0;
+    for (const lead of callerScopedQueue) {
+      const info = classifyLeadDate(lead);
+      if (info.category === "TODAY") today++;
+      else if (info.category === "YESTERDAY") yesterday++;
+      else older++;
+    }
+    return { todayCount: today, yesterdayCount: yesterday, olderCount: older };
+  }, [callerScopedQueue]);
+
+  interface LeadDateBatch {
+    key: string;
+    category: LeadDateCategory;
+    title: string;
+    formattedDate: string;
+    leads: CallerLeadView[];
+    toCallCount: number;
+    connectedCount: number;
+  }
+
+  const groupedDateBatches = React.useMemo<LeadDateBatch[]>(() => {
+    const map = new Map<string, LeadDateBatch>();
+
+    for (const lead of filteredQueue) {
+      const info = classifyLeadDate(lead);
+      let batch = map.get(info.groupKey);
+      if (!batch) {
+        batch = {
+          key: info.groupKey,
+          category: info.category,
+          title: info.title,
+          formattedDate: info.formattedDate,
+          leads: [],
+          toCallCount: 0,
+          connectedCount: 0,
+        };
+        map.set(info.groupKey, batch);
+      }
+      batch.leads.push(lead);
+      if (["APPROVED", "SYNCED", "CALLING"].includes(lead.status)) {
+        batch.toCallCount++;
+      }
+      if (["CONNECTED", "PAIN_FOUND", "MEETING_BOOKED"].includes(lead.status)) {
+        batch.connectedCount++;
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.category === "TODAY") return -1;
+      if (b.category === "TODAY") return 1;
+      if (a.category === "YESTERDAY") return -1;
+      if (b.category === "YESTERDAY") return 1;
+      return b.key.localeCompare(a.key);
+    });
+  }, [filteredQueue]);
 
   // Counters (scoped by active caller filter so Owner can inspect any caller's exact metrics)
   const totalCount = callerScopedQueue.length;
@@ -1235,6 +1312,62 @@ export function CallerClient({
         />
       ) : (
         <div className="space-y-4">
+
+          {/* Date Intake Batch Tabs (Breaks today's vs yesterday's vs older leads) */}
+          <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-xl bg-[#121215] border border-zinc-800 text-xs font-semibold">
+            <span className="px-2 text-[11px] uppercase tracking-wider text-zinc-500 flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-zinc-400" />
+              <span>Intake Date:</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setDateFilter("ALL")}
+              className={`px-3 py-1.5 rounded-lg transition ${
+                dateFilter === "ALL"
+                  ? "bg-white text-black shadow-sm font-bold"
+                  : "text-zinc-400 hover:text-white"
+              }`}
+            >
+              All Intake Batches ({callerScopedQueue.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setDateFilter("TODAY")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
+                dateFilter === "TODAY"
+                  ? "bg-emerald-500 text-black shadow-sm font-bold"
+                  : "text-zinc-400 hover:text-emerald-300"
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Today&apos;s Fresh Batch ({todayCount})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDateFilter("YESTERDAY")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
+                dateFilter === "YESTERDAY"
+                  ? "bg-amber-400 text-black shadow-sm font-bold"
+                  : "text-zinc-400 hover:text-amber-300"
+              }`}
+            >
+              <span>Yesterday&apos;s Batch ({yesterdayCount})</span>
+            </button>
+            {olderCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setDateFilter("OLDER")}
+                className={`px-3 py-1.5 rounded-lg transition ${
+                  dateFilter === "OLDER"
+                    ? "bg-zinc-800 text-white shadow-sm font-bold"
+                    : "text-zinc-500 hover:text-zinc-300"
+                }`}
+              >
+                Earlier Archive ({olderCount})
+              </button>
+            )}
+          </div>
+
           {/* Pipeline Tabs and Search Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800/80 bg-[#121215] p-3.5">
             <div className="flex flex-wrap items-center gap-1">
@@ -1306,8 +1439,66 @@ export function CallerClient({
               )}
             </div>
           ) : (
-            <div className="space-y-3.5">
-              {filteredQueue.map((lead) => {
+            <div className="space-y-6">
+              {groupedDateBatches.map((batch) => {
+                const isCollapsed = Boolean(collapsedDateGroups[batch.key]);
+                return (
+                  <div key={batch.key} className="space-y-3.5">
+                    {/* Day Break Banner */}
+                    <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-xl border border-zinc-700/80 bg-[#0e0e12]/95 backdrop-blur-md shadow-md">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold ${
+                            batch.category === "TODAY"
+                              ? "bg-emerald-500/15 border border-emerald-500/30 text-emerald-400"
+                              : batch.category === "YESTERDAY"
+                              ? "bg-amber-500/15 border border-amber-500/30 text-amber-300"
+                              : "bg-zinc-800 text-zinc-400"
+                          }`}
+                        >
+                          <Calendar className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-xs sm:text-sm font-bold text-white tracking-tight">
+                              {batch.title}
+                            </h3>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                batch.category === "TODAY"
+                                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                  : batch.category === "YESTERDAY"
+                                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                  : "bg-zinc-800 text-zinc-300"
+                              }`}
+                            >
+                              {batch.leads.length} {batch.leads.length === 1 ? "Lead" : "Leads"}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-zinc-400">
+                            {batch.formattedDate} &bull; <strong className="text-zinc-200">{batch.toCallCount}</strong> to call &bull; <strong className="text-emerald-400">{batch.connectedCount}</strong> connected
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => toggleCollapseDateGroup(batch.key)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-800 bg-[#09090b] hover:bg-zinc-900 text-xs text-zinc-400 hover:text-white transition"
+                      >
+                        <span>{isCollapsed ? "Show Leads" : "Collapse Batch"}</span>
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                            isCollapsed ? "-rotate-90" : "rotate-0"
+                          }`}
+                        />
+                      </button>
+                    </div>
+
+                    {/* Leads list for this day */}
+                    {!isCollapsed && (
+                      <div className="space-y-3.5">
+                        {batch.leads.map((lead) => {
                 const dialPhone = lead.bestContact.phone || lead.phone;
                 const dmName = lead.bestContact.name;
                 const dmTitle = lead.bestContact.title;
@@ -1371,6 +1562,28 @@ export function CallerClient({
                               {lead.status}
                             </span>
                           )}
+
+                          {/* Lead Intake Time Badge */}
+                          {(() => {
+                            const dateInfo = classifyLeadDate(lead);
+                            return (
+                              <div className="inline-flex items-center gap-1">
+                                <span
+                                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold ${
+                                    dateInfo.category === "TODAY"
+                                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                                      : dateInfo.category === "YESTERDAY"
+                                      ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                                      : "border-zinc-800 bg-[#09090b] text-zinc-400"
+                                  }`}
+                                  title={`Intake Date: ${dateInfo.formattedDate} at ${dateInfo.timeString}`}
+                                >
+                                  <Clock className="w-3.5 h-3.5 text-zinc-400" />
+                                  <span>{dateInfo.shortBadge}</span>
+                                </span>
+                              </div>
+                            );
+                          })()}
 
                           {/* Interactive Follow-Up Pill right in the header */}
                           {lead.nextFollowUp ? (
@@ -1849,6 +2062,11 @@ export function CallerClient({
                         </div>
                       );
                     })()}
+                  </div>
+                );
+              })}
+                      </div>
+                    )}
                   </div>
                 );
               })}

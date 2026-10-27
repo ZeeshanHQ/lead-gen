@@ -61,6 +61,8 @@ export interface CallerLeadView {
   assignedMemberName: string | null;
   marketId?: string;
   marketName?: string;
+  createdAt?: string | null;
+  approvedAt?: string | null;
 }
 
 export interface CallFeedbackInput {
@@ -173,15 +175,24 @@ export async function getCallerQueue(
       assignedMemberName: c.assignedMemberName ?? null,
       marketId: c.marketId,
       marketName: options?.marketNames?.[c.marketId] || undefined,
+      createdAt: c.createdAt ? (c.createdAt instanceof Date ? c.createdAt.toISOString() : String(c.createdAt)) : null,
+      approvedAt: c.approvedAt ? (c.approvedAt instanceof Date ? c.approvedAt.toISOString() : String(c.approvedAt)) : null,
     });
   }
 
-  // Sort queue: active market leads first (if specified), then by highest ICP Score
+  // Sort queue: active market leads first, then by date (today first, then yesterday, etc.), then by highest ICP Score
   queue.sort((a, b) => {
     if (marketId) {
       const aMatch = a.marketId === marketId ? 1 : 0;
       const bMatch = b.marketId === marketId ? 1 : 0;
       if (aMatch !== bMatch) return bMatch - aMatch;
+    }
+    const aTime = a.approvedAt ? new Date(a.approvedAt).getTime() : a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bTime = b.approvedAt ? new Date(b.approvedAt).getTime() : b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    const aDay = aTime ? new Date(aTime).toISOString().slice(0, 10) : "";
+    const bDay = bTime ? new Date(bTime).toISOString().slice(0, 10) : "";
+    if (aDay !== bDay) {
+      return bTime - aTime;
     }
     return b.icpScore - a.icpScore;
   });
@@ -666,6 +677,8 @@ export async function createManualCrmLead(
     nextFollowUp: followUp,
     assignedMemberId: input.assignedMemberId || null,
     assignedMemberName: input.assignedMemberName || null,
+    createdAt: created?.createdAt ? (created.createdAt instanceof Date ? created.createdAt.toISOString() : String(created.createdAt)) : new Date().toISOString(),
+    approvedAt: created?.approvedAt ? (created.approvedAt instanceof Date ? created.approvedAt.toISOString() : String(created.approvedAt)) : new Date().toISOString(),
   };
 }
 

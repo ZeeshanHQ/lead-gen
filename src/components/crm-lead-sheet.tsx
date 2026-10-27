@@ -24,6 +24,7 @@ import {
 } from "@/server/domain/niche-fields";
 import type { TeamPermissions, TeamMember } from "@/server/domain/team";
 import type { LifecycleStatus } from "@/server/domain/lifecycle";
+import { classifyLeadDate } from "@/components/crm-date-utils";
 import {
   Sheet,
   Phone,
@@ -71,6 +72,7 @@ export interface CrmLeadItem {
   notes?: string | null;
   nextFollowUp?: string | null;
   researchSummary?: string | null;
+  createdAt?: string | Date | null;
   approvedAt?: string | Date | null;
   assignedMemberId?: string | null;
   assignedMemberName?: string | null;
@@ -769,6 +771,23 @@ export function CrmLeadSheet({
                             {lead.marketName}
                           </span>
                         )}
+                        {(() => {
+                          const dateInfo = classifyLeadDate(lead);
+                          return (
+                            <span
+                              className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold border ${
+                                dateInfo.category === "TODAY"
+                                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                                  : dateInfo.category === "YESTERDAY"
+                                  ? "border-amber-500/30 bg-amber-500/15 text-amber-300"
+                                  : "border-zinc-800 bg-zinc-900 text-zinc-400"
+                              }`}
+                              title={`Intake: ${dateInfo.formattedDate} at ${dateInfo.timeString}`}
+                            >
+                              {dateInfo.shortBadge}
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div className="flex items-center gap-2 text-[11px] text-zinc-400 truncate mt-0.5">
                         <span>{lead.city ? `${lead.city}, ${lead.state}` : lead.state || "US"}</span>
