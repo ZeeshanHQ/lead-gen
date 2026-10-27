@@ -489,9 +489,12 @@ export async function researchCompany(
     keywords: kwList,
   });
 
-  updates.researchSummary = battlecard.summary;
+  updates.researchSummary = battlecard.summary ? `${battlecard.summary}\n\n${battlecard.notes}` : battlecard.notes;
   updates.researchSummaryAt = new Date();
-  updates.notes = battlecard.notes;
+  // Keep company notes clean for caller logs only
+  if (!refreshed.notes) {
+    updates.notes = "";
+  }
   if (!gateResult.passed) {
     updates.researchSummary = `Not added to CRM — missing required: ${gateResult.reasons.join(", ")}`;
   }

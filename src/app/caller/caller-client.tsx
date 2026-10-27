@@ -92,6 +92,7 @@ function getSmartOpeningScript({
   state,
   nicheName = "Target Niche",
   cleanNotes,
+  researchSummary,
 }: {
   companyName: string;
   contactName?: string | null;
@@ -99,10 +100,12 @@ function getSmartOpeningScript({
   state?: string | null;
   nicheName?: string;
   cleanNotes?: string | null;
+  researchSummary?: string | null;
 }): string {
   // 1. If an AI-researched battlecard already generated a tailored 15-second opening script, use it!
-  if (cleanNotes) {
-    const match = cleanNotes.match(/15-SECOND OPENING SCRIPT:\s*["“]?([^"”\n\r]+(?:\r?\n[^"”\n\r]+)*)["”]?/i);
+  const sourceText = researchSummary || cleanNotes || "";
+  if (sourceText) {
+    const match = sourceText.match(/15-SECOND OPENING SCRIPT:\s*["“]?([^"”\n\r]+(?:\r?\n[^"”\n\r]+)*)["”]?/i);
     if (match && match[1]) {
       const extracted = match[1].trim().replace(/^["“]|["”]$/g, "");
       if (extracted.length > 20) return extracted;
@@ -1516,6 +1519,7 @@ export function CallerClient({
                   state: lead.state,
                   nicheName: lead.marketName || nicheName,
                   cleanNotes,
+                  researchSummary: lead.researchSummary,
                 });
 
                 return (
@@ -1538,7 +1542,7 @@ export function CallerClient({
                             </span>
                           )}
 
-                          {/* 1-Click Inline Pipeline Stage Dropdown */}
+                          {/* 1-Click Inline Pipeline Stage Dropdown with Vivid Badges */}
                           {canEditContacts ? (
                             <select
                               value={lead.status}
@@ -1548,11 +1552,14 @@ export function CallerClient({
                                   e.target.value as LifecycleStatus
                                 )
                               }
-                              className="rounded-lg border border-zinc-700 bg-[#09090b] px-2.5 py-1 text-xs font-semibold text-zinc-100 focus:border-zinc-500 focus:outline-none cursor-pointer"
+                              className={`rounded-lg border px-2.5 py-1 text-xs font-semibold focus:outline-none cursor-pointer transition ${
+                                CRM_STAGE_OPTIONS.find((s) => s.value === lead.status)?.badgeClass ||
+                                "border-zinc-700 bg-[#09090b] text-zinc-100"
+                              }`}
                               title="Change pipeline stage"
                             >
                               {CRM_STAGE_OPTIONS.map((st) => (
-                                <option key={st.value} value={st.value}>
+                                <option key={st.value} value={st.value} className="bg-[#121215] text-zinc-200">
                                   {st.label}
                                 </option>
                               ))}
@@ -1902,7 +1909,74 @@ export function CallerClient({
                       </div>
                     </div>
 
-                    {/* Interactive Notes & Cold Caller Battlecard Section */}
+                    {/* Section 1: AI Opening Script & Tailored Battlecard */}
+                    <div className="rounded-xl border border-indigo-500/20 bg-indigo-950/10 p-4 text-xs space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-500/20 pb-2">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />
+                          <span className="font-bold text-indigo-200 text-xs">
+                            AI Opening Script &amp; Pitch Strategy
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(scriptText, `script_${lead.companyId}`)}
+                            className="text-[11px] font-semibold text-indigo-300 hover:text-white flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/30 transition"
+                          >
+                            {copiedId === `script_${lead.companyId}` ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-400" />
+                                <span className="text-emerald-400">Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" />
+                                <span>Copy Script</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 15-second opening script */}
+                      <div className="p-3 rounded-lg bg-[#09090b]/80 border border-indigo-500/20 text-indigo-100 text-xs leading-relaxed font-sans select-text">
+                        &ldquo;{scriptText}&rdquo;
+                      </div>
+
+                      {/* If AI research summary exists, allow expanding full intelligence */}
+                      {lead.researchSummary && (
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedScriptId(
+                                expandedScriptId === lead.companyId ? null : lead.companyId
+                              )
+                            }
+                            className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                          >
+                            {expandedScriptId === lead.companyId ? (
+                              <ChevronUp className="w-3 h-3" />
+                            ) : (
+                              <ChevronDown className="w-3 h-3" />
+                            )}
+                            <span>
+                              {expandedScriptId === lead.companyId
+                                ? "Hide AI Intelligence & Signals"
+                                : "View Full AI Intelligence & Signals"}
+                            </span>
+                          </button>
+                          {expandedScriptId === lead.companyId && (
+                            <div className="mt-2 p-3 rounded-lg bg-[#09090b] border border-zinc-800 text-zinc-300 text-xs leading-relaxed font-sans select-text whitespace-pre-wrap max-h-60 overflow-y-auto">
+                              {lead.researchSummary}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Section 2: Caller Log History (Human Call Logs) */}
                     {(() => {
                       const isNotesExpanded = expandAllNotes || Boolean(expandedNotesIds[lead.companyId]);
                       const noteLines = cleanNotes ? cleanNotes.split("\n").filter((l) => l.trim().length > 0) : [];
@@ -1910,16 +1984,16 @@ export function CallerClient({
 
                       return (
                         <div className="rounded-xl border border-zinc-800/80 bg-[#09090b]/80 p-4 text-xs space-y-3 shadow-inner">
-                          {/* Header row of the notes box */}
+                          {/* Header row of the caller notes box */}
                           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/80 pb-2.5">
                             <div className="flex items-center gap-2">
                               <FileText className="w-4 h-4 text-emerald-400 shrink-0" />
                               <span className="font-bold text-zinc-100 text-xs">
-                                Cold Caller Brief &amp; Notes
+                                Caller Log History &amp; CRM Notes
                               </span>
                               {cleanNotes && (
                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 font-semibold border border-zinc-700/60">
-                                  {noteLines.length} {noteLines.length === 1 ? "line" : "lines"}
+                                  {noteLines.length} {noteLines.length === 1 ? "log" : "logs"}
                                 </span>
                               )}
                             </div>
@@ -1939,7 +2013,7 @@ export function CallerClient({
                                   ) : (
                                     <>
                                       <ChevronDown className="w-3.5 h-3.5" />
-                                      <span>View Full Pitch &amp; Brief</span>
+                                      <span>View All ({noteLines.length})</span>
                                     </>
                                   )}
                                 </button>
@@ -1950,7 +2024,7 @@ export function CallerClient({
                                   type="button"
                                   onClick={() => copyToClipboard(cleanNotes, `notes_${lead.companyId}`)}
                                   className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1 px-2 py-1 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 transition"
-                                  title="Copy full notes to clipboard"
+                                  title="Copy call notes to clipboard"
                                 >
                                   {copiedId === `notes_${lead.companyId}` ? (
                                     <>
@@ -1989,74 +2063,30 @@ export function CallerClient({
                             </div>
                           </div>
 
-                          {/* Notes Body: Full readable view without cutting off */}
+                          {/* Notes Body */}
                           {cleanNotes ? (
                             isNotesExpanded || !isMultiLine ? (
-                              <div className="p-3.5 rounded-lg bg-zinc-950/90 border border-zinc-800 text-zinc-200 text-xs leading-relaxed whitespace-pre-wrap select-text max-h-72 overflow-y-auto font-sans shadow-inner">
+                              <div className="p-3.5 rounded-lg bg-zinc-950/90 border border-zinc-800 text-zinc-200 text-xs leading-relaxed whitespace-pre-wrap select-text max-h-72 overflow-y-auto font-sans shadow-inner space-y-1.5">
                                 {cleanNotes}
                               </div>
                             ) : (
                               <div
                                 onClick={() => toggleNotesExpanded(lead.companyId)}
                                 className="p-3 rounded-lg bg-zinc-950/50 border border-zinc-800/80 text-zinc-300 text-xs leading-relaxed cursor-pointer hover:border-zinc-700 hover:text-white transition group space-y-1"
-                                title="Click to view complete brief and pitch"
+                                title="Click to view all call logs"
                               >
                                 <div className="line-clamp-3 select-text font-sans whitespace-pre-wrap">
                                   {cleanNotes}
                                 </div>
                                 <div className="pt-1 text-[11px] font-semibold text-emerald-400 group-hover:underline flex items-center gap-1">
-                                  <span>Read complete caller battlecard ({noteLines.length} lines)...</span>
+                                  <span>View all {noteLines.length} call logs...</span>
                                   <ChevronDown className="w-3 h-3" />
                                 </div>
                               </div>
                             )
                           ) : (
-                            <div className="text-xs text-zinc-500 italic py-1">
-                              No call notes logged yet for this lead. Click &ldquo;+ Add Note&rdquo; to record conversation notes.
-                            </div>
-                          )}
-
-                          {/* Quick 15-second opening pitch script toolbar */}
-                          <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedScriptId(
-                                  expandedScriptId === lead.companyId ? null : lead.companyId
-                                )
-                              }
-                              className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-200 flex items-center gap-1"
-                            >
-                              {expandedScriptId === lead.companyId ? (
-                                <ChevronUp className="w-3 h-3" />
-                              ) : (
-                                <ChevronDown className="w-3 h-3" />
-                              )}
-                              <span>15-Sec Cold Opening Script (Quick Template)</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => copyToClipboard(scriptText, `script_${lead.companyId}`)}
-                              className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1"
-                            >
-                              {copiedId === `script_${lead.companyId}` ? (
-                                <>
-                                  <Check className="w-3 h-3 text-emerald-400" />
-                                  <span className="text-emerald-400">Copied</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Copy className="w-3 h-3" />
-                                  <span>Copy Script</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-
-                          {expandedScriptId === lead.companyId && (
-                            <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/20 text-emerald-200 text-xs leading-relaxed font-sans select-text">
-                              &ldquo;{scriptText}&rdquo;
+                            <div className="text-xs text-zinc-500 italic py-1 flex items-center justify-between">
+                              <span>No call notes logged yet. Click &ldquo;Log Call & Outcome&rdquo; above to record your call.</span>
                             </div>
                           )}
                         </div>
@@ -2384,14 +2414,18 @@ export function CallerClient({
               </div>
 
               <div className="pt-3 border-t border-zinc-800 flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleDeleteLead(editingLead.companyId, editingLead.name)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-semibold transition"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Remove from CRM</span>
-                </button>
+                {(isOwner || canManageSettings) ? (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteLead(editingLead.companyId, editingLead.name)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-semibold transition"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Remove from CRM</span>
+                  </button>
+                ) : (
+                  <div />
+                )}
 
                 <div className="flex items-center gap-2">
                   <button

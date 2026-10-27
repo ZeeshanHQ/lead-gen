@@ -209,7 +209,108 @@ export function CrmLeadSheet({
   const [leads, setLeads] = useState<CrmLeadItem[]>(initialLeads);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "YESTERDAY" | "OLDER">("ALL");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Inline Cell Editing State (Airtable / Google Sheets style)
+  const [activeCellEdit, setActiveCellEdit] = useState<{
+    leadId: string;
+    field: "name" | "contactName" | "contactTitle" | "phone" | "notes";
+  } | null>(null);
+  const [activeCellDraft, setActiveCellDraft] = useState<string>("");
+  const [savingCellKey, setSavingCellKey] = useState<string | null>(null);
+
+  const startInlineEdit = (
+    leadId: string,
+    field: "name" | "contactName" | "contactTitle" | "phone" | "notes",
+    currentVal: string
+  ) => {
+    setActiveCellEdit({ leadId, field });
+    setActiveCellDraft(currentVal || "");
+  };
+
+  const commitInlineEdit = async (lead: CrmLeadItem) => {
+    if (!activeCellEdit || activeCellEdit.leadId !== lead.id) return;
+    const field = activeCellEdit.field;
+    const value = activeCellDraft.trim();
+    setActiveCellEdit(null);
+
+    let hasChanged = false;
+    const patch: Partial<CrmLeadItem> = {};
+    const serverPayload: any = { companyId: lead.id };
+
+    if (field === "name") {
+      if (value && value !== lead.name) {
+        hasChanged = true;
+        patch.name = value;
+        serverPayload.name = value;
+      }
+    } else if (field === "contactName") {
+      const oldName = lead.bestContact?.name || "";
+      if (value !== oldName) {
+        hasChanged = true;
+        patch.bestContact = {
+          name: value || null,
+          title: lead.bestContact?.title || null,
+          phone: lead.bestContact?.phone || null,
+          email: lead.bestContact?.email || null,
+        };
+        serverPayload.contactName = value || null;
+      }
+    } else if (field === "contactTitle") {
+      const oldTitle = lead.bestContact?.title || "";
+      if (value !== oldTitle) {
+        hasChanged = true;
+        patch.bestContact = {
+          name: lead.bestContact?.name || null,
+          title: value || null,
+          phone: lead.bestContact?.phone || null,
+          email: lead.bestContact?.email || null,
+        };
+        serverPayload.contactTitle = value || null;
+      }
+    } else if (field === "phone") {
+      const oldPhone = lead.bestContact?.phone || lead.phoneDisplay || "";
+      if (value !== oldPhone) {
+        hasChanged = true;
+        patch.phoneDisplay = value || null;
+        patch.bestContact = {
+          name: lead.bestContact?.name || null,
+          title: lead.bestContact?.title || null,
+          phone: value || null,
+          email: lead.bestContact?.email || null,
+        };
+        serverPayload.phone = value || null;
+        serverPayload.contactPhone = value || null;
+      }
+    } else if (field === "notes") {
+      const oldNotes = stripFollowUpTagFromNotes(lead.notes) || "";
+      if (value !== oldNotes) {
+        hasChanged = true;
+        const updatedNotes = lead.nextFollowUp
+          ? value
+            ? `[Next Follow-up Scheduled: ${lead.nextFollowUp}]\n${value}`
+            : `[Next Follow-up Scheduled: ${lead.nextFollowUp}]`
+          : value || null;
+        patch.notes = updatedNotes;
+        serverPayload.notes = value || null;
+      }
+    }
+
+    if (!hasChanged) return;
+
+    applyLeadPatch(lead.id, patch);
+    setSavingCellKey(`${lead.id}:${field}`);
+
+    const res = await updateLeadCrmDetailsAction(serverPayload);
+    setSavingCellKey(null);
+    if (res.ok) {
+      setSyncFeedback(`Updated ${field} for ${lead.name}.`);
+      setTimeout(() => setSyncFeedback(null), 2000);
+    } else {
+      setSyncFeedback(res.error || "Failed to update cell");
+    }
+  };
 
   const smartFields = getSmartFieldsForNiche(nicheCategory, nicheName, customColumns);
 
@@ -477,6 +578,14 @@ export function CrmLeadSheet({
       if (lead.status !== statusFilter) return false;
     }
 
+    if (dateFilter !== "ALL") {
+      const dateInfo = classifyLeadDate(lead);
+      if (dateFilter === "TODAY" && dateInfo.category !== "TODAY") return false;
+      if (dateFilter === "YESTERDAY" && dateInfo.category !== "YESTERDAY") return false;
+      if (dateFilter === "OLDER" && (dateInfo.category === "TODAY" || dateInfo.category === "YESTERDAY"))
+        return false;
+    }
+
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     const contactName = lead.bestContact?.name || "";
@@ -550,6 +659,19 @@ export function CrmLeadSheet({
   const followUpCount = activeLeads.filter(
     (l) => l.nextFollowUp || (l.notes && l.notes.includes("Follow-up Scheduled"))
   ).length;
+
+  const { todayCount, yesterdayCount, olderCount } = React.useMemo(() => {
+    let today = 0;
+    let yesterday = 0;
+    let older = 0;
+    for (const lead of activeLeads) {
+      const info = classifyLeadDate(lead);
+      if (info.category === "TODAY") today++;
+      else if (info.category === "YESTERDAY") yesterday++;
+      else older++;
+    }
+    return { todayCount: today, yesterdayCount: yesterday, olderCount: older };
+  }, [activeLeads]);
 
   return (
     <div className="overflow-hidden rounded-xl border border-zinc-800/80 bg-[#121215]">
@@ -664,6 +786,56 @@ export function CrmLeadSheet({
         </div>
       </div>
 
+      {/* Date Batch Filter Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/60 bg-[#0c0c0f] px-3 py-2 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold text-zinc-400 mr-1 flex items-center gap-1">
+            <Clock className="w-3 h-3 text-zinc-500" />
+            <span>Intake Day:</span>
+          </span>
+          {[
+            { key: "ALL", label: `All Batches (${totalCount})` },
+            {
+              key: "TODAY",
+              label: `Today's Intake (${todayCount})`,
+              activeClass: "bg-emerald-500/20 text-emerald-300 border-emerald-500/40",
+            },
+            {
+              key: "YESTERDAY",
+              label: `Yesterday (${yesterdayCount})`,
+              activeClass: "bg-amber-500/20 text-amber-300 border-amber-500/40",
+            },
+            {
+              key: "OLDER",
+              label: `Earlier Batches (${olderCount})`,
+              activeClass: "bg-zinc-700/40 text-zinc-200 border-zinc-600",
+            },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setDateFilter(tab.key as any)}
+              className={`rounded-md border px-2.5 py-0.5 text-[11px] font-semibold transition ${
+                dateFilter === tab.key
+                  ? tab.activeClass || "border-zinc-500 bg-zinc-800 text-white"
+                  : "border-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {dateFilter !== "ALL" && (
+          <button
+            type="button"
+            onClick={() => setDateFilter("ALL")}
+            className="text-[11px] text-zinc-500 hover:text-zinc-300 underline"
+          >
+            Clear date filter
+          </button>
+        )}
+      </div>
+
       {/* Spreadsheet Table View */}
       {filteredLeads.length === 0 ? (
         <div className="p-10 text-center text-xs text-zinc-400 space-y-3">
@@ -743,7 +915,7 @@ export function CrmLeadSheet({
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
-              {filteredLeads.map((lead) => {
+              {filteredLeads.map((lead, idx) => {
                 const phone = lead.bestContact?.phone || lead.phoneDisplay;
                 const dmName = lead.bestContact?.name;
                 const dmTitle = lead.bestContact?.title;
@@ -752,28 +924,85 @@ export function CrmLeadSheet({
                 )}`;
                 const followUpInfo = formatFollowUpLabel(lead.nextFollowUp);
                 const cleanNotes = stripFollowUpTagFromNotes(lead.notes);
+                const dateInfo = classifyLeadDate(lead);
+                const prevLead = idx > 0 ? filteredLeads[idx - 1] : null;
+                const isNewBatch = !prevLead || classifyLeadDate(prevLead).groupKey !== dateInfo.groupKey;
 
                 return (
-                  <tr key={lead.id} className="hover:bg-zinc-900/60 transition-colors">
-                    {/* Company & Location */}
-                    <td className="px-4 py-3.5 max-w-[220px]">
-                      <div className="font-semibold text-white text-xs truncate flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => canEdit && openEditModal(lead)}
-                          className="hover:underline text-left truncate"
-                          title="Click to edit lead details"
-                        >
-                          {lead.name}
-                        </button>
-                        {lead.marketName && (
-                          <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-medium text-zinc-300">
-                            {lead.marketName}
-                          </span>
-                        )}
-                        {(() => {
-                          const dateInfo = classifyLeadDate(lead);
-                          return (
+                  <React.Fragment key={lead.id}>
+                    {isNewBatch && (
+                      <tr className="bg-zinc-950 border-y border-zinc-800/80 sticky top-0 z-10">
+                        <td colSpan={8 + smartFields.length} className="px-4 py-2">
+                          <div className="flex items-center justify-between text-xs font-bold">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`inline-block w-2 h-2 rounded-full ${
+                                  dateInfo.category === "TODAY"
+                                    ? "bg-emerald-400"
+                                    : dateInfo.category === "YESTERDAY"
+                                    ? "bg-amber-400"
+                                    : "bg-zinc-500"
+                                }`}
+                              />
+                              <span
+                                className={
+                                  dateInfo.category === "TODAY"
+                                    ? "text-emerald-300 font-bold"
+                                    : dateInfo.category === "YESTERDAY"
+                                    ? "text-amber-300 font-bold"
+                                    : "text-zinc-300 font-semibold"
+                                }
+                              >
+                                {dateInfo.title}
+                              </span>
+                              <span className="text-[10px] text-zinc-500 font-normal">
+                                ({dateInfo.formattedDate})
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    <tr className="hover:bg-zinc-900/60 transition-colors">
+                      {/* Company & Location */}
+                      <td className="px-4 py-3.5 max-w-[220px]">
+                        {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "name" ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              autoFocus
+                              type="text"
+                              value={activeCellDraft}
+                              onChange={(e) => setActiveCellDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  commitInlineEdit(lead);
+                                } else if (e.key === "Escape") {
+                                  setActiveCellEdit(null);
+                                }
+                              }}
+                              onBlur={() => commitInlineEdit(lead)}
+                              className="w-full bg-[#09090b] border border-emerald-500 rounded px-2 py-1 text-xs text-white focus:outline-none shadow-sm"
+                            />
+                          </div>
+                        ) : (
+                          <div className="font-semibold text-white text-xs truncate flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => canEdit && startInlineEdit(lead.id, "name", lead.name)}
+                              className="group/name flex items-center gap-1 text-left truncate hover:text-emerald-300 transition"
+                              title="Click to edit company name inline"
+                            >
+                              <span className="truncate">{lead.name}</span>
+                              {canEdit && (
+                                <Pencil className="w-2.5 h-2.5 text-zinc-500 opacity-0 group-hover/name:opacity-100 transition shrink-0" />
+                              )}
+                            </button>
+                            {lead.marketName && (
+                              <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-medium text-zinc-300">
+                                {lead.marketName}
+                              </span>
+                            )}
                             <span
                               className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold border ${
                                 dateInfo.category === "TODAY"
@@ -786,242 +1015,351 @@ export function CrmLeadSheet({
                             >
                               {dateInfo.shortBadge}
                             </span>
-                          );
-                        })()}
-                      </div>
-                      <div className="flex items-center gap-2 text-[11px] text-zinc-400 truncate mt-0.5">
-                        <span>{lead.city ? `${lead.city}, ${lead.state}` : lead.state || "US"}</span>
-                        <a
-                          href={mapsUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-zinc-400 hover:text-zinc-200 inline-flex items-center gap-0.5"
-                          title="Open in Google Maps"
-                        >
-                          <MapPin className="w-2.5 h-2.5" />
-                          <span>Map</span>
-                        </a>
-                        {lead.website && (
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 text-[11px] text-zinc-400 truncate mt-0.5">
+                          <span>{lead.city ? `${lead.city}, ${lead.state}` : lead.state || "US"}</span>
                           <a
-                            href={lead.website}
+                            href={mapsUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-zinc-400 hover:text-zinc-200 inline-flex items-center gap-0.5"
-                            title="Visit website"
+                            title="Open in Google Maps"
                           >
-                            <ExternalLink className="w-2.5 h-2.5" />
+                            <MapPin className="w-2.5 h-2.5" />
+                            <span>Map</span>
                           </a>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Contact Person */}
-                    <td className="px-3 py-3.5 max-w-[180px]">
-                      <button
-                        type="button"
-                        onClick={() => canEdit && openEditModal(lead)}
-                        className="text-left group w-full"
-                        title="Click to edit contact person"
-                      >
-                        <div className="font-medium text-zinc-200 text-xs truncate group-hover:text-white flex items-center gap-1">
-                          <span>{dmName || "Owner / Manager"}</span>
-                          {canEdit && (
-                            <Pencil className="w-2.5 h-2.5 text-zinc-500 opacity-0 group-hover:opacity-100 transition" />
-                          )}
-                        </div>
-                        <div className="text-[11px] text-zinc-400 truncate">
-                          {dmTitle || "Decision Maker"}
-                        </div>
-                      </button>
-                    </td>
-
-                    {/* Phone */}
-                    <td className="px-3 py-3.5 whitespace-nowrap">
-                      {phone ? (
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard(phone, lead.id)}
-                          className="group inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#09090b] hover:bg-zinc-800 border border-zinc-800/80 hover:border-emerald-500/30 transition text-left cursor-pointer"
-                          title="Click to copy phone number"
-                        >
-                          <span className="font-mono font-bold text-xs text-emerald-400 group-hover:text-emerald-300">
-                            {phone}
-                          </span>
-                          {copiedId === lead.id ? (
-                            <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-400 font-sans font-bold">
-                              <Check className="w-3 h-3 text-emerald-400" />
-                              <span>Copied</span>
-                            </span>
-                          ) : (
-                            <Copy className="w-3 h-3 text-zinc-500 group-hover:text-emerald-400 transition" />
-                          )}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => canEdit && openEditModal(lead)}
-                          className="text-zinc-500 hover:text-zinc-300 text-[11px] underline"
-                        >
-                          + Add phone
-                        </button>
-                      )}
-                    </td>
-
-                    {/* Assigned Caller */}
-                    <td className="px-3 py-3.5 whitespace-nowrap">
-                      {canManageSettings && allMembers.length > 0 ? (
-                        <select
-                          value={lead.assignedMemberId || ""}
-                          onChange={(e) => handleInlineAssignCaller(lead, e.target.value)}
-                          className="rounded-lg border border-zinc-800 bg-[#09090b] px-2 py-1 text-[11px] font-medium text-zinc-200 focus:border-zinc-500 focus:outline-none cursor-pointer"
-                        >
-                          <option value="">Unassigned</option>
-                          {allMembers
-                            .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
-                            .map((m) => (
-                              <option key={m.id} value={m.id}>
-                                {m.name}
-                              </option>
-                            ))}
-                        </select>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-[#09090b] px-2 py-1 text-[11px] font-medium text-zinc-300">
-                          {lead.assignedMemberName || "Unassigned"}
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Interactive Status Dropdown */}
-                    <td className="px-3 py-3.5 whitespace-nowrap">
-                      {canEdit ? (
-                        <select
-                          value={lead.status}
-                          onChange={(e) =>
-                            handleInlineStatusChange(lead, e.target.value as LifecycleStatus)
-                          }
-                          className="rounded-lg border border-zinc-700 bg-[#09090b] px-2.5 py-1 text-[11px] font-semibold text-zinc-100 focus:border-zinc-500 focus:outline-none cursor-pointer"
-                        >
-                          {CRM_STAGE_OPTIONS.map((st) => (
-                            <option key={st.value} value={st.value}>
-                              {st.label}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className="text-xs text-zinc-300">{lead.status}</span>
-                      )}
-                    </td>
-
-                    {/* Niche-Specific Smart Qualification Fields + Custom Columns */}
-                    {smartFields.map((field) => {
-                      const val = resolveSmartFieldValue(lead, field);
-                      const isPositive =
-                        val.includes("✓") ||
-                        (val !== "Ask on Call" && val !== "Verify on Call");
-                      const allOpts = field.options.includes(val)
-                        ? field.options
-                        : [val, ...field.options];
-
-                      return (
-                        <td key={field.key} className="px-3 py-3.5 whitespace-nowrap">
-                          {canEdit ? (
-                            <select
-                              value={val}
-                              onChange={(e) =>
-                                handleInlineSmartFieldChange(lead, field, e.target.value)
-                              }
-                              className={`rounded-lg border px-2 py-1 text-[11px] font-semibold focus:outline-none cursor-pointer transition ${
-                                isPositive
-                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                                  : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-700"
-                              }`}
+                          {lead.website && (
+                            <a
+                              href={lead.website}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-zinc-400 hover:text-zinc-200 inline-flex items-center gap-0.5"
+                              title="Visit website"
                             >
-                              {allOpts.map((opt) => (
-                                <option key={opt} value={opt} className="bg-[#121215] text-white">
-                                  {opt}
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Contact Person */}
+                      <td className="px-3 py-3.5 max-w-[180px]">
+                        {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "contactName" ? (
+                          <input
+                            autoFocus
+                            type="text"
+                            value={activeCellDraft}
+                            onChange={(e) => setActiveCellDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                commitInlineEdit(lead);
+                              } else if (e.key === "Escape") {
+                                setActiveCellEdit(null);
+                              }
+                            }}
+                            onBlur={() => commitInlineEdit(lead)}
+                            className="w-full bg-[#09090b] border border-emerald-500 rounded px-2 py-0.5 text-xs text-white focus:outline-none shadow-sm mb-1"
+                            placeholder="Contact Name"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => canEdit && startInlineEdit(lead.id, "contactName", dmName || "")}
+                            className="text-left group/dm w-full flex items-center justify-between"
+                            title="Click to edit contact person inline"
+                          >
+                            <div className="font-medium text-zinc-200 text-xs truncate group-hover/dm:text-emerald-300 flex items-center gap-1">
+                              <span>{dmName || "Owner / Manager"}</span>
+                              {canEdit && (
+                                <Pencil className="w-2.5 h-2.5 text-zinc-500 opacity-0 group-hover/dm:opacity-100 transition" />
+                              )}
+                            </div>
+                          </button>
+                        )}
+
+                        {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "contactTitle" ? (
+                          <input
+                            autoFocus
+                            type="text"
+                            value={activeCellDraft}
+                            onChange={(e) => setActiveCellDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                commitInlineEdit(lead);
+                              } else if (e.key === "Escape") {
+                                setActiveCellEdit(null);
+                              }
+                            }}
+                            onBlur={() => commitInlineEdit(lead)}
+                            className="w-full bg-[#09090b] border border-emerald-500 rounded px-2 py-0.5 text-[11px] text-zinc-200 focus:outline-none shadow-sm mt-0.5"
+                            placeholder="Role / Title"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => canEdit && startInlineEdit(lead.id, "contactTitle", dmTitle || "")}
+                            className="text-left group/title w-full flex items-center gap-1 text-[11px] text-zinc-400 truncate hover:text-zinc-200"
+                            title="Click to edit role/title inline"
+                          >
+                            <span className="truncate">{dmTitle || "Decision Maker"}</span>
+                            {canEdit && (
+                              <Pencil className="w-2 h-2 text-zinc-500 opacity-0 group-hover/title:opacity-100 transition" />
+                            )}
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Phone */}
+                      <td className="px-3 py-3.5 whitespace-nowrap">
+                        {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "phone" ? (
+                          <input
+                            autoFocus
+                            type="text"
+                            value={activeCellDraft}
+                            onChange={(e) => setActiveCellDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                commitInlineEdit(lead);
+                              } else if (e.key === "Escape") {
+                                setActiveCellEdit(null);
+                              }
+                            }}
+                            onBlur={() => commitInlineEdit(lead)}
+                            className="w-36 bg-[#09090b] border border-emerald-500 rounded px-2 py-1 font-mono text-xs text-emerald-400 focus:outline-none shadow-sm"
+                            placeholder="(555) 000-0000"
+                          />
+                        ) : phone ? (
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(phone, lead.id)}
+                              className="group inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#09090b] hover:bg-zinc-800 border border-zinc-800/80 hover:border-emerald-500/30 transition text-left cursor-pointer"
+                              title="Click to copy phone number"
+                            >
+                              <span className="font-mono font-bold text-xs text-emerald-400 group-hover:text-emerald-300">
+                                {phone}
+                              </span>
+                              {copiedId === lead.id ? (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-400 font-sans font-bold">
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                  <span>Copied</span>
+                                </span>
+                              ) : (
+                                <Copy className="w-3 h-3 text-zinc-500 group-hover:text-emerald-400 transition" />
+                              )}
+                            </button>
+                            {canEdit && (
+                              <button
+                                type="button"
+                                onClick={() => startInlineEdit(lead.id, "phone", phone)}
+                                className="p-1 rounded text-zinc-500 hover:text-white hover:bg-zinc-800 transition"
+                                title="Edit phone number inline"
+                              >
+                                <Pencil className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => canEdit && startInlineEdit(lead.id, "phone", "")}
+                            className="text-zinc-500 hover:text-emerald-400 text-[11px] underline flex items-center gap-1"
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                            <span>Add phone</span>
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Assigned Caller */}
+                      <td className="px-3 py-3.5 whitespace-nowrap">
+                        {canManageSettings && allMembers.length > 0 ? (
+                          <select
+                            value={lead.assignedMemberId || ""}
+                            onChange={(e) => handleInlineAssignCaller(lead, e.target.value)}
+                            className="rounded-lg border border-zinc-800 bg-[#09090b] px-2 py-1 text-[11px] font-medium text-zinc-200 focus:border-zinc-500 focus:outline-none cursor-pointer"
+                          >
+                            <option value="">Unassigned</option>
+                            {allMembers
+                              .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+                              .map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.name}
                                 </option>
                               ))}
-                            </select>
-                          ) : (
-                            <span className="text-[11px] text-zinc-300">{val}</span>
-                          )}
-                        </td>
-                      );
-                    })}
-
-                    {/* Interactive Follow-Up Column */}
-                    <td className="px-3 py-3.5 whitespace-nowrap">
-                      {lead.nextFollowUp ? (
-                        <button
-                          type="button"
-                          onClick={() => canEdit && openFollowUpModal(lead)}
-                          className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
-                            followUpInfo.isOverdue
-                              ? "border-rose-500/40 bg-rose-500/15 text-rose-200 hover:bg-rose-500/25"
-                              : "border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
-                          }`}
-                          title="Click to reschedule or mark follow-up done"
-                        >
-                          <Calendar className="w-3 h-3 shrink-0" />
-                          <span>{followUpInfo.text}</span>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => canEdit && openFollowUpModal(lead)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-dashed border-zinc-700 bg-zinc-900/50 hover:bg-zinc-800 hover:border-zinc-600 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:text-zinc-200 transition"
-                        >
-                          <Plus className="w-3 h-3" />
-                          <span>Set Follow-Up</span>
-                        </button>
-                      )}
-                    </td>
-
-                    {/* Clickable Notes */}
-                    <td className="px-3 py-3.5 max-w-[230px]">
-                      <button
-                        type="button"
-                        onClick={() => canEdit && openEditModal(lead)}
-                        className="text-left w-full group"
-                        title="Click to view or edit notes"
-                      >
-                        {cleanNotes ? (
-                          <p className="text-[11px] text-zinc-300 truncate group-hover:text-white">
-                            {cleanNotes.split("\n").pop() || cleanNotes}
-                          </p>
+                          </select>
                         ) : (
-                          <span className="text-zinc-500 group-hover:text-zinc-300 text-[11px] underline decoration-dotted">
-                            + Add note
+                          <span className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-[#09090b] px-2 py-1 text-[11px] font-medium text-zinc-300">
+                            {lead.assignedMemberName || "Unassigned"}
                           </span>
                         )}
-                      </button>
-                    </td>
+                      </td>
 
-                    {/* Quick Actions */}
-                    <td className="px-4 py-3.5 text-right whitespace-nowrap">
-                      <div className="inline-flex items-center justify-end gap-1.5">
-                        {canCall && (
+                      {/* Interactive Status Dropdown with Vivid Stage Badges */}
+                      <td className="px-3 py-3.5 whitespace-nowrap">
+                        {canEdit ? (
+                          <select
+                            value={lead.status}
+                            onChange={(e) =>
+                              handleInlineStatusChange(lead, e.target.value as LifecycleStatus)
+                            }
+                            className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold focus:outline-none cursor-pointer transition ${
+                              CRM_STAGE_OPTIONS.find((s) => s.value === lead.status)?.badgeClass ||
+                              "border-zinc-700 bg-[#09090b] text-zinc-100"
+                            }`}
+                          >
+                            {CRM_STAGE_OPTIONS.map((st) => (
+                              <option key={st.value} value={st.value} className="bg-[#121215] text-zinc-200">
+                                {st.label}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-xs text-zinc-300">{lead.status}</span>
+                        )}
+                      </td>
+
+                      {/* Niche-Specific Smart Qualification Fields + Custom Columns */}
+                      {smartFields.map((field) => {
+                        const val = resolveSmartFieldValue(lead, field);
+                        const isPositive =
+                          val.includes("✓") ||
+                          (val !== "Ask on Call" && val !== "Verify on Call");
+                        const allOpts = field.options.includes(val)
+                          ? field.options
+                          : [val, ...field.options];
+
+                        return (
+                          <td key={field.key} className="px-3 py-3.5 whitespace-nowrap">
+                            {canEdit ? (
+                              <select
+                                value={val}
+                                onChange={(e) =>
+                                  handleInlineSmartFieldChange(lead, field, e.target.value)
+                                }
+                                className={`rounded-lg border px-2 py-1 text-[11px] font-semibold focus:outline-none cursor-pointer transition ${
+                                  isPositive
+                                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                                    : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-700"
+                                }`}
+                              >
+                                {allOpts.map((opt) => (
+                                  <option key={opt} value={opt} className="bg-[#121215] text-white">
+                                    {opt}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="text-[11px] text-zinc-300">{val}</span>
+                            )}
+                          </td>
+                        );
+                      })}
+
+                      {/* Interactive Follow-Up Column */}
+                      <td className="px-3 py-3.5 whitespace-nowrap">
+                        {lead.nextFollowUp ? (
                           <button
                             type="button"
-                            onClick={() => openCallModal(lead)}
-                            className="inline-flex items-center gap-1 rounded-lg bg-white hover:bg-zinc-200 px-3 py-1.5 text-xs font-bold text-black transition shadow-sm"
+                            onClick={() => canEdit && openFollowUpModal(lead)}
+                            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
+                              followUpInfo.isOverdue
+                                ? "border-rose-500/40 bg-rose-500/15 text-rose-200 hover:bg-rose-500/25"
+                                : "border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                            }`}
+                            title="Click to reschedule or mark follow-up done"
                           >
-                            <span>Log Call</span>
+                            <Calendar className="w-3 h-3 shrink-0" />
+                            <span>{followUpInfo.text}</span>
                           </button>
-                        )}
-                        {canEdit && (
+                        ) : (
                           <button
                             type="button"
-                            onClick={() => openEditModal(lead)}
-                            className="p-1.5 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 hover:text-white hover:bg-zinc-800 transition"
-                            title="Edit Lead & Contact Details"
+                            onClick={() => canEdit && openFollowUpModal(lead)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-dashed border-zinc-700 bg-zinc-900/50 hover:bg-zinc-800 hover:border-zinc-600 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:text-zinc-200 transition"
                           >
-                            <Pencil className="w-3.5 h-3.5" />
+                            <Plus className="w-3 h-3" />
+                            <span>Set Follow-Up</span>
                           </button>
                         )}
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+
+                      {/* Clickable Inline Notes */}
+                      <td className="px-3 py-3.5 max-w-[240px]">
+                        {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "notes" ? (
+                          <textarea
+                            autoFocus
+                            rows={2}
+                            value={activeCellDraft}
+                            onChange={(e) => setActiveCellDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                commitInlineEdit(lead);
+                              } else if (e.key === "Escape") {
+                                setActiveCellEdit(null);
+                              }
+                            }}
+                            onBlur={() => commitInlineEdit(lead)}
+                            className="w-full bg-[#09090b] border border-emerald-500 rounded p-1.5 text-xs text-zinc-200 focus:outline-none shadow-sm"
+                            placeholder="Type note and hit Enter to save..."
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => canEdit && startInlineEdit(lead.id, "notes", cleanNotes || "")}
+                            className="text-left w-full group/notes cursor-pointer"
+                            title="Click to edit notes inline (Enter to save)"
+                          >
+                            {cleanNotes ? (
+                              <div className="flex items-start gap-1">
+                                <p className="text-[11px] text-zinc-300 truncate group-hover/notes:text-white flex-1">
+                                  {cleanNotes.split("\n")[0] || cleanNotes}
+                                </p>
+                                {canEdit && (
+                                  <Pencil className="w-2.5 h-2.5 text-zinc-500 opacity-0 group-hover/notes:opacity-100 transition shrink-0 mt-0.5" />
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-zinc-500 group-hover/notes:text-emerald-400 text-[11px] underline decoration-dotted flex items-center gap-1">
+                                <Plus className="w-2.5 h-2.5" />
+                                <span>Add note</span>
+                              </span>
+                            )}
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Quick Actions */}
+                      <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          {canCall && (
+                            <button
+                              type="button"
+                              onClick={() => openCallModal(lead)}
+                              className="inline-flex items-center gap-1 rounded-lg bg-white hover:bg-zinc-200 px-3 py-1.5 text-xs font-bold text-black transition shadow-sm"
+                            >
+                              <span>Log Call</span>
+                            </button>
+                          )}
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => openEditModal(lead)}
+                              className="p-1.5 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 hover:text-white hover:bg-zinc-800 transition"
+                              title="Edit Lead & Contact Details"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -1334,14 +1672,18 @@ export function CrmLeadSheet({
               </div>
 
               <div className="pt-3 border-t border-zinc-800 flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleDeleteLead(editingLead.id, editingLead.name)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-semibold transition"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Remove from CRM</span>
-                </button>
+                {(isOwner || canManageSettings) ? (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteLead(editingLead.id, editingLead.name)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-semibold transition"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Remove from CRM</span>
+                  </button>
+                ) : (
+                  <div />
+                )}
 
                 <div className="flex items-center gap-2">
                   <button

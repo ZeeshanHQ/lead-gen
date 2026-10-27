@@ -27,6 +27,30 @@ export function stripFollowUpTags(notes: string | null | undefined): string {
     .trim();
 }
 
+export function extractCallerNotes(rawNotes: string | null | undefined): string {
+  if (!rawNotes) return "";
+  const lines = rawNotes.split("\n");
+  const filtered = lines.filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    if (
+      trimmed.startsWith("BATTLECARD:") ||
+      trimmed.startsWith("15-SECOND OPENING SCRIPT:") ||
+      trimmed.startsWith("Focus:") ||
+      trimmed.startsWith("Local Market:") ||
+      trimmed.startsWith("Gatekeeper Strategy:") ||
+      trimmed.startsWith("Reputation:") ||
+      trimmed.startsWith("Authority:") ||
+      trimmed.startsWith("PITCH ANGLE:")
+    ) {
+      return false;
+    }
+    return true;
+  });
+  return filtered.join("\n").trim();
+}
+
+
 export interface CallerLeadView {
   companyId: string;
   name: string;
@@ -251,12 +275,37 @@ export async function recordCallFeedback(
     });
   }
 
-  // 3. Update company lifecycle status and notes (strip old follow-up tags if a new one is included)
-  const hasNewFollowUp = /\[Next Follow-up Scheduled:\s*[^\]]+\]/i.test(input.callerNotes);
+  // 3. Update company lifecycle status and clean caller log entries
+  const hasNewFollowUp = /\[Next Follow-up Scheduled:\s*([^\]]+)\]/i.test(input.callerNotes);
   const baseExistingNotes = hasNewFollowUp ? stripFollowUpTags(company.notes) : (company.notes || "");
-  const updatedNotes = baseExistingNotes
-    ? `${baseExistingNotes}\n[Call ${new Date().toISOString().slice(0, 10)}] ${input.callerNotes}`
-    : `[Call ${new Date().toISOString().slice(0, 10)}] ${input.callerNotes}`;
+  
+  const timeStr = new Date().toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const outcomeLabel = input.callOutcome === "CONNECTED"
+    ? "Connected / Spoke"
+    : input.callOutcome === "MEETING_BOOKED"
+    ? "Meeting Booked"
+    : input.callOutcome === "GATEKEEPER_BLOCKED"
+    ? "Gatekeeper"
+    : input.callOutcome === "NO_ANSWER"
+    ? "No Answer"
+    : input.callOutcome === "WRONG_NUMBER"
+    ? "Wrong Number"
+    : "Completed";
+
+  const cleanInputNote = input.callerNotes.trim();
+  const newCallLogEntry = cleanInputNote.startsWith("[")
+    ? cleanInputNote
+    : `[${timeStr} • ${input.actor || "Caller"} (${outcomeLabel})]: ${cleanInputNote}`;
+
+  const existingLogs = extractCallerNotes(baseExistingNotes);
+  const updatedNotes = existingLogs
+    ? `${newCallLogEntry}\n${existingLogs}`
+    : newCallLogEntry;
 
   await db
     .update(companies)

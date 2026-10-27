@@ -290,7 +290,14 @@ export async function createManualCrmLeadAction(
 export async function deleteCrmLeadAction(input: { companyId: string }) {
   try {
     const db = await getDb();
-    const actor = await getActor(db);
+    const { getActiveTeamMember } = await import("@/server/repo/team");
+    const { activeMember } = await getActiveTeamMember(db);
+    const isOwnerOrManager =
+      activeMember.role === "OWNER" || Boolean(activeMember.permissions?.manageTeamAndSettings);
+    if (!isOwnerOrManager) {
+      return { ok: false, error: "Unauthorized: Only workspace owners and managers can delete leads." };
+    }
+    const actor = activeMember.name || (await getActor(db));
     const { deleteCrmLead } = await import("@/server/repo/caller");
     await deleteCrmLead(db, input.companyId, actor);
     revalidatePath("/caller");
