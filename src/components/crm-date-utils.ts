@@ -49,7 +49,7 @@ export function classifyLeadDate(lead: {
     return {
       groupKey: "TODAY",
       category: "TODAY",
-      title: "Today's Fresh Intake (Aj ki Leads)",
+      title: "Today's Intake",
       formattedDate: `${weekday}, ${monthDayYear}`,
       shortBadge: `Today • ${timeString}`,
       timeString,
@@ -60,7 +60,7 @@ export function classifyLeadDate(lead: {
     return {
       groupKey: "YESTERDAY",
       category: "YESTERDAY",
-      title: "Yesterday's Intake (Kal ki Leads)",
+      title: "Yesterday's Intake",
       formattedDate: `${weekday}, ${monthDayYear}`,
       shortBadge: `Yesterday • ${timeString}`,
       timeString,
@@ -86,7 +86,7 @@ export function classifyLeadDate(lead: {
   return {
     groupKey: dateKey,
     category: "OLDER",
-    title: `Earlier Intake Archive (${monthDayYear})`,
+    title: `Earlier Intake (${monthDayYear})`,
     formattedDate: monthDayYear,
     shortBadge: monthDayYear,
     timeString,
