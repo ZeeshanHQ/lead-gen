@@ -19,7 +19,12 @@ export async function logCallFeedbackAction(input: CallFeedbackInput) {
     revalidatePath("/");
     revalidatePath(`/company/${input.companyId}`);
 
-    return { success: true, nextStatus: result.nextStatus };
+    return {
+      success: true,
+      nextStatus: result.nextStatus,
+      updatedNotes: result.updatedNotes,
+      nextFollowUp: result.nextFollowUp,
+    };
   } catch (error: any) {
     console.error("Failed to record call feedback:", error);
     return { success: false, error: error.message || "Failed to record call feedback" };

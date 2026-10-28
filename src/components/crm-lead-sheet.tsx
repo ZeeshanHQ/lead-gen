@@ -250,6 +250,17 @@ export function CrmLeadSheet({
     const value = activeCellDraft.trim();
     setActiveCellEdit(null);
 
+    if (field !== "notes" && !canEdit) {
+      setSyncFeedback("Permission restricted: Only owners/managers can edit contact fields.");
+      setTimeout(() => setSyncFeedback(null), 3000);
+      return;
+    }
+    if (field === "notes" && !canEditNotes) {
+      setSyncFeedback("Permission restricted: You do not have permission to edit notes.");
+      setTimeout(() => setSyncFeedback(null), 3000);
+      return;
+    }
+
     let hasChanged = false;
     const patch: Partial<CrmLeadItem> = {};
     const serverPayload: any = { companyId: lead.id };
@@ -376,6 +387,8 @@ export function CrmLeadSheet({
   const canExport = isOwner || Boolean(permissions?.exportAndSync);
   const canCall = isOwner || !permissions || Boolean(permissions.callerWorkbench);
   const canEdit = isOwner || Boolean(permissions?.editContacts);
+  const canEditNotes =
+    isOwner || Boolean(permissions?.editContacts) || Boolean(permissions?.callerWorkbench);
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -602,13 +615,33 @@ export function CrmLeadSheet({
 
     if (statusFilter === "TO_CALL") {
       if (!["APPROVED", "SYNCED", "CALLING"].includes(lead.status)) return false;
+      const parsed = parseLatestCallerNote(lead.notes);
+      const outcome = (parsed?.outcome || "").toLowerCase();
+      if (outcome.includes("meeting") || outcome.includes("connected") || outcome.includes("spoke")) return false;
     } else if (statusFilter === "CONNECTED") {
-      if (!["CONNECTED", "PAIN_FOUND"].includes(lead.status)) return false;
+      const parsed = parseLatestCallerNote(lead.notes);
+      const outcome = (parsed?.outcome || "").toLowerCase();
+      if (!["CONNECTED", "PAIN_FOUND"].includes(lead.status) && !outcome.includes("connected") && !outcome.includes("spoke"))
+        return false;
     } else if (statusFilter === "MEETINGS") {
-      if (lead.status !== "MEETING_BOOKED") return false;
+      const parsed = parseLatestCallerNote(lead.notes);
+      const outcome = (parsed?.outcome || "").toLowerCase();
+      if (lead.status !== "MEETING_BOOKED" && !outcome.includes("meeting")) return false;
     } else if (statusFilter === "FOLLOW_UP") {
       if (!lead.nextFollowUp && !(lead.notes && lead.notes.includes("Follow-up Scheduled")))
         return false;
+    } else if (statusFilter === "NO_ANSWER") {
+      const parsed = parseLatestCallerNote(lead.notes);
+      const outcome = (parsed?.outcome || "").toLowerCase();
+      if (!outcome.includes("no answer")) return false;
+    } else if (statusFilter === "GATEKEEPER") {
+      const parsed = parseLatestCallerNote(lead.notes);
+      const outcome = (parsed?.outcome || "").toLowerCase();
+      if (!outcome.includes("gatekeeper")) return false;
+    } else if (statusFilter === "VOICEMAIL") {
+      const parsed = parseLatestCallerNote(lead.notes);
+      const outcome = (parsed?.outcome || "").toLowerCase();
+      if (!outcome.includes("voicemail")) return false;
     } else if (statusFilter !== "ALL") {
       if (lead.status !== statusFilter) return false;
     }
@@ -664,33 +697,88 @@ export function CrmLeadSheet({
   const callerStats = React.useMemo(() => {
     const map: Record<
       string,
-      { total: number; connected: number; meetings: number; followUps: number }
+      {
+        total: number;
+        callsLogged: number;
+        connected: number;
+        meetings: number;
+        followUps: number;
+        noAnswer: number;
+        gatekeeper: number;
+        voicemail: number;
+      }
     > = {};
     for (const c of teamCallers) {
-      map[c.id] = { total: 0, connected: 0, meetings: 0, followUps: 0 };
+      map[c.id] = {
+        total: 0,
+        callsLogged: 0,
+        connected: 0,
+        meetings: 0,
+        followUps: 0,
+        noAnswer: 0,
+        gatekeeper: 0,
+        voicemail: 0,
+      };
     }
     let unassigned = 0;
+    const teamTotals = {
+      callsLogged: 0,
+      connected: 0,
+      meetings: 0,
+      followUps: 0,
+      noAnswer: 0,
+      gatekeeper: 0,
+      voicemail: 0,
+    };
+
     for (const lead of leads) {
       if (lead.status === "REJECTED") continue;
       if (!lead.assignedMemberId) {
         unassigned++;
-        continue;
       }
-      const entry = map[lead.assignedMemberId];
-      if (entry) {
-        entry.total++;
-        if (["CONNECTED", "PAIN_FOUND"].includes(lead.status)) {
-          entry.connected++;
-        }
-        if (lead.status === "MEETING_BOOKED") {
-          entry.meetings++;
-        }
-        if (lead.nextFollowUp) {
-          entry.followUps++;
+      const assignedEntry = lead.assignedMemberId ? map[lead.assignedMemberId] : null;
+      if (assignedEntry) {
+        assignedEntry.total++;
+        if (lead.nextFollowUp) assignedEntry.followUps++;
+      }
+
+      // Parse individual call log lines from lead.notes
+      if (lead.notes) {
+        const lines = lead.notes.split("\n");
+        for (const line of lines) {
+          const match = line.match(/^\[([^•\]]+)(?:•\s*([^(]+))?(?:\(([^)]+)\))?\]:/);
+          if (match) {
+            const author = (match[2] || "").trim().toLowerCase();
+            const outcome = (match[3] || "").trim().toLowerCase();
+
+            const targetCaller = teamCallers.find(
+              (c) =>
+                c.name.toLowerCase() === author ||
+                c.email.toLowerCase() === author ||
+                (lead.assignedMemberId === c.id && !author)
+            );
+            const entry = targetCaller ? map[targetCaller.id] : assignedEntry;
+
+            if (entry) {
+              entry.callsLogged++;
+              if (outcome.includes("connected") || outcome.includes("spoke")) entry.connected++;
+              else if (outcome.includes("meeting")) entry.meetings++;
+              else if (outcome.includes("no answer")) entry.noAnswer++;
+              else if (outcome.includes("gatekeeper")) entry.gatekeeper++;
+              else if (outcome.includes("voicemail")) entry.voicemail++;
+            }
+
+            teamTotals.callsLogged++;
+            if (outcome.includes("connected") || outcome.includes("spoke")) teamTotals.connected++;
+            else if (outcome.includes("meeting")) teamTotals.meetings++;
+            else if (outcome.includes("no answer")) teamTotals.noAnswer++;
+            else if (outcome.includes("gatekeeper")) teamTotals.gatekeeper++;
+            else if (outcome.includes("voicemail")) teamTotals.voicemail++;
+          }
         }
       }
     }
-    return { callerMap: map, unassignedCount: unassigned };
+    return { callerMap: map, unassignedCount: unassigned, teamTotals };
   }, [leads, teamCallers]);
 
   const openCallModal = (lead: CrmLeadItem) => {
@@ -704,11 +792,6 @@ export function CrmLeadSheet({
     e.preventDefault();
     if (!selectedLead) return;
 
-    if (!notes.trim()) {
-      alert("Please enter a short call note.");
-      return;
-    }
-
     startTransition(async () => {
       const combinedNotes = followUpDate
         ? `[Next Follow-up Scheduled: ${followUpDate}] ${notes.trim()}`
@@ -719,39 +802,17 @@ export function CrmLeadSheet({
         actor: actor.trim() || activeActorName,
         callOutcome: outcome,
         callerNotes: combinedNotes,
+        followUpDate: followUpDate || null,
       });
 
       if (res.success && res.nextStatus) {
-        const cleanExisting = stripFollowUpTagFromNotes(selectedLead.notes);
-        const timeStr = new Date().toLocaleString("en-US", {
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        });
-        const outcomeLabel =
-          outcome === "CONNECTED"
-            ? "Connected / Spoke"
-            : outcome === "MEETING_BOOKED"
-            ? "Meeting Booked"
-            : outcome === "GATEKEEPER_BLOCKED"
-            ? "Gatekeeper"
-            : outcome === "NO_ANSWER"
-            ? "No Answer"
-            : outcome === "WRONG_NUMBER"
-            ? "Wrong Number"
-            : "Left Voicemail";
-
-        const newEntry = `[${timeStr} • ${actor.trim() || activeActorName} (${outcomeLabel})]: ${notes.trim()}`;
-        const updatedNotes = cleanExisting
-          ? `${newEntry}\n${cleanExisting}`
-          : newEntry;
-
         applyLeadPatch(selectedLead.id, {
-          status: res.nextStatus!,
-          nextFollowUp: followUpDate || selectedLead.nextFollowUp,
-          notes: followUpDate ? `[Next Follow-up Scheduled: ${followUpDate}]\n${updatedNotes}` : updatedNotes,
+          status: res.nextStatus,
+          nextFollowUp: res.nextFollowUp || followUpDate || selectedLead.nextFollowUp,
+          notes: res.updatedNotes || selectedLead.notes,
         });
+        setSyncFeedback(`Call logged successfully for ${selectedLead.name}.`);
+        setTimeout(() => setSyncFeedback(null), 3000);
         setSelectedLead(null);
       } else {
         alert(res.error || "Could not save call");
@@ -762,16 +823,62 @@ export function CrmLeadSheet({
   // Filter counters
   const activeLeads = leads.filter((l) => l.status !== "REJECTED");
   const totalCount = activeLeads.length;
-  const toCallCount = activeLeads.filter((l) =>
-    ["APPROVED", "SYNCED", "CALLING"].includes(l.status)
-  ).length;
-  const connectedCount = activeLeads.filter((l) =>
-    ["CONNECTED", "PAIN_FOUND"].includes(l.status)
-  ).length;
-  const meetingsCount = activeLeads.filter((l) => l.status === "MEETING_BOOKED").length;
-  const followUpCount = activeLeads.filter(
-    (l) => l.nextFollowUp || (l.notes && l.notes.includes("Follow-up Scheduled"))
-  ).length;
+
+  const {
+    toCallCount,
+    connectedCount,
+    meetingsCount,
+    followUpCount,
+    noAnswerCount,
+    gatekeeperCount,
+    voicemailCount,
+  } = React.useMemo(() => {
+    let toCall = 0;
+    let connected = 0;
+    let meetings = 0;
+    let followUp = 0;
+    let noAnswer = 0;
+    let gatekeeper = 0;
+    let voicemail = 0;
+
+    for (const lead of activeLeads) {
+      const parsed = parseLatestCallerNote(lead.notes);
+      const outcome = (parsed?.outcome || "").toLowerCase();
+      const hasFollowUp = Boolean(
+        lead.nextFollowUp || (lead.notes && lead.notes.includes("Follow-up Scheduled"))
+      );
+
+      if (hasFollowUp) followUp++;
+
+      if (lead.status === "MEETING_BOOKED" || outcome.includes("meeting")) {
+        meetings++;
+      } else if (
+        ["CONNECTED", "PAIN_FOUND"].includes(lead.status) ||
+        outcome.includes("connected") ||
+        outcome.includes("spoke")
+      ) {
+        connected++;
+      } else if (outcome.includes("no answer")) {
+        noAnswer++;
+      } else if (outcome.includes("gatekeeper")) {
+        gatekeeper++;
+      } else if (outcome.includes("voicemail")) {
+        voicemail++;
+      } else if (["APPROVED", "SYNCED", "CALLING"].includes(lead.status)) {
+        toCall++;
+      }
+    }
+
+    return {
+      toCallCount: toCall,
+      connectedCount: connected,
+      meetingsCount: meetings,
+      followUpCount: followUp,
+      noAnswerCount: noAnswer,
+      gatekeeperCount: gatekeeper,
+      voicemailCount: voicemail,
+    };
+  }, [activeLeads]);
 
   const { todayCount, yesterdayCount, olderCount } = React.useMemo(() => {
     let today = 0;
@@ -878,10 +985,20 @@ export function CrmLeadSheet({
       {isOwner && teamCallers.length > 0 && (
         <div className="border-b border-zinc-800/80 bg-[#0a0a0d] p-3 text-xs">
           <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Users className="w-4 h-4 text-indigo-400" />
               <span className="font-bold text-white text-xs">Caller Activity &amp; Live Tracking</span>
-              <span className="text-[10px] text-zinc-400 hidden sm:inline">&bull; Click any caller card to filter leads</span>
+              <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 bg-zinc-900/80 px-2 py-0.5 rounded border border-zinc-800">
+                <span className="text-zinc-200 font-semibold">{callerStats.teamTotals.callsLogged} Calls Logged</span>
+                <span>&bull;</span>
+                <span className="text-emerald-400 font-semibold">{callerStats.teamTotals.meetings} Booked</span>
+                <span>&bull;</span>
+                <span className="text-sky-300 font-semibold">{callerStats.teamTotals.connected} Spoke</span>
+                <span>&bull;</span>
+                <span className="text-amber-300 font-medium">{callerStats.teamTotals.noAnswer} No Answer</span>
+                <span>&bull;</span>
+                <span className="text-orange-300 font-medium">{callerStats.teamTotals.gatekeeper} Gatekeeper</span>
+              </div>
             </div>
             <button
               type="button"
@@ -922,7 +1039,16 @@ export function CrmLeadSheet({
             </button>
 
             {teamCallers.map((caller) => {
-              const stats = callerStats.callerMap[caller.id] || { total: 0, connected: 0, meetings: 0, followUps: 0 };
+              const stats = callerStats.callerMap[caller.id] || {
+                total: 0,
+                callsLogged: 0,
+                connected: 0,
+                meetings: 0,
+                followUps: 0,
+                noAnswer: 0,
+                gatekeeper: 0,
+                voicemail: 0,
+              };
               const isSelected = callerFilter === caller.id;
               return (
                 <button
@@ -939,13 +1065,34 @@ export function CrmLeadSheet({
                     <span className="text-[11px] font-bold text-white truncate">{caller.name}</span>
                     <span className="text-[9px] text-zinc-400 shrink-0">{caller.title || "Caller"}</span>
                   </div>
-                  <div className="text-base font-extrabold text-white mt-0.5">
-                    {stats.total} <span className="text-[10px] font-normal text-zinc-400">leads</span>
+                  <div className="flex items-baseline gap-1 mt-0.5">
+                    <span className="text-base font-extrabold text-white">{stats.total}</span>
+                    <span className="text-[10px] text-zinc-400">leads</span>
+                    <span className="text-zinc-600 ml-1">&bull;</span>
+                    <span className="text-[10px] text-zinc-300 font-semibold">{stats.callsLogged} calls</span>
                   </div>
-                  <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
-                    <span className="text-emerald-400 font-semibold">{stats.meetings} booked</span>
-                    <span className="text-zinc-600">&bull;</span>
-                    <span className="text-sky-300 font-medium">{stats.connected} spoke</span>
+                  <div className="flex flex-wrap items-center gap-1 text-[9px] mt-1.5 font-semibold">
+                    <span className="px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      {stats.meetings} Booked
+                    </span>
+                    <span className="px-1 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                      {stats.connected} Spoke
+                    </span>
+                    {stats.noAnswer > 0 && (
+                      <span className="px-1 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                        {stats.noAnswer} No Answer
+                      </span>
+                    )}
+                    {stats.gatekeeper > 0 && (
+                      <span className="px-1 py-0.5 rounded bg-orange-500/15 text-orange-300 border border-orange-500/30">
+                        {stats.gatekeeper} Gatekeeper
+                      </span>
+                    )}
+                    {stats.followUps > 0 && (
+                      <span className="px-1 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                        {stats.followUps} Follow-ups
+                      </span>
+                    )}
                   </div>
                 </button>
               );
@@ -963,6 +1110,9 @@ export function CrmLeadSheet({
             { key: "FOLLOW_UP", label: `Follow-Ups (${followUpCount})` },
             { key: "CONNECTED", label: `Connected (${connectedCount})` },
             { key: "MEETINGS", label: `Meetings Booked (${meetingsCount})` },
+            { key: "NO_ANSWER", label: `No Answer (${noAnswerCount})` },
+            { key: "GATEKEEPER", label: `Gatekeeper (${gatekeeperCount})` },
+            { key: "VOICEMAIL", label: `Voicemails (${voicemailCount})` },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -1566,11 +1716,15 @@ export function CrmLeadSheet({
                                       className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold border ${
                                         parsedNote.outcome.includes("Meeting")
                                           ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                                          : parsedNote.outcome.includes("Connected")
-                                          ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/40"
+                                          : parsedNote.outcome.includes("Connected") || parsedNote.outcome.includes("Spoke")
+                                          ? "bg-sky-500/20 text-sky-300 border-sky-500/40"
+                                          : parsedNote.outcome.includes("Gatekeeper")
+                                          ? "bg-orange-500/20 text-orange-300 border-orange-500/40"
+                                          : parsedNote.outcome.includes("No Answer")
+                                          ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
                                           : parsedNote.outcome.includes("Voicemail")
-                                          ? "bg-zinc-800 text-zinc-300 border-zinc-700"
-                                          : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                                          ? "bg-purple-500/20 text-purple-300 border-purple-500/40"
+                                          : "bg-zinc-800 text-zinc-300 border-zinc-700"
                                       }`}
                                     >
                                       {parsedNote.outcome}
@@ -1591,7 +1745,7 @@ export function CrmLeadSheet({
                                 </div>
                                 <button
                                   type="button"
-                                  onClick={() => canEdit && startInlineEdit(lead.id, "notes", stripFollowUpTagFromNotes(lead.notes) || "")}
+                                  onClick={() => canEditNotes && startInlineEdit(lead.id, "notes", stripFollowUpTagFromNotes(lead.notes) || "")}
                                   className="text-left w-full group/notes block"
                                   title="Click to edit notes inline (Enter to save)"
                                 >
@@ -1603,7 +1757,7 @@ export function CrmLeadSheet({
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => canEdit && startInlineEdit(lead.id, "notes", "")}
+                                onClick={() => canEditNotes && startInlineEdit(lead.id, "notes", "")}
                                 className="text-zinc-500 hover:text-emerald-400 text-[11px] underline decoration-dotted flex items-center gap-1"
                               >
                                 <Plus className="w-2.5 h-2.5" />
@@ -2067,15 +2221,19 @@ export function CrmLeadSheet({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                  Call Notes *
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-zinc-300">
+                    Call Notes (Optional summary)
+                  </label>
+                  <span className="text-[10px] text-zinc-500">
+                    Leave blank to auto-record standard outcome note
+                  </span>
+                </div>
                 <textarea
                   rows={3}
-                  required
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Write a quick summary of the call..."
+                  placeholder="Write a quick summary of the call or objections (leave empty for auto note)..."
                   className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
                 />
               </div>

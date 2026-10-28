@@ -90,6 +90,25 @@ export interface CallerLeadView {
   approvedAt?: string | null;
 }
 
+export function getDefaultCallNote(outcome: string): string {
+  switch (outcome) {
+    case "NO_ANSWER":
+      return "No answer / Rang out";
+    case "GATEKEEPER_BLOCKED":
+      return "Gatekeeper blocked / Receptionist refused transfer";
+    case "WRONG_NUMBER":
+      return "Wrong number / Disconnected line";
+    case "CALL_COMPLETED":
+      return "Left voicemail / Follow-up required";
+    case "CONNECTED":
+      return "Connected / Spoke with contact";
+    case "MEETING_BOOKED":
+      return "Meeting booked";
+    default:
+      return "Call completed";
+  }
+}
+
 export interface CallFeedbackInput {
   companyId: string;
   actor: string;
@@ -98,6 +117,7 @@ export interface CallFeedbackInput {
   softwareConfirmed?: string | null;
   fleetSizeConfirmed?: number | null;
   callerNotes: string;
+  followUpDate?: string | null;
 }
 
 export async function getCallerQueue(
@@ -228,7 +248,7 @@ export async function getCallerQueue(
 export async function recordCallFeedback(
   db: Db,
   input: CallFeedbackInput
-): Promise<{ ok: true; nextStatus: LifecycleStatus }> {
+): Promise<{ ok: true; nextStatus: LifecycleStatus; updatedNotes: string; nextFollowUp: string | null }> {
   const [company] = await db
     .select()
     .from(companies)
@@ -278,42 +298,52 @@ export async function recordCallFeedback(
   }
 
   // 3. Update company lifecycle status and clean caller log entries
-  const hasNewFollowUp = /\[Next Follow-up Scheduled:\s*([^\]]+)\]/i.test(input.callerNotes);
-  const baseExistingNotes = hasNewFollowUp ? stripFollowUpTags(company.notes) : (company.notes || "");
-  
+  const followUpMatch = (input.callerNotes || "").match(/\[Next Follow-up Scheduled:\s*([^\]]+)\]/i);
+  const extractedFollowUp = followUpMatch ? followUpMatch[1]?.trim() : null;
+  const effectiveFollowUp =
+    (input.followUpDate ? input.followUpDate.trim() : null) ||
+    extractedFollowUp ||
+    extractLatestFollowUp(company.notes);
+
+  const cleanUserNote = stripFollowUpTags(input.callerNotes).trim();
+  const noteBody = cleanUserNote || getDefaultCallNote(input.callOutcome);
+
   const timeStr = new Date().toLocaleString("en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
   });
-  const outcomeLabel = input.callOutcome === "CONNECTED"
-    ? "Connected / Spoke"
-    : input.callOutcome === "MEETING_BOOKED"
-    ? "Meeting Booked"
-    : input.callOutcome === "GATEKEEPER_BLOCKED"
-    ? "Gatekeeper"
-    : input.callOutcome === "NO_ANSWER"
-    ? "No Answer"
-    : input.callOutcome === "WRONG_NUMBER"
-    ? "Wrong Number"
-    : "Completed";
+  const outcomeLabel =
+    input.callOutcome === "CONNECTED"
+      ? "Connected / Spoke"
+      : input.callOutcome === "MEETING_BOOKED"
+      ? "Meeting Booked"
+      : input.callOutcome === "GATEKEEPER_BLOCKED"
+      ? "Gatekeeper"
+      : input.callOutcome === "NO_ANSWER"
+      ? "No Answer"
+      : input.callOutcome === "WRONG_NUMBER"
+      ? "Wrong Number"
+      : "Left Voicemail";
 
-  const cleanInputNote = input.callerNotes.trim();
-  const newCallLogEntry = cleanInputNote.startsWith("[")
-    ? cleanInputNote
-    : `[${timeStr} • ${input.actor || "Caller"} (${outcomeLabel})]: ${cleanInputNote}`;
+  const newCallLogEntry = `[${timeStr} • ${input.actor || "Caller"} (${outcomeLabel})]: ${noteBody}`;
 
-  const existingLogs = extractCallerNotes(baseExistingNotes);
-  const updatedNotes = existingLogs
+  const baseExisting = stripFollowUpTags(company.notes);
+  const existingLogs = extractCallerNotes(baseExisting);
+  const combinedLogs = existingLogs
     ? `${newCallLogEntry}\n${existingLogs}`
     : newCallLogEntry;
+
+  const finalNotes = effectiveFollowUp
+    ? `[Next Follow-up Scheduled: ${effectiveFollowUp}]\n${combinedLogs}`
+    : combinedLogs;
 
   await db
     .update(companies)
     .set({
       status: nextStatus,
-      notes: updatedNotes,
+      notes: finalNotes,
       updatedAt: new Date(),
     })
     .where(eq(companies.id, input.companyId));
@@ -331,11 +361,12 @@ export async function recordCallFeedback(
       painIdentified: input.painIdentified,
       softwareConfirmed: input.softwareConfirmed,
       fleetSizeConfirmed: input.fleetSizeConfirmed,
-      notes: input.callerNotes,
+      notes: noteBody,
+      effectiveFollowUp,
     },
   });
 
-  return { ok: true, nextStatus };
+  return { ok: true, nextStatus, updatedNotes: finalNotes, nextFollowUp: effectiveFollowUp };
 }
 
 export interface UpdateLeadCrmInput {

@@ -198,8 +198,9 @@ export function CallerClient({
   const canImport = isOwner || Boolean(permissions?.discoverLeads || permissions?.exportAndSync);
   const canExport = isOwner || Boolean(permissions?.exportAndSync);
   const canManageSettings = isOwner || Boolean(permissions?.manageTeamAndSettings);
-  const canEditContacts =
-    !permissions || permissions.editContacts || permissions.callerWorkbench;
+  const canEditContacts = isOwner || Boolean(permissions?.editContacts);
+  const canEditNotes =
+    isOwner || Boolean(permissions?.editContacts) || Boolean(permissions?.callerWorkbench);
 
   const handleAutoDistribute = () => {
     if (!marketId) return;
@@ -735,14 +736,6 @@ export function CallerClient({
     e.preventDefault();
     if (!selectedLead) return;
 
-    if (!notes.trim()) {
-      setFeedbackMessage({
-        type: "error",
-        text: "Please enter a short note about the call.",
-      });
-      return;
-    }
-
     startTransition(async () => {
       const fleetNum = confirmedFleet.trim() ? parseInt(confirmedFleet.trim(), 10) : null;
       const combinedNotes = followUpDate
@@ -756,13 +749,16 @@ export function CallerClient({
         softwareConfirmed: confirmedSoftware.trim() || null,
         fleetSizeConfirmed: fleetNum && !isNaN(fleetNum) ? fleetNum : null,
         callerNotes: combinedNotes,
+        followUpDate: followUpDate || null,
       });
 
       if (res.success && res.nextStatus) {
         const cleanExisting = stripFollowUpTagFromNotes(selectedLead.notes);
-        const updatedNotes = cleanExisting
-          ? `${cleanExisting}\n[Call ${new Date().toISOString().slice(0, 10)}] ${combinedNotes}`
-          : `[Call ${new Date().toISOString().slice(0, 10)}] ${combinedNotes}`;
+        const updatedNotes =
+          res.updatedNotes ||
+          (cleanExisting
+            ? `${cleanExisting}\n[Call ${new Date().toISOString().slice(0, 10)}] ${combinedNotes}`
+            : `[Call ${new Date().toISOString().slice(0, 10)}] ${combinedNotes}`);
 
         setQueue((prev) =>
           prev.map((item) =>
@@ -771,7 +767,7 @@ export function CallerClient({
                   ...item,
                   status: res.nextStatus!,
                   software: confirmedSoftware.trim() || item.software,
-                  nextFollowUp: followUpDate || item.nextFollowUp,
+                  nextFollowUp: res.nextFollowUp || followUpDate || item.nextFollowUp,
                   notes: updatedNotes,
                 }
               : item
@@ -779,7 +775,7 @@ export function CallerClient({
         );
         setFeedbackMessage({
           type: "success",
-          text: "Call outcome and notes saved.",
+          text: "Call outcome and notes saved successfully.",
         });
         setTimeout(() => {
           setSelectedLead(null);
@@ -2723,14 +2719,13 @@ export function CallerClient({
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                  Call Notes *
+                  Call Notes (Optional summary)
                 </label>
                 <textarea
                   rows={3}
-                  required
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Write a brief summary of the conversation, objections, or next steps..."
+                  placeholder="Summary of conversation (leave blank to auto-record standard outcome note)..."
                   className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
                 />
               </div>

@@ -105,14 +105,30 @@ export function parseLatestCallerNote(notes: string | null | undefined): ParsedC
   const stripped = notes.replace(/\[Next Follow-up Scheduled:\s*[^\]]+\]\s*/gi, "").trim();
   if (!stripped) return null;
 
-  const lines = stripped.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = stripped.split("\n").map((l) => l.trim()).filter((line) => {
+    if (!line) return false;
+    if (
+      line.startsWith("BATTLECARD:") ||
+      line.startsWith("15-SECOND OPENING SCRIPT:") ||
+      line.startsWith("Focus:") ||
+      line.startsWith("Local Market:") ||
+      line.startsWith("Gatekeeper Strategy:") ||
+      line.startsWith("Reputation:") ||
+      line.startsWith("Authority:") ||
+      line.startsWith("PITCH ANGLE:")
+    ) {
+      return false;
+    }
+    return true;
+  });
+
   if (lines.length === 0) return null;
 
-  const first = lines[0];
-  if (!first) return null;
+  // Find the first line that looks like a call log entry, or fall back to the first non-battlecard line
+  const logLine = lines.find((l) => l.startsWith("[")) || lines[0]!;
 
   // Match format: [Oct 27, 11:53 PM • Hamda (Connected / Spoke)]: voice mail sent
-  const match = first.match(/^\[([^•\]]+)(?:•\s*([^(]+))?(?:\(([^)]+)\))?\]:\s*(.*)$/);
+  const match = logLine.match(/^\[([^•\]]+)(?:•\s*([^(]+))?(?:\(([^)]+)\))?\]:\s*(.*)$/);
   if (match) {
     return {
       timestamp: match[1]?.trim(),
@@ -123,7 +139,7 @@ export function parseLatestCallerNote(notes: string | null | undefined): ParsedC
   }
 
   // Match simple bracket format: [Call 2026-10-27] Note text
-  const simpleMatch = first.match(/^\[([^\]]+)\]\s*(.*)$/);
+  const simpleMatch = logLine.match(/^\[([^\]]+)\]\s*(.*)$/);
   if (simpleMatch) {
     return {
       timestamp: simpleMatch[1]?.trim(),
@@ -132,6 +148,6 @@ export function parseLatestCallerNote(notes: string | null | undefined): ParsedC
   }
 
   return {
-    cleanText: first || "",
+    cleanText: logLine || "",
   };
 }
