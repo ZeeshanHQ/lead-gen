@@ -316,11 +316,7 @@ export function canMemberAccessPath(member: TeamMember | null | undefined, pathn
     return Boolean(member.permissions.approveLeads);
   }
   if (pathname.startsWith("/discover")) {
-    return Boolean(
-      member.permissions.discoverLeads ||
-      member.permissions.callerWorkbench ||
-      member.role === "CALLER"
-    );
+    return Boolean(member.permissions.discoverLeads);
   }
   if (pathname.startsWith("/caller") || pathname.startsWith("/company/") || pathname.startsWith("/leads") || pathname.startsWith("/approved")) {
     return Boolean(member.permissions.callerWorkbench);

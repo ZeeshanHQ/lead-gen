@@ -28,9 +28,14 @@ export default async function ApprovedLeadsPage() {
   const allMembers = teamState.allMembers || [];
   const perms = activeMember.permissions;
   const isOwner = activeMember.role === "OWNER";
-  const canManageSettings = isOwner || Boolean(perms.manageTeamAndSettings);
+  const isOwnerOrManager = isOwner || Boolean(perms.manageTeamAndSettings);
+  const canManageSettings = isOwnerOrManager;
 
-  const crmLeads: CrmLeadItem[] = leads.map((l) => ({
+  const visibleRows = isOwnerOrManager
+    ? leads
+    : leads.filter((l) => l.assignedMemberId === activeMember.id);
+
+  const crmLeads: CrmLeadItem[] = visibleRows.map((l) => ({
     id: l.id,
     name: l.name,
     address: l.address,

@@ -355,9 +355,8 @@ export function CrmLeadSheet({
   const [editNotes, setEditNotes] = useState("");
   const [editAssignedId, setEditAssignedId] = useState("");
 
-  const canImport =
-    !permissions ||
-    Boolean(permissions.discoverLeads || permissions.callerWorkbench || permissions.editContacts);
+  const canDiscover = isOwner || Boolean(permissions?.discoverLeads);
+  const canImport = isOwner || Boolean(permissions?.discoverLeads || permissions?.exportAndSync);
   const canExport = isOwner || Boolean(permissions?.exportAndSync);
   const canCall = !permissions || permissions.callerWorkbench;
   const canEdit = !permissions || permissions.editContacts || permissions.callerWorkbench;
@@ -844,17 +843,21 @@ export function CrmLeadSheet({
             No leads found for {nicheName ? `"${nicheName}"` : "this filter"}
           </p>
           <p className="max-w-md mx-auto text-zinc-400">
-            Switch filter tabs above or extract new verified leads.
+            {canDiscover
+              ? "Switch filter tabs above or extract new verified leads."
+              : "No leads are currently assigned to your queue. Contact your workspace owner to assign leads."}
           </p>
-          <div className="flex items-center justify-center gap-2.5 pt-1">
-            {canImport && (
-              <>
+          {(canDiscover || canImport) && (
+            <div className="flex items-center justify-center gap-2.5 pt-1">
+              {canDiscover && (
                 <Link
                   href="/discover"
                   className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3.5 py-1.5 text-xs font-bold text-black hover:bg-zinc-200"
                 >
                   <span>+ Find Leads</span>
                 </Link>
+              )}
+              {canImport && (
                 <button
                   type="button"
                   onClick={() => setImportModalOpen(true)}
@@ -863,9 +866,9 @@ export function CrmLeadSheet({
                   <Upload className="w-3.5 h-3.5" />
                   <span>Import CSV</span>
                 </button>
-              </>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="overflow-x-auto">

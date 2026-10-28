@@ -103,7 +103,26 @@ export async function bootstrap(db: Db): Promise<void> {
     await db.execute(sql`ALTER TABLE "companies" ADD COLUMN IF NOT EXISTS "assigned_member_name" text;`);
   } catch {}
 
-  // 3. Default Settings & Mark Initialized
+  // 3. Ensure Row-Level Security (RLS) is enabled on all public tables (Supabase Security Advisor)
+  try {
+    const tablesRes = (await db.execute(sql`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE';
+    `)) as any;
+    const rows = tablesRes?.rows || tablesRes;
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        if (row?.table_name) {
+          try {
+            await db.execute(sql.raw(`ALTER TABLE public."${row.table_name}" ENABLE ROW LEVEL SECURITY;`));
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  // 4. Default Settings & Mark Initialized
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     await db.insert(systemSettings).values({ key, value }).onConflictDoNothing({ target: systemSettings.key });
   }

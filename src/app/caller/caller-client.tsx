@@ -194,11 +194,9 @@ export function CallerClient({
   };
 
   const isOwner = !activeMember || activeMember.role === "OWNER";
-  const canImport =
-    !permissions ||
-    Boolean(permissions.discoverLeads || permissions.callerWorkbench || permissions.editContacts);
+  const canDiscover = isOwner || Boolean(permissions?.discoverLeads);
+  const canImport = isOwner || Boolean(permissions?.discoverLeads || permissions?.exportAndSync);
   const canExport = isOwner || Boolean(permissions?.exportAndSync);
-  const canDiscover = !permissions || permissions.discoverLeads;
   const canManageSettings = isOwner || Boolean(permissions?.manageTeamAndSettings);
   const canEditContacts =
     !permissions || permissions.editContacts || permissions.callerWorkbench;
