@@ -13,6 +13,7 @@ export interface ContactCandidate {
   title: string;
   email?: string | null;
   phone?: string | null;
+  linkedinUrl?: string | null;
   confidence: number;
   sourceUrl: string;
 }
@@ -20,6 +21,7 @@ export interface ContactCandidate {
 export interface CompanyInfoCandidate {
   companyName?: string | null;
   phone?: string | null;
+  linkedinUrl?: string | null;
   street?: string | null;
   city?: string | null;
   state?: string | null;

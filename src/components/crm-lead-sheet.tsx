@@ -374,8 +374,8 @@ export function CrmLeadSheet({
   const canDiscover = isOwner || Boolean(permissions?.discoverLeads);
   const canImport = isOwner || Boolean(permissions?.discoverLeads || permissions?.exportAndSync);
   const canExport = isOwner || Boolean(permissions?.exportAndSync);
-  const canCall = !permissions || permissions.callerWorkbench;
-  const canEdit = !permissions || permissions.editContacts || permissions.callerWorkbench;
+  const canCall = isOwner || !permissions || Boolean(permissions.callerWorkbench);
+  const canEdit = isOwner || Boolean(permissions?.editContacts);
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -1101,7 +1101,9 @@ export function CrmLeadSheet({
                 <th className="px-4 py-3 whitespace-nowrap min-w-[240px] max-w-[280px]">Company &amp; Location</th>
                 <th className="px-3 py-3 whitespace-nowrap min-w-[210px] max-w-[260px]">Decision Maker &amp; LinkedIn</th>
                 <th className="px-3 py-3 whitespace-nowrap min-w-[150px]">Direct Phone</th>
-                <th className="px-3 py-3 whitespace-nowrap min-w-[130px]">Assigned Caller</th>
+                {(isOwner || canManageSettings) && (
+                  <th className="px-3 py-3 whitespace-nowrap min-w-[130px]">Assigned Caller</th>
+                )}
                 <th className="px-3 py-3 whitespace-nowrap min-w-[155px]">Pipeline Stage</th>
                 {smartFields.map((field) => (
                   <th key={field.key} className="px-3 py-3 whitespace-nowrap min-w-[125px]">
@@ -1161,7 +1163,7 @@ export function CrmLeadSheet({
                   <React.Fragment key={lead.id}>
                     {isNewBatch && (
                       <tr className="bg-zinc-950 border-y border-zinc-800/80 sticky top-0 z-10">
-                        <td colSpan={8 + smartFields.length} className="px-4 py-2">
+                        <td colSpan={(isOwner || canManageSettings ? 8 : 7) + smartFields.length} className="px-4 py-2">
                           <div className="flex items-center justify-between text-xs font-bold">
                             <div className="flex items-center gap-2">
                               <span
@@ -1419,29 +1421,31 @@ export function CrmLeadSheet({
                         )}
                       </td>
 
-                      {/* Assigned Caller */}
-                      <td className="px-3 py-3.5 whitespace-nowrap min-w-[130px]">
-                        {canManageSettings && allMembers.length > 0 ? (
-                          <select
-                            value={lead.assignedMemberId || ""}
-                            onChange={(e) => handleInlineAssignCaller(lead, e.target.value)}
-                            className="rounded-lg border border-zinc-800 bg-[#09090b] px-2 py-1 text-[11px] font-medium text-zinc-200 focus:border-zinc-500 focus:outline-none cursor-pointer"
-                          >
-                            <option value="">Unassigned</option>
-                            {allMembers
-                              .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
-                              .map((m) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.name}
-                                </option>
-                              ))}
-                          </select>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-[#09090b] px-2 py-1 text-[11px] font-medium text-zinc-300">
-                            {lead.assignedMemberName || "Unassigned"}
-                          </span>
-                        )}
-                      </td>
+                      {/* Assigned Caller (Only visible to Owner and Managers) */}
+                      {(isOwner || canManageSettings) && (
+                        <td className="px-3 py-3.5 whitespace-nowrap min-w-[130px]">
+                          {canManageSettings && allMembers.length > 0 ? (
+                            <select
+                              value={lead.assignedMemberId || ""}
+                              onChange={(e) => handleInlineAssignCaller(lead, e.target.value)}
+                              className="rounded-lg border border-zinc-800 bg-[#09090b] px-2 py-1 text-[11px] font-medium text-zinc-200 focus:border-zinc-500 focus:outline-none cursor-pointer"
+                            >
+                              <option value="">Unassigned</option>
+                              {allMembers
+                                .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+                                .map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.name}
+                                  </option>
+                                ))}
+                            </select>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-[#09090b] px-2 py-1 text-[11px] font-medium text-zinc-300">
+                              {lead.assignedMemberName || "Unassigned"}
+                            </span>
+                          )}
+                        </td>
+                      )}
 
                       {/* Interactive Status Dropdown with Vivid Stage Badges */}
                       <td className="px-3 py-3.5 whitespace-nowrap min-w-[155px]">

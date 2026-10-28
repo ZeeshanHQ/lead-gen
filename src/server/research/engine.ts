@@ -416,6 +416,24 @@ export async function researchCompany(
     if (info.postalCode && !company.zip && !lockSet.has("zip")) {
       updates.zip = info.postalCode;
     }
+    if (info.linkedinUrl) {
+      try {
+        await setFact(db, {
+          companyId,
+          field: "linkedin",
+          value: info.linkedinUrl,
+          confidence: 0.95,
+          provenance: "PUBLICLY_VERIFIED",
+          sourceType: "website",
+          sourceUrl: info.sourceUrl || company.website || "",
+          evidenceText: `Discovered LinkedIn profile URL: ${info.linkedinUrl}`,
+          actor,
+          runId: options.runId,
+        });
+      } catch {
+        // non-blocking
+      }
+    }
   }
 
   // 8. Discover and insert leadership contacts in 1 bulk insert

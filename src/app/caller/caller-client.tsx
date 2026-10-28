@@ -1668,37 +1668,40 @@ export function CallerClient({
                           )}
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-3 pt-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[11px] text-zinc-500 flex items-center gap-1">
-                              <Users className="w-3 h-3 text-zinc-500" />
-                              <span>Assigned Caller:</span>
-                            </span>
-                            {allMembers && allMembers.length > 0 && canManageSettings ? (
-                              <select
-                                value={lead.assignedMemberId || ""}
-                                onChange={(e) =>
-                                  handleAssignLead(lead.companyId, e.target.value)
-                                }
-                                disabled={assignPendingId === lead.companyId}
-                                className="rounded border border-zinc-800 bg-[#09090b] px-2 py-0.5 text-[11px] text-zinc-200 focus:border-zinc-500 focus:outline-none cursor-pointer"
-                              >
-                                <option value="">Unassigned</option>
-                                {allMembers
-                                  .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
-                                  .map((m) => (
-                                    <option key={m.id} value={m.id}>
-                                      {m.name} ({ROLE_PRESETS[m.role]?.shortLabel || m.role})
-                                    </option>
-                                  ))}
-                              </select>
-                            ) : (
-                              <span className="text-[11px] font-medium text-zinc-300">
-                                {lead.assignedMemberName || "Unassigned"}
+                        {/* Assigned Caller: Only visible to Owner / Lead Managers */}
+                        {canManageSettings && (
+                          <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] text-zinc-500 flex items-center gap-1">
+                                <Users className="w-3 h-3 text-zinc-500" />
+                                <span>Assigned Caller:</span>
                               </span>
-                            )}
+                              {allMembers && allMembers.length > 0 ? (
+                                <select
+                                  value={lead.assignedMemberId || ""}
+                                  onChange={(e) =>
+                                    handleAssignLead(lead.companyId, e.target.value)
+                                  }
+                                  disabled={assignPendingId === lead.companyId}
+                                  className="rounded border border-zinc-800 bg-[#09090b] px-2 py-0.5 text-[11px] text-zinc-200 focus:border-zinc-500 focus:outline-none cursor-pointer"
+                                >
+                                  <option value="">Unassigned</option>
+                                  {allMembers
+                                    .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+                                    .map((m) => (
+                                      <option key={m.id} value={m.id}>
+                                        {m.name} ({ROLE_PRESETS[m.role]?.shortLabel || m.role})
+                                      </option>
+                                    ))}
+                                </select>
+                              ) : (
+                                <span className="text-[11px] font-medium text-zinc-300">
+                                  {lead.assignedMemberName || "Unassigned"}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                        </div>
+                        )}
 
                         {/* Bleeding Ad Spend & Real Estate Scale Badges */}
                         {(lead.facts?.["bleeding_ads"] === "YES" ||

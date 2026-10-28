@@ -77,12 +77,28 @@ export function extractCompanyInfo(pages: CrawledPage[]): CompanyInfoCandidate {
     }
   }
 
+  // 3. Scan for LinkedIn company profile or social links
+  let foundLinkedin: string | null = null;
+  for (const page of pages) {
+    const $ = cheerio.load(page.html);
+    const compLink = $("a[href*='linkedin.com/company/']").first().attr("href");
+    if (compLink) {
+      foundLinkedin = compLink.trim();
+      break;
+    }
+    const inLink = $("a[href*='linkedin.com/in/']").first().attr("href");
+    if (inLink && !foundLinkedin) {
+      foundLinkedin = inLink.trim();
+    }
+  }
+
   return {
     phone: foundPhone,
     street: foundStreet,
     city: foundCity,
     state: foundState,
     postalCode: foundZip ?? null,
+    linkedinUrl: foundLinkedin,
     evidenceSnippet,
     sourceUrl,
   };
@@ -150,28 +166,38 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
     }
 
     // 2. Scan structured team cards / headings
-    $("h1, h2, h3, h4, strong, .name, .team-name, .member-name, [class*='agent-name'], [class*='member-name'], [class*='person-name']").each((_, el) => {
-      const elText = $(el).text().replace(/\s+/g, " ").trim();
+    // Strict isolation: only inspect actual team/agent/person cards, never arbitrary sections!
+    $(".team-member, .person, .team-card, .bio-card, .profile-card, .agent-card, [class*='agent-detail'], [class*='agent-box'], [class*='member-box'], [class*='team-wrap'], [class*='team-item']").each((_, cardEl) => {
+      const card = $(cardEl);
+      const nameEl = card.find(".name, .team-name, .member-name, [class*='agent-name'], [class*='person-name'], h2, h3, h4, strong").first();
+      if (!nameEl.length) return;
+      const elText = nameEl.text().replace(/\s+/g, " ").trim();
       if (!elText || elText.length < 3 || elText.length > 40) return;
 
       const cleanedName = cleanPersonName(elText);
       if (!cleanedName || seenNames.has(cleanedName.toLowerCase())) return;
 
-      let siblingText = "";
-      const container = $(el).closest(
-        ".team-member, .person, .team-card, .bio, .profile, .agent-detail, [class*='agent'], [class*='member'], [class*='team'], [class*='bio'], section, article, div.container"
-      );
-      if (container.length > 0) {
-        siblingText = container.text().replace(/\s+/g, " ").trim();
-      } else {
-        const nextEl = $(el).next();
-        siblingText = nextEl.length > 0 ? nextEl.text().replace(/\s+/g, " ").trim() : $(el).parent().text().replace(/\s+/g, " ").trim();
+      // Find title candidate in the card
+      const titleEl = card.find(".title, .role, .position, .designation, [class*='job-title'], [class*='member-role'], [class*='agent-title']").first();
+      let titleCandidate: string | null = null;
+      if (titleEl.length) {
+        const tMatch = LEADERSHIP_TITLE_REGEX.exec(titleEl.text());
+        if (tMatch) titleCandidate = tMatch[0];
+      }
+      if (!titleCandidate) {
+        const nextEl = nameEl.next("p, span, div, h4, h5, small");
+        if (nextEl.length) {
+          const tMatch = LEADERSHIP_TITLE_REGEX.exec(nextEl.text());
+          if (tMatch) titleCandidate = tMatch[0];
+        }
+      }
+      if (!titleCandidate) {
+        const cardText = card.text().replace(/\s+/g, " ").trim();
+        const tMatch = LEADERSHIP_TITLE_REGEX.exec(cardText);
+        if (tMatch) titleCandidate = tMatch[0];
       }
 
-      let titleMatch = LEADERSHIP_TITLE_REGEX.exec(siblingText);
-      let titleCandidate: string | null = titleMatch ? titleMatch[0] : null;
-
-      if (!titleCandidate && (/license\s+(?:number|no|#)|dre\s*#|bre\s*#|realtor|broker/i.test(siblingText) || $(el).closest("[class*='agent'], [class*='realtor']").length > 0)) {
+      if (!titleCandidate && (/license\s+(?:number|no|#)|dre\s*#|bre\s*#|realtor|broker/i.test(card.text()) || card.is("[class*='agent'], [class*='realtor']"))) {
         titleCandidate = "Licensed Agent / Broker";
       }
 
@@ -180,28 +206,18 @@ export function extractLeadershipContacts(pages: CrawledPage[]): ContactCandidat
         if (isDecisionMaker(role)) {
           seenNames.add(cleanedName.toLowerCase());
 
-          let containerHtml = $(el).closest(".team-member, .person, .team-card, div, section, article, li").html() || "";
-          let emails = extractEmailsFromHtml(containerHtml);
-          let phones = extractPhonesFromHtml(containerHtml);
-
-          if (emails.length === 0 || phones.length === 0) {
-            let next = $(el).next();
-            let steps = 0;
-            while (next.length > 0 && steps < 4) {
-              const h = next.html() || next.text() || "";
-              if (emails.length === 0) emails = extractEmailsFromHtml(h);
-              if (phones.length === 0) phones = extractPhonesFromHtml(h);
-              next = next.next();
-              steps++;
-            }
-          }
+          const cardHtml = card.html() || "";
+          const emails = extractEmailsFromHtml(cardHtml);
+          const phones = extractPhonesFromHtml(cardHtml);
+          const linkedinUrl = card.find("a[href*='linkedin.com/in/']").first().attr("href")?.trim() || null;
 
           candidates.push({
             fullName: cleanedName,
             title: titleCandidate,
             email: emails.length > 0 ? emails[0] : null,
             phone: phones.length > 0 ? phones[0] : null,
-            confidence: 0.88,
+            linkedinUrl,
+            confidence: 0.90,
             sourceUrl: page.url,
           });
         }

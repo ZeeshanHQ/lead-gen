@@ -198,6 +198,7 @@ export interface BatchContactInput {
   title?: string | null;
   email?: string | null;
   phone?: string | null;
+  linkedinUrl?: string | null;
   sourceUrl?: string | null;
 }
 
@@ -258,7 +259,7 @@ export async function addContactsBatch(
       verified: true,
       confidence: 0.9,
       provenance: "PUBLICLY_VERIFIED" as const,
-      sourceUrl: item.sourceUrl ?? null,
+      sourceUrl: item.linkedinUrl || item.sourceUrl || null,
       sourceType: "website" as const,
       status: "ACTIVE" as const,
       notes: `Discovered by Research Runner from ${item.sourceUrl || "website"}`,
