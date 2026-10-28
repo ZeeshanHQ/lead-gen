@@ -76,6 +76,7 @@ export const VALUE_FACT_KEYS = [
   "doors_managed",
   "avg_property_value",
   "property_mgmt_software",
+  "linkedin",
 ] as const;
 export type ValueFactKey = (typeof VALUE_FACT_KEYS)[number];
 
@@ -112,6 +113,7 @@ export const FACT_LABELS: Record<FactKey, string> = {
   doors_managed: "Doors / units managed",
   avg_property_value: "Average property value",
   property_mgmt_software: "Property management software",
+  linkedin: "LinkedIn Profile",
   employees: "Employees",
   software: "Software",
   reputation: "Reviews / reputation",

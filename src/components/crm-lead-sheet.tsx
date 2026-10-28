@@ -24,7 +24,12 @@ import {
 } from "@/server/domain/niche-fields";
 import type { TeamPermissions, TeamMember } from "@/server/domain/team";
 import type { LifecycleStatus } from "@/server/domain/lifecycle";
-import { classifyLeadDate } from "@/components/crm-date-utils";
+import {
+  classifyLeadDate,
+  parseLatestCallerNote,
+  getLeadIntakeDate,
+} from "@/components/crm-date-utils";
+import { updateTeamMemberAccessAction } from "@/app/settings/actions";
 import {
   Sheet,
   Phone,
@@ -43,6 +48,11 @@ import {
   Plus,
   Trash2,
   Clock,
+  Shield,
+  ShieldCheck,
+  ArrowUpDown,
+  Filter,
+  Users,
 } from "lucide-react";
 
 export interface CrmLeadItem {
@@ -61,6 +71,7 @@ export interface CrmLeadItem {
     title: string | null;
     phone: string | null;
     email: string | null;
+    linkedinUrl?: string | null;
   };
   replacement?: string;
   financing?: string;
@@ -210,6 +221,10 @@ export function CrmLeadSheet({
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "YESTERDAY" | "OLDER">("ALL");
+  const [callerFilter, setCallerFilter] = useState<string>("ALL");
+  const [sortBy, setSortBy] = useState<"INTAKE_DATE" | "ICP_SCORE" | "NAME_AZ" | "STAGE">("INTAKE_DATE");
+  const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState(false);
+  const [viewingNotesHistoryLead, setViewingNotesHistoryLead] = useState<CrmLeadItem | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Inline Cell Editing State (Airtable / Google Sheets style)
@@ -345,6 +360,7 @@ export function CrmLeadSheet({
   const [editName, setEditName] = useState("");
   const [editContactName, setEditContactName] = useState("");
   const [editContactTitle, setEditContactTitle] = useState("");
+  const [editContactLinkedin, setEditContactLinkedin] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editWebsite, setEditWebsite] = useState("");
@@ -380,6 +396,14 @@ export function CrmLeadSheet({
 
   // Inline 1-click status change
   const handleInlineStatusChange = async (lead: CrmLeadItem, nextStatus: LifecycleStatus) => {
+    if (nextStatus === "CONNECTED" || nextStatus === "MEETING_BOOKED" || nextStatus === "PAIN_FOUND") {
+      setSelectedLead(lead);
+      setOutcome(nextStatus === "MEETING_BOOKED" ? "MEETING_BOOKED" : "CONNECTED");
+      setNotes("");
+      setFollowUpDate(lead.nextFollowUp || "");
+      return;
+    }
+
     applyLeadPatch(lead.id, { status: nextStatus });
     const res = await updateLeadStatusQuickAction({ companyId: lead.id, status: nextStatus });
     if (!res.ok) {
@@ -475,6 +499,7 @@ export function CrmLeadSheet({
     setEditName(lead.name || "");
     setEditContactName(lead.bestContact?.name || "");
     setEditContactTitle(lead.bestContact?.title || "");
+    setEditContactLinkedin(lead.bestContact?.linkedinUrl || (lead.facts as any)?.["linkedin"] || "");
     setEditPhone(lead.bestContact?.phone || lead.phoneDisplay || "");
     setEditEmail(lead.bestContact?.email || "");
     setEditWebsite(lead.website || "");
@@ -516,6 +541,7 @@ export function CrmLeadSheet({
         title: editContactTitle.trim() || null,
         phone: editPhone.trim() || null,
         email: editEmail.trim() || null,
+        linkedinUrl: editContactLinkedin.trim() || null,
       },
     };
 
@@ -535,6 +561,7 @@ export function CrmLeadSheet({
         contactTitle: editContactTitle.trim() || null,
         contactEmail: editEmail.trim() || null,
         contactPhone: editPhone.trim() || null,
+        contactLinkedin: editContactLinkedin.trim() || null,
         nextFollowUp: editFollowUp || null,
         notes: editNotes.trim() || null,
         assignedMemberId: nextAssignedId,
@@ -564,6 +591,15 @@ export function CrmLeadSheet({
   // Filter leads
   const filteredLeads = leads.filter((lead) => {
     if (lead.status === "REJECTED" && statusFilter !== "REJECTED") return false;
+    if (callerFilter === "UNASSIGNED" && lead.assignedMemberId && lead.assignedMemberId !== "") return false;
+    if (
+      callerFilter !== "ALL" &&
+      callerFilter !== "UNASSIGNED" &&
+      lead.assignedMemberId !== callerFilter
+    ) {
+      return false;
+    }
+
     if (statusFilter === "TO_CALL") {
       if (!["APPROVED", "SYNCED", "CALLING"].includes(lead.status)) return false;
     } else if (statusFilter === "CONNECTED") {
@@ -599,6 +635,64 @@ export function CrmLeadSheet({
     );
   });
 
+  // Deterministic stable sorting so leads NEVER jump around unexpectedly
+  const sortedLeads = React.useMemo(() => {
+    const list = [...filteredLeads];
+    if (sortBy === "INTAKE_DATE") {
+      list.sort((a, b) => {
+        const aTime = getLeadIntakeDate(a).getTime();
+        const bTime = getLeadIntakeDate(b).getTime();
+        if (bTime !== aTime) return bTime - aTime;
+        return (b.icpScore || 0) - (a.icpScore || 0);
+      });
+    } else if (sortBy === "ICP_SCORE") {
+      list.sort((a, b) => (b.icpScore || 0) - (a.icpScore || 0));
+    } else if (sortBy === "NAME_AZ") {
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    } else if (sortBy === "STAGE") {
+      list.sort((a, b) => a.status.localeCompare(b.status));
+    }
+    return list;
+  }, [filteredLeads, sortBy]);
+
+  const teamCallers = React.useMemo(() => {
+    return (allMembers || []).filter(
+      (m) => m.status === "ACTIVE" && m.role !== "VIEWER"
+    );
+  }, [allMembers]);
+
+  const callerStats = React.useMemo(() => {
+    const map: Record<
+      string,
+      { total: number; connected: number; meetings: number; followUps: number }
+    > = {};
+    for (const c of teamCallers) {
+      map[c.id] = { total: 0, connected: 0, meetings: 0, followUps: 0 };
+    }
+    let unassigned = 0;
+    for (const lead of leads) {
+      if (lead.status === "REJECTED") continue;
+      if (!lead.assignedMemberId) {
+        unassigned++;
+        continue;
+      }
+      const entry = map[lead.assignedMemberId];
+      if (entry) {
+        entry.total++;
+        if (["CONNECTED", "PAIN_FOUND"].includes(lead.status)) {
+          entry.connected++;
+        }
+        if (lead.status === "MEETING_BOOKED") {
+          entry.meetings++;
+        }
+        if (lead.nextFollowUp) {
+          entry.followUps++;
+        }
+      }
+    }
+    return { callerMap: map, unassignedCount: unassigned };
+  }, [leads, teamCallers]);
+
   const openCallModal = (lead: CrmLeadItem) => {
     setSelectedLead(lead);
     setOutcome("CONNECTED");
@@ -629,14 +723,34 @@ export function CrmLeadSheet({
 
       if (res.success && res.nextStatus) {
         const cleanExisting = stripFollowUpTagFromNotes(selectedLead.notes);
+        const timeStr = new Date().toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+        const outcomeLabel =
+          outcome === "CONNECTED"
+            ? "Connected / Spoke"
+            : outcome === "MEETING_BOOKED"
+            ? "Meeting Booked"
+            : outcome === "GATEKEEPER_BLOCKED"
+            ? "Gatekeeper"
+            : outcome === "NO_ANSWER"
+            ? "No Answer"
+            : outcome === "WRONG_NUMBER"
+            ? "Wrong Number"
+            : "Left Voicemail";
+
+        const newEntry = `[${timeStr} • ${actor.trim() || activeActorName} (${outcomeLabel})]: ${notes.trim()}`;
         const updatedNotes = cleanExisting
-          ? `${cleanExisting}\n[Call ${new Date().toISOString().slice(0, 10)}] ${combinedNotes}`
-          : `[Call ${new Date().toISOString().slice(0, 10)}] ${combinedNotes}`;
+          ? `${newEntry}\n${cleanExisting}`
+          : newEntry;
 
         applyLeadPatch(selectedLead.id, {
           status: res.nextStatus!,
           nextFollowUp: followUpDate || selectedLead.nextFollowUp,
-          notes: updatedNotes,
+          notes: followUpDate ? `[Next Follow-up Scheduled: ${followUpDate}]\n${updatedNotes}` : updatedNotes,
         });
         setSelectedLead(null);
       } else {
@@ -700,6 +814,18 @@ export function CrmLeadSheet({
               </button>
             )}
 
+            {isOwner && teamCallers.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsPermissionsModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/10 hover:bg-indigo-500/20 px-3 py-1.5 text-xs font-semibold text-indigo-300 transition"
+                title="Manage caller permissions and CRM table access"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Caller Controls</span>
+              </button>
+            )}
+
             {canImport && (
               <button
                 type="button"
@@ -748,6 +874,86 @@ export function CrmLeadSheet({
         </div>
       )}
 
+      {/* Owner Caller Activity & Live Performance Tracker */}
+      {isOwner && teamCallers.length > 0 && (
+        <div className="border-b border-zinc-800/80 bg-[#0a0a0d] p-3 text-xs">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-indigo-400" />
+              <span className="font-bold text-white text-xs">Caller Activity &amp; Live Tracking</span>
+              <span className="text-[10px] text-zinc-400 hidden sm:inline">&bull; Click any caller card to filter leads</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsPermissionsModalOpen(true)}
+              className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-medium flex items-center gap-1 transition"
+            >
+              <Shield className="w-3 h-3" />
+              <span>Caller Access Settings</span>
+            </button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2">
+            <button
+              type="button"
+              onClick={() => setCallerFilter("ALL")}
+              className={`p-2.5 rounded-lg border text-left transition ${
+                callerFilter === "ALL"
+                  ? "border-white bg-zinc-800/90 text-white shadow-sm"
+                  : "border-zinc-800 bg-[#121215] text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900"
+              }`}
+            >
+              <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-400">All Queue</div>
+              <div className="text-base font-extrabold text-white mt-0.5">{totalCount} leads</div>
+              <div className="text-[10px] text-emerald-400 mt-0.5">{meetingsCount} booked</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setCallerFilter("UNASSIGNED")}
+              className={`p-2.5 rounded-lg border text-left transition ${
+                callerFilter === "UNASSIGNED"
+                  ? "border-amber-400 bg-amber-500/15 text-amber-200 shadow-sm"
+                  : "border-zinc-800 bg-[#121215] text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900"
+              }`}
+            >
+              <div className="text-[10px] uppercase tracking-wider font-bold text-amber-400">Unassigned Pool</div>
+              <div className="text-base font-extrabold text-white mt-0.5">{callerStats.unassignedCount} leads</div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">Ready to assign</div>
+            </button>
+
+            {teamCallers.map((caller) => {
+              const stats = callerStats.callerMap[caller.id] || { total: 0, connected: 0, meetings: 0, followUps: 0 };
+              const isSelected = callerFilter === caller.id;
+              return (
+                <button
+                  key={caller.id}
+                  type="button"
+                  onClick={() => setCallerFilter(isSelected ? "ALL" : caller.id)}
+                  className={`p-2.5 rounded-lg border text-left transition ${
+                    isSelected
+                      ? "border-indigo-400 bg-indigo-500/20 text-indigo-100 shadow-sm"
+                      : "border-zinc-800 bg-[#121215] text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[11px] font-bold text-white truncate">{caller.name}</span>
+                    <span className="text-[9px] text-zinc-400 shrink-0">{caller.title || "Caller"}</span>
+                  </div>
+                  <div className="text-base font-extrabold text-white mt-0.5">
+                    {stats.total} <span className="text-[10px] font-normal text-zinc-400">leads</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
+                    <span className="text-emerald-400 font-semibold">{stats.meetings} booked</span>
+                    <span className="text-zinc-600">&bull;</span>
+                    <span className="text-sky-300 font-medium">{stats.connected} spoke</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Filter and Search Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 bg-[#09090b]/60 p-3 text-xs">
         <div className="flex flex-wrap items-center gap-1">
@@ -773,15 +979,32 @@ export function CrmLeadSheet({
           ))}
         </div>
 
-        <div className="relative w-full sm:w-64">
-          <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-2.5" />
-          <input
-            type="text"
-            placeholder="Search company, owner, phone..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-lg border border-zinc-800 bg-[#09090b] pl-8 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:border-zinc-600 focus:outline-none"
-          />
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-1.5 text-zinc-400">
+            <ArrowUpDown className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="rounded-lg border border-zinc-800 bg-[#09090b] px-2.5 py-1.5 text-xs text-zinc-200 focus:border-zinc-600 focus:outline-none cursor-pointer"
+              title="Sort lead sequence"
+            >
+              <option value="INTAKE_DATE">Sort: Intake Date (Newest first)</option>
+              <option value="ICP_SCORE">Sort: ICP Score (High to Low)</option>
+              <option value="NAME_AZ">Sort: Company Name (A-Z)</option>
+              <option value="STAGE">Sort: Pipeline Stage</option>
+            </select>
+          </div>
+
+          <div className="relative flex-1 sm:w-60">
+            <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-2.5" />
+            <input
+              type="text"
+              placeholder="Search company, owner, phone..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full rounded-lg border border-zinc-800 bg-[#09090b] pl-8 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:border-zinc-600 focus:outline-none"
+            />
+          </div>
         </div>
       </div>
 
@@ -875,13 +1098,13 @@ export function CrmLeadSheet({
           <table className="w-full text-left text-xs text-zinc-300 divide-y divide-zinc-800/70">
             <thead className="bg-[#09090b] text-[11px] font-medium text-zinc-400">
               <tr>
-                <th className="px-4 py-3 whitespace-nowrap">Company &amp; Location</th>
-                <th className="px-3 py-3 whitespace-nowrap">Decision Maker</th>
-                <th className="px-3 py-3 whitespace-nowrap">Direct Phone</th>
-                <th className="px-3 py-3 whitespace-nowrap">Assigned Caller</th>
-                <th className="px-3 py-3 whitespace-nowrap">Pipeline Stage</th>
+                <th className="px-4 py-3 whitespace-nowrap min-w-[240px] max-w-[280px]">Company &amp; Location</th>
+                <th className="px-3 py-3 whitespace-nowrap min-w-[210px] max-w-[260px]">Decision Maker &amp; LinkedIn</th>
+                <th className="px-3 py-3 whitespace-nowrap min-w-[150px]">Direct Phone</th>
+                <th className="px-3 py-3 whitespace-nowrap min-w-[130px]">Assigned Caller</th>
+                <th className="px-3 py-3 whitespace-nowrap min-w-[155px]">Pipeline Stage</th>
                 {smartFields.map((field) => (
-                  <th key={field.key} className="px-3 py-3 whitespace-nowrap">
+                  <th key={field.key} className="px-3 py-3 whitespace-nowrap min-w-[125px]">
                     <div className="flex items-center gap-1.5">
                       <span>{field.label}</span>
                       {field.isCustom && onDeleteCustomColumn && (
@@ -897,9 +1120,9 @@ export function CrmLeadSheet({
                     </div>
                   </th>
                 ))}
-                <th className="px-3 py-3 whitespace-nowrap">Next Follow-Up</th>
-                <th className="px-3 py-3 whitespace-nowrap">Latest Note</th>
-                <th className="px-4 py-3 text-right whitespace-nowrap">
+                <th className="px-3 py-3 whitespace-nowrap min-w-[140px]">Next Follow-Up</th>
+                <th className="px-3 py-3 whitespace-nowrap min-w-[260px] max-w-[340px]">Latest Note &amp; History</th>
+                <th className="px-4 py-3 text-right whitespace-nowrap min-w-[120px]">
                   <div className="flex items-center justify-end gap-2">
                     {canEdit && onOpenAddColumn && (
                       <button
@@ -918,18 +1141,21 @@ export function CrmLeadSheet({
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
-              {filteredLeads.map((lead, idx) => {
+              {sortedLeads.map((lead, idx) => {
                 const phone = lead.bestContact?.phone || lead.phoneDisplay;
                 const dmName = lead.bestContact?.name;
                 const dmTitle = lead.bestContact?.title;
+                const dmLinkedin = lead.bestContact?.linkedinUrl || (lead.facts as any)?.["linkedin"] || null;
                 const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
                   `${lead.name} ${lead.address || ""} ${lead.city || ""} ${lead.state || ""}`
                 )}`;
                 const followUpInfo = formatFollowUpLabel(lead.nextFollowUp);
-                const cleanNotes = stripFollowUpTagFromNotes(lead.notes);
+                const parsedNote = parseLatestCallerNote(lead.notes);
                 const dateInfo = classifyLeadDate(lead);
-                const prevLead = idx > 0 ? filteredLeads[idx - 1] : null;
-                const isNewBatch = !prevLead || classifyLeadDate(prevLead).groupKey !== dateInfo.groupKey;
+                const prevLead = idx > 0 ? sortedLeads[idx - 1] : null;
+                const isNewBatch =
+                  sortBy === "INTAKE_DATE" &&
+                  (!prevLead || classifyLeadDate(prevLead).groupKey !== dateInfo.groupKey);
 
                 return (
                   <React.Fragment key={lead.id}>
@@ -968,7 +1194,7 @@ export function CrmLeadSheet({
                     )}
                     <tr className="hover:bg-zinc-900/60 transition-colors">
                       {/* Company & Location */}
-                      <td className="px-4 py-3.5 max-w-[220px]">
+                      <td className="px-4 py-3.5 min-w-[240px] max-w-[280px]">
                         {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "name" ? (
                           <div className="flex items-center gap-1">
                             <input
@@ -989,44 +1215,27 @@ export function CrmLeadSheet({
                             />
                           </div>
                         ) : (
-                          <div className="font-semibold text-white text-xs truncate flex items-center gap-1.5">
+                          <div className="font-semibold text-white text-xs truncate">
                             <button
                               type="button"
                               onClick={() => canEdit && startInlineEdit(lead.id, "name", lead.name)}
-                              className="group/name flex items-center gap-1 text-left truncate hover:text-emerald-300 transition"
+                              className="group/name flex items-center gap-1.5 text-left truncate hover:text-emerald-300 transition w-full"
                               title="Click to edit company name inline"
                             >
-                              <span className="truncate">{lead.name}</span>
+                              <span className="truncate font-bold text-zinc-100 group-hover/name:text-emerald-300">{lead.name}</span>
                               {canEdit && (
                                 <Pencil className="w-2.5 h-2.5 text-zinc-500 opacity-0 group-hover/name:opacity-100 transition shrink-0" />
                               )}
                             </button>
-                            {lead.marketName && (
-                              <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-medium text-zinc-300">
-                                {lead.marketName}
-                              </span>
-                            )}
-                            <span
-                              className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold border ${
-                                dateInfo.category === "TODAY"
-                                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                                  : dateInfo.category === "YESTERDAY"
-                                  ? "border-amber-500/30 bg-amber-500/15 text-amber-300"
-                                  : "border-zinc-800 bg-zinc-900 text-zinc-400"
-                              }`}
-                              title={`Intake: ${dateInfo.formattedDate} at ${dateInfo.timeString}`}
-                            >
-                              {dateInfo.shortBadge}
-                            </span>
                           </div>
                         )}
-                        <div className="flex items-center gap-2 text-[11px] text-zinc-400 truncate mt-0.5">
+                        <div className="flex items-center gap-2 text-[11px] text-zinc-400 truncate mt-1">
                           <span>{lead.city ? `${lead.city}, ${lead.state}` : lead.state || "US"}</span>
                           <a
                             href={mapsUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-zinc-400 hover:text-zinc-200 inline-flex items-center gap-0.5"
+                            className="text-zinc-500 hover:text-zinc-300 inline-flex items-center gap-0.5 transition"
                             title="Open in Google Maps"
                           >
                             <MapPin className="w-2.5 h-2.5" />
@@ -1034,20 +1243,21 @@ export function CrmLeadSheet({
                           </a>
                           {lead.website && (
                             <a
-                              href={lead.website}
+                              href={lead.website.startsWith("http") ? lead.website : `https://${lead.website}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-zinc-400 hover:text-zinc-200 inline-flex items-center gap-0.5"
+                              className="text-zinc-500 hover:text-zinc-300 inline-flex items-center gap-0.5 transition"
                               title="Visit website"
                             >
                               <ExternalLink className="w-2.5 h-2.5" />
+                              <span>Web</span>
                             </a>
                           )}
                         </div>
                       </td>
 
-                      {/* Contact Person */}
-                      <td className="px-3 py-3.5 max-w-[180px]">
+                      {/* Decision Maker & LinkedIn */}
+                      <td className="px-3 py-3.5 min-w-[210px] max-w-[260px]">
                         {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "contactName" ? (
                           <input
                             autoFocus
@@ -1073,7 +1283,7 @@ export function CrmLeadSheet({
                             className="text-left group/dm w-full flex items-center justify-between"
                             title="Click to edit contact person inline"
                           >
-                            <div className="font-medium text-zinc-200 text-xs truncate group-hover/dm:text-emerald-300 flex items-center gap-1">
+                            <div className="font-semibold text-zinc-200 text-xs truncate group-hover/dm:text-emerald-300 flex items-center gap-1">
                               <span>{dmName || "Owner / Manager"}</span>
                               {canEdit && (
                                 <Pencil className="w-2.5 h-2.5 text-zinc-500 opacity-0 group-hover/dm:opacity-100 transition" />
@@ -1082,41 +1292,72 @@ export function CrmLeadSheet({
                           </button>
                         )}
 
-                        {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "contactTitle" ? (
-                          <input
-                            autoFocus
-                            type="text"
-                            value={activeCellDraft}
-                            onChange={(e) => setActiveCellDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                commitInlineEdit(lead);
-                              } else if (e.key === "Escape") {
-                                setActiveCellEdit(null);
-                              }
-                            }}
-                            onBlur={() => commitInlineEdit(lead)}
-                            className="w-full bg-[#09090b] border border-emerald-500 rounded px-2 py-0.5 text-[11px] text-zinc-200 focus:outline-none shadow-sm mt-0.5"
-                            placeholder="Role / Title"
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => canEdit && startInlineEdit(lead.id, "contactTitle", dmTitle || "")}
-                            className="text-left group/title w-full flex items-center gap-1 text-[11px] text-zinc-400 truncate hover:text-zinc-200"
-                            title="Click to edit role/title inline"
-                          >
-                            <span className="truncate">{dmTitle || "Decision Maker"}</span>
-                            {canEdit && (
-                              <Pencil className="w-2 h-2 text-zinc-500 opacity-0 group-hover/title:opacity-100 transition" />
-                            )}
-                          </button>
-                        )}
+                        <div className="flex items-center justify-between gap-1 mt-0.5">
+                          {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "contactTitle" ? (
+                            <input
+                              autoFocus
+                              type="text"
+                              value={activeCellDraft}
+                              onChange={(e) => setActiveCellDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  commitInlineEdit(lead);
+                                } else if (e.key === "Escape") {
+                                  setActiveCellEdit(null);
+                                }
+                              }}
+                              onBlur={() => commitInlineEdit(lead)}
+                              className="w-full bg-[#09090b] border border-emerald-500 rounded px-2 py-0.5 text-[11px] text-zinc-200 focus:outline-none shadow-sm"
+                              placeholder="Role / Title"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => canEdit && startInlineEdit(lead.id, "contactTitle", dmTitle || "")}
+                              className="text-left group/title flex-1 flex items-center gap-1 text-[11px] text-zinc-400 truncate hover:text-zinc-200"
+                              title="Click to edit role/title inline"
+                            >
+                              <span className="truncate">{dmTitle || "Decision Maker"}</span>
+                              {canEdit && (
+                                <Pencil className="w-2 h-2 text-zinc-500 opacity-0 group-hover/title:opacity-100 transition" />
+                              )}
+                            </button>
+                          )}
+
+                          {/* LinkedIn Profile Pill or Find LinkedIn link */}
+                          {dmLinkedin ? (
+                            <a
+                              href={dmLinkedin.startsWith("http") ? dmLinkedin : `https://${dmLinkedin}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#0a66c2]/15 text-[#38bdf8] hover:bg-[#0a66c2]/25 border border-[#0a66c2]/30 text-[10px] font-semibold transition"
+                              title="Open LinkedIn Profile"
+                            >
+                              <svg className="w-2.5 h-2.5 text-[#38bdf8]" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z"/>
+                              </svg>
+                              <span>LinkedIn</span>
+                            </a>
+                          ) : (
+                            <a
+                              href={`https://www.google.com/search?q=${encodeURIComponent(
+                                `${dmName || lead.name} ${lead.name} LinkedIn`
+                              )}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="shrink-0 inline-flex items-center gap-1 text-[10px] text-zinc-500 hover:text-sky-400 transition"
+                              title="Search LinkedIn on Google"
+                            >
+                              <Search className="w-2.5 h-2.5" />
+                              <span>Find</span>
+                            </a>
+                          )}
+                        </div>
                       </td>
 
                       {/* Phone */}
-                      <td className="px-3 py-3.5 whitespace-nowrap">
+                      <td className="px-3 py-3.5 whitespace-nowrap min-w-[150px]">
                         {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "phone" ? (
                           <input
                             autoFocus
@@ -1179,7 +1420,7 @@ export function CrmLeadSheet({
                       </td>
 
                       {/* Assigned Caller */}
-                      <td className="px-3 py-3.5 whitespace-nowrap">
+                      <td className="px-3 py-3.5 whitespace-nowrap min-w-[130px]">
                         {canManageSettings && allMembers.length > 0 ? (
                           <select
                             value={lead.assignedMemberId || ""}
@@ -1203,7 +1444,7 @@ export function CrmLeadSheet({
                       </td>
 
                       {/* Interactive Status Dropdown with Vivid Stage Badges */}
-                      <td className="px-3 py-3.5 whitespace-nowrap">
+                      <td className="px-3 py-3.5 whitespace-nowrap min-w-[155px]">
                         {canEdit ? (
                           <select
                             value={lead.status}
@@ -1237,7 +1478,7 @@ export function CrmLeadSheet({
                           : [val, ...field.options];
 
                         return (
-                          <td key={field.key} className="px-3 py-3.5 whitespace-nowrap">
+                          <td key={field.key} className="px-3 py-3.5 whitespace-nowrap min-w-[125px]">
                             {canEdit ? (
                               <select
                                 value={val}
@@ -1264,7 +1505,7 @@ export function CrmLeadSheet({
                       })}
 
                       {/* Interactive Follow-Up Column */}
-                      <td className="px-3 py-3.5 whitespace-nowrap">
+                      <td className="px-3 py-3.5 whitespace-nowrap min-w-[140px]">
                         {lead.nextFollowUp ? (
                           <button
                             type="button"
@@ -1291,8 +1532,8 @@ export function CrmLeadSheet({
                         )}
                       </td>
 
-                      {/* Clickable Inline Notes */}
-                      <td className="px-3 py-3.5 max-w-[240px]">
+                      {/* Latest Note & Call History */}
+                      <td className="px-3 py-3.5 min-w-[260px] max-w-[340px]">
                         {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "notes" ? (
                           <textarea
                             autoFocus
@@ -1312,28 +1553,60 @@ export function CrmLeadSheet({
                             placeholder="Type note and hit Enter to save..."
                           />
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => canEdit && startInlineEdit(lead.id, "notes", cleanNotes || "")}
-                            className="text-left w-full group/notes cursor-pointer"
-                            title="Click to edit notes inline (Enter to save)"
-                          >
-                            {cleanNotes ? (
-                              <div className="flex items-start gap-1">
-                                <p className="text-[11px] text-zinc-300 truncate group-hover/notes:text-white flex-1">
-                                  {cleanNotes.split("\n")[0] || cleanNotes}
-                                </p>
-                                {canEdit && (
-                                  <Pencil className="w-2.5 h-2.5 text-zinc-500 opacity-0 group-hover/notes:opacity-100 transition shrink-0 mt-0.5" />
-                                )}
+                          <div className="w-full">
+                            {parsedNote && (parsedNote.cleanText || parsedNote.outcome) ? (
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between gap-1">
+                                  {parsedNote.outcome ? (
+                                    <span
+                                      className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold border ${
+                                        parsedNote.outcome.includes("Meeting")
+                                          ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                          : parsedNote.outcome.includes("Connected")
+                                          ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/40"
+                                          : parsedNote.outcome.includes("Voicemail")
+                                          ? "bg-zinc-800 text-zinc-300 border-zinc-700"
+                                          : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                                      }`}
+                                    >
+                                      {parsedNote.outcome}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-zinc-500 font-medium">
+                                      {parsedNote.timestamp || "Note"}
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewingNotesHistoryLead(lead)}
+                                    className="text-[10px] text-zinc-500 hover:text-zinc-300 underline shrink-0"
+                                    title="View full call history and all notes"
+                                  >
+                                    History
+                                  </button>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => canEdit && startInlineEdit(lead.id, "notes", stripFollowUpTagFromNotes(lead.notes) || "")}
+                                  className="text-left w-full group/notes block"
+                                  title="Click to edit notes inline (Enter to save)"
+                                >
+                                  <p className="text-[11px] text-zinc-200 font-medium line-clamp-2 group-hover/notes:text-white transition">
+                                    {parsedNote.cleanText || "No additional note text."}
+                                  </p>
+                                </button>
                               </div>
                             ) : (
-                              <span className="text-zinc-500 group-hover/notes:text-emerald-400 text-[11px] underline decoration-dotted flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => canEdit && startInlineEdit(lead.id, "notes", "")}
+                                className="text-zinc-500 hover:text-emerald-400 text-[11px] underline decoration-dotted flex items-center gap-1"
+                              >
                                 <Plus className="w-2.5 h-2.5" />
                                 <span>Add note</span>
-                              </span>
+                              </button>
                             )}
-                          </button>
+                          </div>
                         )}
                       </td>
 
@@ -1554,6 +1827,22 @@ export function CrmLeadSheet({
                     className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1 flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 text-[#38bdf8]" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z"/>
+                  </svg>
+                  <span>Decision Maker LinkedIn Profile URL</span>
+                </label>
+                <input
+                  type="url"
+                  value={editContactLinkedin}
+                  onChange={(e) => setEditContactLinkedin(e.target.value)}
+                  placeholder="https://www.linkedin.com/in/michael-carter"
+                  className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none placeholder-zinc-600"
+                />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1805,6 +2094,225 @@ export function CrmLeadSheet({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Call History & Notes History Modal */}
+      {viewingNotesHistoryLead && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-[#121215] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-indigo-400" />
+                  <span>Call History &amp; Notes: {viewingNotesHistoryLead.name}</span>
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  {viewingNotesHistoryLead.bestContact?.name || "Owner/Manager"} &bull;{" "}
+                  {viewingNotesHistoryLead.bestContact?.phone || viewingNotesHistoryLead.phoneDisplay || "No Phone"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingNotesHistoryLead(null)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-3 overflow-y-auto flex-1">
+              {viewingNotesHistoryLead.notes ? (
+                viewingNotesHistoryLead.notes
+                  .split("\n")
+                  .filter((line) => line.trim())
+                  .map((line, lineIdx) => {
+                    const isFollowUpLine = line.includes("Next Follow-up Scheduled");
+                    return (
+                      <div
+                        key={lineIdx}
+                        className={`p-3 rounded-lg border text-xs leading-relaxed ${
+                          isFollowUpLine
+                            ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                            : "border-zinc-800 bg-[#09090b] text-zinc-300"
+                        }`}
+                      >
+                        <p className="whitespace-pre-wrap">{line}</p>
+                      </div>
+                    );
+                  })
+              ) : (
+                <div className="py-8 text-center text-xs text-zinc-500">
+                  No call history or notes recorded for this lead yet.
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-zinc-800 flex items-center justify-between bg-[#0c0c0f]">
+              <button
+                type="button"
+                onClick={() => setViewingNotesHistoryLead(null)}
+                className="px-3.5 py-1.5 rounded-lg text-zinc-400 hover:text-white text-xs font-medium"
+              >
+                Close
+              </button>
+              {canCall && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = viewingNotesHistoryLead;
+                    setViewingNotesHistoryLead(null);
+                    openCallModal(target);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-white hover:bg-zinc-200 text-black text-xs font-bold transition shadow-sm"
+                >
+                  <PhoneCall className="w-3.5 h-3.5" />
+                  <span>Log New Call</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Owner Granular Caller Permissions Modal */}
+      {isPermissionsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-2xl bg-[#121215] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span>Caller Permissions &amp; Access Controls</span>
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Set live permissions for each sales caller. Changes apply immediately in their dashboard.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPermissionsModalOpen(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              {teamCallers.length === 0 ? (
+                <p className="text-xs text-zinc-400">No active callers found in workspace settings.</p>
+              ) : (
+                teamCallers.map((caller) => {
+                  const perms = caller.permissions || {
+                    callerWorkbench: true,
+                    editContacts: true,
+                    exportAndSync: false,
+                    discoverLeads: false,
+                    viewAnalytics: false,
+                    manageTeam: false,
+                    manageSettings: false,
+                  };
+
+                  const togglePerm = async (key: keyof TeamPermissions) => {
+                    const nextPerms = { ...perms, [key]: !perms[key] };
+                    caller.permissions = nextPerms;
+                    const res = await updateTeamMemberAccessAction(caller.id, {
+                      permissions: nextPerms,
+                    });
+                    if (res.ok) {
+                      setSyncFeedback(`Updated ${key} for ${caller.name}.`);
+                      setTimeout(() => setSyncFeedback(null), 2000);
+                    } else {
+                      alert(res.error || "Failed to update caller permission");
+                    }
+                  };
+
+                  return (
+                    <div key={caller.id} className="p-4 rounded-xl border border-zinc-800 bg-[#09090b] space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-white text-xs border border-zinc-700">
+                            {caller.name.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="font-bold text-white text-xs">{caller.name}</div>
+                            <div className="text-[10px] text-zinc-400">{caller.email} &bull; {caller.title || caller.role}</div>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+                          Active Caller
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-zinc-800/80 text-xs">
+                        <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-[#121215] border border-zinc-800/60 cursor-pointer hover:border-zinc-700 transition">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(perms.callerWorkbench)}
+                            onChange={() => togglePerm("callerWorkbench")}
+                            className="mt-0.5 rounded border-zinc-700 text-emerald-500 focus:ring-0 cursor-pointer"
+                          />
+                          <div>
+                            <div className="font-semibold text-zinc-200 text-[11px]">Caller Workbench &amp; Log Call</div>
+                            <div className="text-[10px] text-zinc-500">Allow caller to dial and save call notes</div>
+                          </div>
+                        </label>
+
+                        <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-[#121215] border border-zinc-800/60 cursor-pointer hover:border-zinc-700 transition">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(perms.editContacts)}
+                            onChange={() => togglePerm("editContacts")}
+                            className="mt-0.5 rounded border-zinc-700 text-emerald-500 focus:ring-0 cursor-pointer"
+                          />
+                          <div>
+                            <div className="font-semibold text-zinc-200 text-[11px]">Edit Contact Info &amp; Notes</div>
+                            <div className="text-[10px] text-zinc-500">Allow editing decision maker, phone &amp; notes</div>
+                          </div>
+                        </label>
+
+                        <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-[#121215] border border-zinc-800/60 cursor-pointer hover:border-zinc-700 transition">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(perms.discoverLeads)}
+                            onChange={() => togglePerm("discoverLeads")}
+                            className="mt-0.5 rounded border-zinc-700 text-emerald-500 focus:ring-0 cursor-pointer"
+                          />
+                          <div>
+                            <div className="font-semibold text-zinc-200 text-[11px]">Lead Discovery Access</div>
+                            <div className="text-[10px] text-zinc-500">Allow finding and extracting new leads</div>
+                          </div>
+                        </label>
+
+                        <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-[#121215] border border-zinc-800/60 cursor-pointer hover:border-zinc-700 transition">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(perms.exportAndSync)}
+                            onChange={() => togglePerm("exportAndSync")}
+                            className="mt-0.5 rounded border-zinc-700 text-emerald-500 focus:ring-0 cursor-pointer"
+                          />
+                          <div>
+                            <div className="font-semibold text-zinc-200 text-[11px]">CSV Export &amp; Sync</div>
+                            <div className="text-[10px] text-zinc-500">Allow downloading CRM CSV lists</div>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="p-4 border-t border-zinc-800 flex items-center justify-end bg-[#0c0c0f]">
+              <button
+                type="button"
+                onClick={() => setIsPermissionsModalOpen(false)}
+                className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-xs font-bold transition"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

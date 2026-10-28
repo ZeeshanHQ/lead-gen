@@ -68,6 +68,7 @@ export interface CallerLeadView {
     title: string | null;
     phone: string | null;
     email: string | null;
+    linkedinUrl?: string | null;
     grade: string;
   };
   replacement: string;
@@ -181,6 +182,7 @@ export async function getCallerQueue(
         title: best.title,
         phone: best.phone,
         email: best.email,
+        linkedinUrl: best.linkedinUrl || flatFacts["linkedin"] || flatFacts["linkedin_url"] || null,
         grade: best.grade,
       },
       replacement: factValue(facts, "replacement"),
@@ -349,6 +351,7 @@ export interface UpdateLeadCrmInput {
   contactTitle?: string | null;
   contactEmail?: string | null;
   contactPhone?: string | null;
+  contactLinkedin?: string | null;
   nextFollowUp?: string | null;
   notes?: string | null;
   assignedMemberId?: string | null;
@@ -447,7 +450,8 @@ export async function updateLeadCrmDetails(
     input.contactName !== undefined ||
     input.contactTitle !== undefined ||
     input.contactEmail !== undefined ||
-    input.contactPhone !== undefined
+    input.contactPhone !== undefined ||
+    input.contactLinkedin !== undefined
   ) {
     const existingContacts = await db
       .select()
@@ -474,11 +478,25 @@ export async function updateLeadCrmDetails(
           emailType: cEmail ? classifyEmail(cEmail, company.domain) : primary.emailType,
           phoneDisplay: cPhoneDisplay ?? primary.phoneDisplay,
           phoneE164: cPhoneE164 ?? primary.phoneE164,
+          sourceUrl: input.contactLinkedin !== undefined ? (input.contactLinkedin?.trim() || null) : primary.sourceUrl,
           verified: true,
           provenance: "HUMAN_CONFIRMED",
           updatedAt: new Date(),
         })
         .where(eq(contacts.id, primary.id));
+
+      if (input.contactLinkedin && input.contactLinkedin.trim()) {
+        await setFact(db, {
+          companyId: input.companyId,
+          field: "linkedin",
+          value: input.contactLinkedin.trim(),
+          confidence: 1.0,
+          provenance: "HUMAN_CONFIRMED",
+          sourceType: "manual_entry",
+          evidenceText: `Decision Maker LinkedIn confirmed by ${actor}: ${input.contactLinkedin.trim()}`,
+          actor,
+        });
+      }
     } else if (cName || cEmail || cPhoneDisplay) {
       await db.insert(contacts).values({
         companyId: input.companyId,

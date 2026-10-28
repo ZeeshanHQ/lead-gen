@@ -811,6 +811,7 @@ export function CallerClient({
       title: l.bestContact.title,
       phone: l.bestContact.phone,
       email: l.bestContact.email,
+      linkedinUrl: l.bestContact.linkedinUrl || (l.facts as any)?.["linkedin"] || null,
     },
     replacement: l.replacement,
     financing: l.financing,

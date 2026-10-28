@@ -51,6 +51,7 @@ export default async function ApprovedLeadsPage() {
       title: l.best?.title || l.owner?.title || null,
       phone: l.best?.phone || null,
       email: l.best?.email || null,
+      linkedinUrl: l.best?.linkedinUrl || factValue(l.facts, "linkedin") || (l.facts as any)?.["linkedin_url"]?.value || null,
     },
     replacement: factValue(l.facts, "replacement"),
     financing: factValue(l.facts, "financing"),

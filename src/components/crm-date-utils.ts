@@ -92,3 +92,46 @@ export function classifyLeadDate(lead: {
     timeString,
   };
 }
+
+export interface ParsedCallerNote {
+  timestamp?: string;
+  author?: string;
+  outcome?: string;
+  cleanText: string;
+}
+
+export function parseLatestCallerNote(notes: string | null | undefined): ParsedCallerNote | null {
+  if (!notes) return null;
+  const stripped = notes.replace(/\[Next Follow-up Scheduled:\s*[^\]]+\]\s*/gi, "").trim();
+  if (!stripped) return null;
+
+  const lines = stripped.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+
+  const first = lines[0];
+  if (!first) return null;
+
+  // Match format: [Oct 27, 11:53 PM • Hamda (Connected / Spoke)]: voice mail sent
+  const match = first.match(/^\[([^•\]]+)(?:•\s*([^(]+))?(?:\(([^)]+)\))?\]:\s*(.*)$/);
+  if (match) {
+    return {
+      timestamp: match[1]?.trim(),
+      author: match[2]?.trim(),
+      outcome: match[3]?.trim(),
+      cleanText: match[4]?.trim() || "No additional note",
+    };
+  }
+
+  // Match simple bracket format: [Call 2026-10-27] Note text
+  const simpleMatch = first.match(/^\[([^\]]+)\]\s*(.*)$/);
+  if (simpleMatch) {
+    return {
+      timestamp: simpleMatch[1]?.trim(),
+      cleanText: simpleMatch[2]?.trim() || simpleMatch[1] || "",
+    };
+  }
+
+  return {
+    cleanText: first || "",
+  };
+}

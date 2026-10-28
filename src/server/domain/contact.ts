@@ -80,6 +80,7 @@ export interface ContactInput {
   title: string | null;
   roleClass: RoleClass;
   email: string | null;
+  linkedinUrl?: string | null;
   emailType: EmailType;
   phone: string | null;
   phoneType: PhoneType;
@@ -115,6 +116,7 @@ export interface BestContact {
   phone: string | null;
   phoneType: PhoneType | null;
   email: string | null;
+  linkedinUrl?: string | null;
   companyPhone: string | null;
   grade: ContactGrade;
   reason: string;
@@ -149,6 +151,7 @@ export function pickBestContact(
     phone: null,
     phoneType: null,
     email: null,
+    linkedinUrl: null,
     companyPhone,
     grade: "D",
     reason: "No usable professional contact has been found.",

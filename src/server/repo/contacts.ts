@@ -28,6 +28,7 @@ export function toContactInput(c: ContactRow): ContactInput {
     emailType: c.emailType as EmailType,
     phone: c.phoneDisplay,
     phoneType: c.phoneType as PhoneType,
+    linkedinUrl: c.sourceUrl?.includes("linkedin.com") ? c.sourceUrl : null,
     verified: c.verified,
   };
 }
