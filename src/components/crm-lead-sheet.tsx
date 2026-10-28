@@ -53,6 +53,11 @@ import {
   ArrowUpDown,
   Filter,
   Users,
+  HelpCircle,
+  TrendingUp,
+  BookOpen,
+  Lightbulb,
+  Target,
 } from "lucide-react";
 
 export interface CrmLeadItem {
@@ -365,6 +370,10 @@ export function CrmLeadSheet({
   const [followUpTarget, setFollowUpTarget] = useState<CrmLeadItem | null>(null);
   const [followUpInput, setFollowUpInput] = useState<string>("");
   const [followUpNote, setFollowUpNote] = useState<string>("");
+
+  // SOP & Guidance Modal State
+  const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
+  const [helpTab, setHelpTab] = useState<"CRM" | "CALLING" | "GATEKEEPER" | "OBJECTIONS">("CRM");
 
   // Full Edit Lead Modal State
   const [editingLead, setEditingLead] = useState<CrmLeadItem | null>(null);
@@ -955,6 +964,27 @@ export function CrmLeadSheet({
               </a>
             )}
 
+            {isOwner && (
+              <Link
+                href="/analytics"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-purple-500/40 bg-purple-500/10 hover:bg-purple-500/20 px-3 py-1.5 text-xs font-semibold text-purple-300 transition"
+                title="View Sales Funnel, conversion analytics, and team diagnostics"
+              >
+                <TrendingUp className="w-3.5 h-3.5 text-purple-400" />
+                <span>Sales Funnel</span>
+              </Link>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setIsHelpModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-300 transition shadow-sm"
+              title="Open CRM Guide, SOP & Caller Playbook"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+              <span>Guide &amp; SOP</span>
+            </button>
+
             {showCallerLink && canCall && (
               <Link
                 href="/caller"
@@ -1000,14 +1030,23 @@ export function CrmLeadSheet({
                 <span className="text-orange-300 font-medium">{callerStats.teamTotals.gatekeeper} Gatekeeper</span>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsPermissionsModalOpen(true)}
-              className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-medium flex items-center gap-1 transition"
-            >
-              <Shield className="w-3 h-3" />
-              <span>Caller Access Settings</span>
-            </button>
+            <div className="flex items-center gap-3">
+              <Link
+                href="/analytics"
+                className="text-[11px] text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 transition"
+              >
+                <TrendingUp className="w-3 h-3" />
+                <span>Deep Funnel Analytics &rarr;</span>
+              </Link>
+              <button
+                type="button"
+                onClick={() => setIsPermissionsModalOpen(true)}
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-medium flex items-center gap-1 transition"
+              >
+                <Shield className="w-3 h-3" />
+                <span>Caller Access Settings</span>
+              </button>
+            </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2">
             <button
@@ -2473,6 +2512,345 @@ export function CrmLeadSheet({
                 className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-xs font-bold transition"
               >
                 Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SOP & Guidance Modal */}
+      {isHelpModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="max-w-4xl w-full bg-[#0d0d11] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-zinc-800 flex items-center justify-between bg-[#121216]">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                  <HelpCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-white text-base">CRM Operating Guide &amp; Caller Playbook</h3>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                      Standard Operating Procedure
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Clear guidance on table editing, call outcome logging, gatekeeper bypassing, and objection battlecards.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsHelpModalOpen(false)}
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Navigation Tabs */}
+            <div className="flex items-center border-b border-zinc-800 bg-[#0a0a0d] px-4 overflow-x-auto">
+              <button
+                type="button"
+                onClick={() => setHelpTab("CRM")}
+                className={`flex items-center gap-2 py-3 px-4 text-xs font-semibold border-b-2 transition whitespace-nowrap ${
+                  helpTab === "CRM"
+                    ? "border-amber-400 text-amber-300 bg-amber-500/5"
+                    : "border-transparent text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                <BookOpen className="w-4 h-4" />
+                <span>CRM &amp; Table SOP</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setHelpTab("CALLING")}
+                className={`flex items-center gap-2 py-3 px-4 text-xs font-semibold border-b-2 transition whitespace-nowrap ${
+                  helpTab === "CALLING"
+                    ? "border-amber-400 text-amber-300 bg-amber-500/5"
+                    : "border-transparent text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                <Phone className="w-4 h-4" />
+                <span>Call Outcomes &amp; Logging</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setHelpTab("GATEKEEPER")}
+                className={`flex items-center gap-2 py-3 px-4 text-xs font-semibold border-b-2 transition whitespace-nowrap ${
+                  helpTab === "GATEKEEPER"
+                    ? "border-amber-400 text-amber-300 bg-amber-500/5"
+                    : "border-transparent text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>Gatekeeper Bypass Playbook</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setHelpTab("OBJECTIONS")}
+                className={`flex items-center gap-2 py-3 px-4 text-xs font-semibold border-b-2 transition whitespace-nowrap ${
+                  helpTab === "OBJECTIONS"
+                    ? "border-amber-400 text-amber-300 bg-amber-500/5"
+                    : "border-transparent text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                <Target className="w-4 h-4" />
+                <span>Scripts &amp; Objections</span>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-6 text-sm text-zinc-300 flex-1">
+              {helpTab === "CRM" && (
+                <div className="space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="p-4 rounded-xl bg-[#141419] border border-zinc-800">
+                      <div className="flex items-center gap-2 text-white font-semibold text-xs mb-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>Live Inline Note Editing</span>
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Click directly on any Note cell in the table to edit in real time. There is no complicated popup required. When you type or update, it saves automatically to the database without page reloads.
+                      </p>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-[#141419] border border-zinc-800">
+                      <div className="flex items-center gap-2 text-white font-semibold text-xs mb-2">
+                        <Shield className="w-4 h-4 text-indigo-400" />
+                        <span>Owner Security &amp; Contact Protection</span>
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Company names, decision maker names, and phone numbers are locked to prevent accidental corruption. Owners can grant or revoke caller edit permissions anytime via <strong className="text-zinc-200">Caller Controls</strong>.
+                      </p>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-[#141419] border border-zinc-800">
+                      <div className="flex items-center gap-2 text-white font-semibold text-xs mb-2">
+                        <ArrowUpDown className="w-4 h-4 text-sky-400" />
+                        <span>Date &amp; Batch Organization</span>
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Leads are grouped by intake date. Yesterday&apos;s leads and today&apos;s batch are maintained cleanly so callers never work disordered queues. Use the status tabs to focus on follow-ups or untouched leads.
+                      </p>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-[#141419] border border-zinc-800">
+                      <div className="flex items-center gap-2 text-white font-semibold text-xs mb-2">
+                        <Users className="w-4 h-4 text-amber-400" />
+                        <span>Caller Queue Isolation</span>
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        When a lead is assigned to a caller, it automatically routes to their personalized <strong className="text-zinc-200">Caller Workbench (/caller)</strong>. Callers see only their leads and dial statistics.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300/90 leading-relaxed flex items-start gap-3">
+                    <Lightbulb className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <strong className="text-amber-200">Pro Tip for Callers:</strong> Always keep the <strong className="text-white">Caller Workbench (/caller)</strong> open during calling sessions. It offers instant 1-click dialing, objection battlecards, and streamlined outcome logging.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {helpTab === "CALLING" && (
+                <div className="space-y-4">
+                  <p className="text-xs text-zinc-400">
+                    Always log the exact outcome after every dial. Logging an outcome synchronizes the CRM stage and appends a time-stamped note automatically.
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="p-4 rounded-xl bg-[#141419] border border-zinc-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-white text-xs flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-zinc-500" />
+                          No Answer / Rang Out
+                        </span>
+                        <span className="text-[10px] bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded font-mono">Attempted</span>
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        <strong className="text-zinc-300">When to use:</strong> Phone rang 4–5 times with no pickup, went to automated voicemail, or gave busy tone.
+                      </p>
+                      <div className="text-[11px] text-zinc-500 border-t border-zinc-800/80 pt-2">
+                        System automatically auto-records note if left empty. Re-attempt at a different time of day.
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-[#141419] border border-orange-500/20 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-orange-400 text-xs flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-orange-500" />
+                          Gatekeeper Blocked
+                        </span>
+                        <span className="text-[10px] bg-orange-950/60 border border-orange-800 text-orange-300 px-2 py-0.5 rounded font-mono">Attempted</span>
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        <strong className="text-zinc-300">When to use:</strong> Receptionist, assistant, or operator answered and refused to connect you to the owner.
+                      </p>
+                      <div className="text-[11px] text-zinc-500 border-t border-zinc-800/80 pt-2">
+                        Note the receptionist&apos;s name and ask when the owner is directly available.
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-[#141419] border border-sky-500/20 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-sky-400 text-xs flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-sky-500" />
+                          Connected / Spoke
+                        </span>
+                        <span className="text-[10px] bg-sky-950/60 border border-sky-800 text-sky-300 px-2 py-0.5 rounded font-mono">Connected</span>
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        <strong className="text-zinc-300">When to use:</strong> You reached the Decision Maker (Owner/CEO/Managing Director) and had a conversation.
+                      </p>
+                      <div className="text-[11px] text-zinc-500 border-t border-zinc-800/80 pt-2">
+                        Record their interest level, current pipeline setup, and when to follow up.
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-[#141419] border border-emerald-500/30 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-emerald-400 text-xs flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                          Meeting Booked
+                        </span>
+                        <span className="text-[10px] bg-emerald-950/60 border border-emerald-800 text-emerald-300 px-2 py-0.5 rounded font-mono">Meeting Scheduled</span>
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        <strong className="text-zinc-300">When to use:</strong> Prospect agreed to a demo, strategy session, or Zoom presentation.
+                      </p>
+                      <div className="text-[11px] text-zinc-500 border-t border-zinc-800/80 pt-2 text-emerald-400/90 font-medium">
+                        Enter the confirmed Date &amp; Time in the Next Follow-Up field.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {helpTab === "GATEKEEPER" && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-xl bg-[#141419] border border-zinc-800 space-y-3">
+                    <h4 className="font-bold text-white text-xs uppercase tracking-wider text-amber-400">
+                      Golden Rule: Casual Authority
+                    </h4>
+                    <p className="text-xs text-zinc-300 leading-relaxed">
+                      Gatekeepers screen out salespeople who sound scripted, overly excited, or insecure. Use a calm, downward vocal inflection. Speak as if you already work with the owner.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800/80 space-y-2">
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-[10px] font-mono text-zinc-400">Technique 1</span>
+                        <span>First-Name Only Transfer</span>
+                      </div>
+                      <div className="text-xs text-emerald-400 font-mono bg-zinc-950/60 p-2.5 rounded border border-zinc-800/60">
+                        &ldquo;Hey, is Alex in today?&rdquo;
+                      </div>
+                      <p className="text-[11px] text-zinc-400">
+                        If they ask <em className="text-zinc-300">&ldquo;Who&apos;s calling?&rdquo;</em>, respond simply: <strong className="text-white">&ldquo;It&apos;s [Your Name], is he at his desk?&rdquo;</strong> Do not explain your company or pitch the receptionist.
+                      </p>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800/80 space-y-2">
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-[10px] font-mono text-zinc-400">Technique 2</span>
+                        <span>Company Property Context</span>
+                      </div>
+                      <div className="text-xs text-emerald-400 font-mono bg-zinc-950/60 p-2.5 rounded border border-zinc-800/60">
+                        &ldquo;Hi, I&apos;m calling for [Owner Name] regarding [Company Name]&apos;s local property acquisitions. Could you patch me through to his extension?&rdquo;
+                      </div>
+                      <p className="text-[11px] text-zinc-400">
+                        Sounds operational rather than transactional. Most gatekeepers will transfer directly.
+                      </p>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800/80 space-y-2">
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-[10px] font-mono text-zinc-400">Technique 3</span>
+                        <span>Off-Hours Calling Strategy</span>
+                      </div>
+                      <p className="text-xs text-zinc-300 leading-relaxed">
+                        Gatekeepers work standard 9:00 AM – 5:00 PM hours. Business owners and executives are frequently at their desks early (8:00 AM – 8:45 AM) or late (5:00 PM – 5:45 PM). Calling during these windows yields 2.5x higher direct connection rates.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {helpTab === "OBJECTIONS" && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-xl bg-[#141419] border border-indigo-500/20 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-indigo-300 text-xs uppercase tracking-wider">
+                        15-Second Cold Call Opening Hook
+                      </span>
+                      <span className="text-[10px] bg-indigo-950/60 border border-indigo-800 text-indigo-300 px-2 py-0.5 rounded font-mono">82% Permission Rate</span>
+                    </div>
+                    <div className="text-xs text-zinc-200 font-mono bg-zinc-950/70 p-3 rounded-lg border border-zinc-800 leading-relaxed">
+                      &ldquo;Hey [First Name], it&apos;s [Your Name] with AstraVenta. I know I caught you out of the blue—do you have 30 seconds to tell me if I should hang up or keep going?&rdquo;
+                    </div>
+                    <p className="text-[11px] text-zinc-400">
+                      When they smile or say &ldquo;Go ahead&rdquo;, immediately deliver the value hook: <br />
+                      <span className="text-zinc-300">&ldquo;We just helped a local commercial partner secure 18 verified property seller leads last month. I wanted to see if you have capacity for 5 to 10 more qualified deals this quarter?&rdquo;</span>
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="p-3.5 rounded-xl bg-[#121216] border border-zinc-800 space-y-1.5">
+                      <div className="text-xs font-bold text-amber-400 flex items-center gap-2">
+                        <span>Objection:</span>
+                        <span className="text-white">&ldquo;Just send me an email.&rdquo;</span>
+                      </div>
+                      <div className="text-xs text-emerald-400 font-mono bg-zinc-950/60 p-2.5 rounded border border-zinc-800/60">
+                        &ldquo;I can definitely send that over. To make sure I don&apos;t flood your inbox with generic info—are you currently handling your property acquisitions in-house or relying on agencies right now?&rdquo;
+                      </div>
+                      <p className="text-[11px] text-zinc-400">
+                        Converts a brush-off into an active discovery conversation.
+                      </p>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl bg-[#121216] border border-zinc-800 space-y-1.5">
+                      <div className="text-xs font-bold text-amber-400 flex items-center gap-2">
+                        <span>Objection:</span>
+                        <span className="text-white">&ldquo;We&apos;re not interested.&rdquo;</span>
+                      </div>
+                      <div className="text-xs text-emerald-400 font-mono bg-zinc-950/60 p-2.5 rounded border border-zinc-800/60">
+                        &ldquo;Totally understood! Most partners weren&apos;t looking either until they saw how we eliminated dead leads. Before I let you go—is that because you&apos;re fully booked, or just bad timing today?&rdquo;
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl bg-[#121216] border border-zinc-800 space-y-1.5">
+                      <div className="text-xs font-bold text-amber-400 flex items-center gap-2">
+                        <span>Objection:</span>
+                        <span className="text-white">&ldquo;We already have a lead provider / system.&rdquo;</span>
+                      </div>
+                      <div className="text-xs text-emerald-400 font-mono bg-zinc-950/60 p-2.5 rounded border border-zinc-800/60">
+                        &ldquo;That makes complete sense, and we wouldn&apos;t ask you to replace them. Most clients use our verified pipeline as a secondary benchmark. When was the last time you evaluated your cost per qualified deal?&rdquo;
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-zinc-800 flex items-center justify-between bg-[#0c0c0f]">
+              <div className="text-[11px] text-zinc-500">
+                AstraVenta CRM SOP v2.4 &bull; Standard Operating Framework
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsHelpModalOpen(false)}
+                className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black text-xs font-bold transition shadow-sm"
+              >
+                Got It
               </button>
             </div>
           </div>

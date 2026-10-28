@@ -45,6 +45,7 @@ import {
   Briefcase,
   Lock,
   LogOut,
+  TrendingUp,
 } from "lucide-react";
 
 interface AppShellProps {
@@ -450,6 +451,12 @@ function AppShellInner({
           count: callerCount,
           highlight: callerCount > 0,
           perm: "callerWorkbench",
+        },
+        {
+          href: "/analytics",
+          label: "Sales Funnel",
+          icon: TrendingUp,
+          perm: "approveLeads",
         },
       ],
     },

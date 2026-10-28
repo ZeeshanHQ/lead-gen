@@ -34,7 +34,7 @@ import {
   buildPresetFollowUpIso,
   stripFollowUpTagFromNotes,
 } from "@/components/crm-lead-sheet";
-import { classifyLeadDate, type LeadDateCategory } from "@/components/crm-date-utils";
+import { classifyLeadDate, parseLatestCallerNote, type LeadDateCategory } from "@/components/crm-date-utils";
 import {
   DEFAULT_DIALER_CONFIG,
   type DialerConfig,
@@ -662,6 +662,10 @@ export function CallerClient({
   // Filtered queue (respects both Caller Filter and Pipeline Stage Filter)
   const activeQueue = queue.filter((l) => l.status !== "REJECTED");
   const callerScopedQueue = activeQueue.filter((lead) => {
+    // If not owner/manager, strictly lock queue to the logged-in caller's leads
+    if (!canManageSettings && activeMember) {
+      return lead.assignedMemberId === activeMember.id;
+    }
     if (callerFilter === "ALL") return true;
     if (callerFilter === "UNASSIGNED") return !lead.assignedMemberId;
     return lead.assignedMemberId === callerFilter;
@@ -669,13 +673,17 @@ export function CallerClient({
 
   const filteredQueue = queue.filter((lead) => {
     if (lead.status === "REJECTED" && statusFilter !== "REJECTED") return false;
-    if (callerFilter === "UNASSIGNED" && lead.assignedMemberId) return false;
-    if (
-      callerFilter !== "ALL" &&
-      callerFilter !== "UNASSIGNED" &&
-      lead.assignedMemberId !== callerFilter
-    ) {
-      return false;
+    if (!canManageSettings && activeMember) {
+      if (lead.assignedMemberId !== activeMember.id) return false;
+    } else {
+      if (callerFilter === "UNASSIGNED" && lead.assignedMemberId) return false;
+      if (
+        callerFilter !== "ALL" &&
+        callerFilter !== "UNASSIGNED" &&
+        lead.assignedMemberId !== callerFilter
+      ) {
+        return false;
+      }
     }
 
     if (statusFilter === "MY_LEADS") {
@@ -899,6 +907,14 @@ export function CallerClient({
   const followUpCount = callerScopedQueue.filter(
     (l) => l.nextFollowUp || (l.notes && l.notes.includes("Follow-up Scheduled"))
   ).length;
+  const noAnswerCount = callerScopedQueue.filter((l) => {
+    const parsed = parseLatestCallerNote(l.notes);
+    return parsed?.outcome?.toLowerCase().includes("no answer");
+  }).length;
+  const gatekeeperCount = callerScopedQueue.filter((l) => {
+    const parsed = parseLatestCallerNote(l.notes);
+    return parsed?.outcome?.toLowerCase().includes("gatekeeper");
+  }).length;
   const myLeadsCount = activeQueue.filter(
     (l) => activeMember && l.assignedMemberId === activeMember.id
   ).length;
@@ -1237,6 +1253,12 @@ export function CallerClient({
             </span>
             <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
               Meetings Booked: <strong className="text-emerald-400">{meetingsCount}</strong>
+            </span>
+            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+              No Answer: <strong className="text-amber-400/90">{noAnswerCount}</strong>
+            </span>
+            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+              Gatekeeper: <strong className="text-orange-400">{gatekeeperCount}</strong>
             </span>
             {canEditRules && marketId && (
               <ActiveQualityGateCard

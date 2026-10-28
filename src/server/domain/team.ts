@@ -333,5 +333,8 @@ export function canMemberAccessPath(member: TeamMember | null | undefined, pathn
   if (pathname.startsWith("/review")) {
     return Boolean(member.permissions.approveLeads || member.permissions.discoverLeads);
   }
+  if (pathname.startsWith("/analytics")) {
+    return Boolean(member.permissions.approveLeads || member.permissions.manageTeamAndSettings);
+  }
   return Boolean(member.permissions.manageTeamAndSettings);
 }
