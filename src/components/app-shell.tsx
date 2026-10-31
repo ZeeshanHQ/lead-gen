@@ -11,6 +11,7 @@ import {
   ROLE_PRESETS,
   type PermissionKey,
   canMemberAccessPath,
+  canViewSalesAnalytics,
   getDefaultRouteForMember,
 } from "@/server/domain/team";
 import {
@@ -437,6 +438,7 @@ function AppShellInner({
       perm?: PermissionKey;
       alwaysVisible?: boolean;
       ownerOnly?: boolean;
+      analyticsOnly?: boolean;
     }>;
   }> = [
     {
@@ -456,7 +458,7 @@ function AppShellInner({
           href: "/analytics",
           label: "Sales Funnel",
           icon: TrendingUp,
-          perm: "approveLeads",
+          analyticsOnly: true,
         },
       ],
     },
@@ -485,6 +487,7 @@ function AppShellInner({
       ...group,
       items: group.items.filter((item) => {
         if (item.ownerOnly) return isOwner;
+        if (item.analyticsOnly) return canViewSalesAnalytics(liveMember);
         if (item.alwaysVisible) return true;
         return isOwner || (item.perm ? Boolean(liveMember?.permissions[item.perm]) : false);
       }),

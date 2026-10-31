@@ -12,6 +12,8 @@ import { type CustomCrmColumn } from "../domain/niche-fields";
 import { setFact } from "./facts";
 import { audit } from "./audit";
 import { createNotification } from "./notifications";
+import { parseCallLog } from "../domain/call-outcomes";
+import { CALLER_TIMEZONE } from "../domain/call-time";
 
 export function extractLatestFollowUp(notes: string | null | undefined): string | null {
   if (!notes) return null;
@@ -102,6 +104,8 @@ export function getDefaultCallNote(outcome: string): string {
       return "Left voicemail / Follow-up required";
     case "CONNECTED":
       return "Connected / Spoke with contact";
+    case "NOT_INTERESTED":
+      return "Spoke with owner / Not interested";
     case "MEETING_BOOKED":
       return "Meeting booked";
     default:
@@ -112,7 +116,14 @@ export function getDefaultCallNote(outcome: string): string {
 export interface CallFeedbackInput {
   companyId: string;
   actor: string;
-  callOutcome: "CONNECTED" | "MEETING_BOOKED" | "GATEKEEPER_BLOCKED" | "WRONG_NUMBER" | "NO_ANSWER" | "CALL_COMPLETED";
+  callOutcome:
+    | "CONNECTED"
+    | "MEETING_BOOKED"
+    | "GATEKEEPER_BLOCKED"
+    | "WRONG_NUMBER"
+    | "NO_ANSWER"
+    | "CALL_COMPLETED"
+    | "NOT_INTERESTED";
   painIdentified?: string | null;
   softwareConfirmed?: string | null;
   fleetSizeConfirmed?: number | null;
@@ -138,6 +149,7 @@ export async function getCallerQueue(
     "MEETING_BOOKED",
     "QUALIFIED",
     "NURTURE",
+    "LOST",
   ];
 
   const statusOrAssignedCondition = sql`(${inArray(companies.status, callerStatuses)} OR (${companies.assignedMemberId} IS NOT NULL AND ${companies.assignedMemberId} != '' AND ${companies.status} != 'REJECTED'))`;
@@ -261,6 +273,9 @@ export async function recordCallFeedback(
 
   if (input.callOutcome === "MEETING_BOOKED") {
     nextStatus = "MEETING_BOOKED";
+  } else if (input.callOutcome === "NOT_INTERESTED") {
+    // Owner declined: keep the lead visible in the CRM as a closed-lost lead (not archived).
+    nextStatus = "LOST";
   } else if (input.painIdentified && input.painIdentified.trim().length > 0) {
     nextStatus = "PAIN_FOUND";
   } else if (input.callOutcome === "CONNECTED") {
@@ -309,6 +324,7 @@ export async function recordCallFeedback(
   const noteBody = cleanUserNote || getDefaultCallNote(input.callOutcome);
 
   const timeStr = new Date().toLocaleString("en-US", {
+    timeZone: CALLER_TIMEZONE,
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -325,6 +341,8 @@ export async function recordCallFeedback(
       ? "No Answer"
       : input.callOutcome === "WRONG_NUMBER"
       ? "Wrong Number"
+      : input.callOutcome === "NOT_INTERESTED"
+      ? "Not Interested"
       : "Left Voicemail";
 
   const newCallLogEntry = `[${timeStr} • ${input.actor || "Caller"} (${outcomeLabel})]: ${noteBody}`;
@@ -358,6 +376,8 @@ export async function recordCallFeedback(
     details: {
       callOutcome: input.callOutcome,
       nextStatus,
+      previousStatus: company.status,
+      attemptNumber: parseCallLog(company.notes).length + 1,
       painIdentified: input.painIdentified,
       softwareConfirmed: input.softwareConfirmed,
       fleetSizeConfirmed: input.fleetSizeConfirmed,

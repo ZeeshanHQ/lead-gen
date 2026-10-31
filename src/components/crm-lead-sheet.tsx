@@ -31,6 +31,16 @@ import {
 } from "@/components/crm-date-utils";
 import { updateTeamMemberAccessAction } from "@/app/settings/actions";
 import {
+  CALL_STATUS_DEFS,
+  CRM_FILTER_CHIPS,
+  STATUS_FILTER_TO_KEY,
+  deriveCallStatus,
+  extractFollowUp,
+  type CallOutcomeKey,
+  type CallStatusKey,
+} from "@/server/domain/call-outcomes";
+import { CallOutcomePicker, CallStatusBadge, CallStatusLegend } from "@/components/call-status-ui";
+import {
   Sheet,
   Phone,
   PhoneCall,
@@ -114,6 +124,8 @@ interface CrmLeadSheetProps {
   activeActorName?: string;
   onLeadUpdated?: (updated: CrmLeadItem) => void;
   onLeadDeleted?: (companyId: string) => void;
+  /** Pre-selects a status chip, e.g. from Sales Funnel deep links (?status=NO_ANSWER). */
+  initialStatusFilter?: string;
 }
 
 export const CRM_STAGE_OPTIONS: Array<{
@@ -221,10 +233,11 @@ export function CrmLeadSheet({
   activeActorName = "Team Member",
   onLeadUpdated,
   onLeadDeleted,
+  initialStatusFilter = "ALL",
 }: CrmLeadSheetProps) {
   const [leads, setLeads] = useState<CrmLeadItem[]>(initialLeads);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter);
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "YESTERDAY" | "OLDER">("ALL");
   const [callerFilter, setCallerFilter] = useState<string>("ALL");
   const [sortBy, setSortBy] = useState<"INTAKE_DATE" | "ICP_SCORE" | "NAME_AZ" | "STAGE">("INTAKE_DATE");
@@ -351,14 +364,8 @@ export function CrmLeadSheet({
 
   // Quick Call Modal State
   const [selectedLead, setSelectedLead] = useState<CrmLeadItem | null>(null);
-  const [outcome, setOutcome] = useState<
-    | "CONNECTED"
-    | "MEETING_BOOKED"
-    | "GATEKEEPER_BLOCKED"
-    | "WRONG_NUMBER"
-    | "NO_ANSWER"
-    | "CALL_COMPLETED"
-  >("CONNECTED");
+  // No default outcome: the caller must pick what actually happened (prevents false "Connected" logs).
+  const [outcome, setOutcome] = useState<CallOutcomeKey | null>(null);
   const [notes, setNotes] = useState("");
   const [followUpDate, setFollowUpDate] = useState("");
   const [actor] = useState(activeActorName);
@@ -416,25 +423,8 @@ export function CrmLeadSheet({
     );
   };
 
-  // Inline 1-click status change
-  const handleInlineStatusChange = async (lead: CrmLeadItem, nextStatus: LifecycleStatus) => {
-    if (nextStatus === "CONNECTED" || nextStatus === "MEETING_BOOKED" || nextStatus === "PAIN_FOUND") {
-      setSelectedLead(lead);
-      setOutcome(nextStatus === "MEETING_BOOKED" ? "MEETING_BOOKED" : "CONNECTED");
-      setNotes("");
-      setFollowUpDate(lead.nextFollowUp || "");
-      return;
-    }
-
-    applyLeadPatch(lead.id, { status: nextStatus });
-    const res = await updateLeadStatusQuickAction({ companyId: lead.id, status: nextStatus });
-    if (!res.ok) {
-      setSyncFeedback(res.error || "Could not update status");
-    } else {
-      setSyncFeedback(`Updated ${lead.name} stage to ${nextStatus.replace(/_/g, " ")}.`);
-      setTimeout(() => setSyncFeedback(null), 2500);
-    }
-  };
+  // There is no manual "pipeline stage" any more. A lead's status is always derived from the
+  // calls logged through "Log Call", so the CRM and the Sales Funnel can never disagree.
 
   // Inline 1-click smart field / custom column update
   const handleInlineSmartFieldChange = async (
@@ -611,6 +601,14 @@ export function CrmLeadSheet({
   };
 
   // Filter leads
+  // Every lead has exactly ONE derived call status (see deriveCallStatus), so the status
+  // filter chips below always add up to the total with no overlaps.
+  const derivedById = React.useMemo(() => {
+    const map = new Map<string, ReturnType<typeof deriveCallStatus>>();
+    for (const l of leads) map.set(l.id, deriveCallStatus(l));
+    return map;
+  }, [leads]);
+
   const filteredLeads = leads.filter((lead) => {
     if (lead.status === "REJECTED" && statusFilter !== "REJECTED") return false;
     if (callerFilter === "UNASSIGNED" && lead.assignedMemberId && lead.assignedMemberId !== "") return false;
@@ -622,37 +620,19 @@ export function CrmLeadSheet({
       return false;
     }
 
-    if (statusFilter === "TO_CALL") {
-      if (!["APPROVED", "SYNCED", "CALLING"].includes(lead.status)) return false;
-      const parsed = parseLatestCallerNote(lead.notes);
-      const outcome = (parsed?.outcome || "").toLowerCase();
-      if (outcome.includes("meeting") || outcome.includes("connected") || outcome.includes("spoke")) return false;
-    } else if (statusFilter === "CONNECTED") {
-      const parsed = parseLatestCallerNote(lead.notes);
-      const outcome = (parsed?.outcome || "").toLowerCase();
-      if (!["CONNECTED", "PAIN_FOUND"].includes(lead.status) && !outcome.includes("connected") && !outcome.includes("spoke"))
-        return false;
-    } else if (statusFilter === "MEETINGS") {
-      const parsed = parseLatestCallerNote(lead.notes);
-      const outcome = (parsed?.outcome || "").toLowerCase();
-      if (lead.status !== "MEETING_BOOKED" && !outcome.includes("meeting")) return false;
-    } else if (statusFilter === "FOLLOW_UP") {
-      if (!lead.nextFollowUp && !(lead.notes && lead.notes.includes("Follow-up Scheduled")))
-        return false;
-    } else if (statusFilter === "NO_ANSWER") {
-      const parsed = parseLatestCallerNote(lead.notes);
-      const outcome = (parsed?.outcome || "").toLowerCase();
-      if (!outcome.includes("no answer")) return false;
-    } else if (statusFilter === "GATEKEEPER") {
-      const parsed = parseLatestCallerNote(lead.notes);
-      const outcome = (parsed?.outcome || "").toLowerCase();
-      if (!outcome.includes("gatekeeper")) return false;
-    } else if (statusFilter === "VOICEMAIL") {
-      const parsed = parseLatestCallerNote(lead.notes);
-      const outcome = (parsed?.outcome || "").toLowerCase();
-      if (!outcome.includes("voicemail")) return false;
+    const derived = derivedById.get(lead.id) ?? deriveCallStatus(lead);
+    const followUp = lead.nextFollowUp || extractFollowUp(lead.notes);
+    if (statusFilter === "FOLLOW_UP") {
+      if (!followUp) return false;
+    } else if (statusFilter === "OVERDUE") {
+      if (!followUp || new Date(followUp).getTime() >= Date.now()) return false;
     } else if (statusFilter !== "ALL") {
-      if (lead.status !== statusFilter) return false;
+      const wanted = STATUS_FILTER_TO_KEY[statusFilter];
+      if (wanted) {
+        if (derived.key !== wanted) return false;
+      } else if (lead.status !== statusFilter) {
+        return false;
+      }
     }
 
     if (dateFilter !== "ALL") {
@@ -692,10 +672,15 @@ export function CrmLeadSheet({
     } else if (sortBy === "NAME_AZ") {
       list.sort((a, b) => a.name.localeCompare(b.name));
     } else if (sortBy === "STAGE") {
-      list.sort((a, b) => a.status.localeCompare(b.status));
+      // Funnel order: furthest along first (meeting -> spoke -> gatekeeper -> ... -> not called)
+      list.sort((a, b) => {
+        const da = derivedById.get(a.id) ?? deriveCallStatus(a);
+        const db = derivedById.get(b.id) ?? deriveCallStatus(b);
+        return db.def.depth - da.def.depth || db.attempts - da.attempts;
+      });
     }
     return list;
-  }, [filteredLeads, sortBy]);
+  }, [filteredLeads, sortBy, derivedById]);
 
   const teamCallers = React.useMemo(() => {
     return (allMembers || []).filter(
@@ -792,14 +777,14 @@ export function CrmLeadSheet({
 
   const openCallModal = (lead: CrmLeadItem) => {
     setSelectedLead(lead);
-    setOutcome("CONNECTED");
+    setOutcome(null);
     setNotes("");
     setFollowUpDate(lead.nextFollowUp || "");
   };
 
   const handleSaveCall = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLead) return;
+    if (!selectedLead || !outcome) return;
 
     startTransition(async () => {
       const combinedNotes = followUpDate
@@ -833,61 +818,33 @@ export function CrmLeadSheet({
   const activeLeads = leads.filter((l) => l.status !== "REJECTED");
   const totalCount = activeLeads.length;
 
-  const {
-    toCallCount,
-    connectedCount,
-    meetingsCount,
-    followUpCount,
-    noAnswerCount,
-    gatekeeperCount,
-    voicemailCount,
-  } = React.useMemo(() => {
-    let toCall = 0;
-    let connected = 0;
-    let meetings = 0;
+  // One exclusive status per lead (the chips add up to the total), plus date based overlays.
+  const { statusCounts, followUpCount, overdueCount } = React.useMemo(() => {
+    const counts: Record<CallStatusKey, number> = {
+      UNTOUCHED: 0,
+      NO_ANSWER: 0,
+      CALL_COMPLETED: 0,
+      WRONG_NUMBER: 0,
+      GATEKEEPER_BLOCKED: 0,
+      CONNECTED: 0,
+      NOT_INTERESTED: 0,
+      MEETING_BOOKED: 0,
+    };
     let followUp = 0;
-    let noAnswer = 0;
-    let gatekeeper = 0;
-    let voicemail = 0;
-
+    let overdue = 0;
+    const now = Date.now();
     for (const lead of activeLeads) {
-      const parsed = parseLatestCallerNote(lead.notes);
-      const outcome = (parsed?.outcome || "").toLowerCase();
-      const hasFollowUp = Boolean(
-        lead.nextFollowUp || (lead.notes && lead.notes.includes("Follow-up Scheduled"))
-      );
-
-      if (hasFollowUp) followUp++;
-
-      if (lead.status === "MEETING_BOOKED" || outcome.includes("meeting")) {
-        meetings++;
-      } else if (
-        ["CONNECTED", "PAIN_FOUND"].includes(lead.status) ||
-        outcome.includes("connected") ||
-        outcome.includes("spoke")
-      ) {
-        connected++;
-      } else if (outcome.includes("no answer")) {
-        noAnswer++;
-      } else if (outcome.includes("gatekeeper")) {
-        gatekeeper++;
-      } else if (outcome.includes("voicemail")) {
-        voicemail++;
-      } else if (["APPROVED", "SYNCED", "CALLING"].includes(lead.status)) {
-        toCall++;
+      const derived = derivedById.get(lead.id) ?? deriveCallStatus(lead);
+      counts[derived.key]++;
+      const fu = lead.nextFollowUp || extractFollowUp(lead.notes);
+      if (fu) {
+        followUp++;
+        if (new Date(fu).getTime() < now) overdue++;
       }
     }
+    return { statusCounts: counts, followUpCount: followUp, overdueCount: overdue };
+  }, [activeLeads, derivedById]);
 
-    return {
-      toCallCount: toCall,
-      connectedCount: connected,
-      meetingsCount: meetings,
-      followUpCount: followUp,
-      noAnswerCount: noAnswer,
-      gatekeeperCount: gatekeeper,
-      voicemailCount: voicemail,
-    };
-  }, [activeLeads]);
 
   const { todayCount, yesterdayCount, olderCount } = React.useMemo(() => {
     let today = 0;
@@ -1060,7 +1017,7 @@ export function CrmLeadSheet({
             >
               <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-400">All Queue</div>
               <div className="text-base font-extrabold text-white mt-0.5">{totalCount} leads</div>
-              <div className="text-[10px] text-emerald-400 mt-0.5">{meetingsCount} booked</div>
+              <div className="text-[10px] text-emerald-400 mt-0.5">{statusCounts.MEETING_BOOKED} booked</div>
             </button>
 
             <button
@@ -1142,30 +1099,76 @@ export function CrmLeadSheet({
 
       {/* Filter and Search Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 bg-[#09090b]/60 p-3 text-xs">
-        <div className="flex flex-wrap items-center gap-1">
-          {[
-            { key: "ALL", label: `All (${totalCount})` },
-            { key: "TO_CALL", label: `Ready to Call (${toCallCount})` },
-            { key: "FOLLOW_UP", label: `Follow-Ups (${followUpCount})` },
-            { key: "CONNECTED", label: `Connected (${connectedCount})` },
-            { key: "MEETINGS", label: `Meetings Booked (${meetingsCount})` },
-            { key: "NO_ANSWER", label: `No Answer (${noAnswerCount})` },
-            { key: "GATEKEEPER", label: `Gatekeeper (${gatekeeperCount})` },
-            { key: "VOICEMAIL", label: `Voicemails (${voicemailCount})` },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setStatusFilter(tab.key)}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                statusFilter === tab.key
-                  ? "bg-white text-black font-bold"
-                  : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setStatusFilter("ALL")}
+            className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+              statusFilter === "ALL"
+                ? "border-white bg-white text-black"
+                : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-600"
+            }`}
+          >
+            All ({totalCount})
+          </button>
+
+          {CRM_FILTER_CHIPS.map((chip) => {
+            const def = CALL_STATUS_DEFS[chip.statusKey];
+            const count = statusCounts[chip.statusKey];
+            const active = statusFilter === chip.filter || (chip.filter === "UNTOUCHED" && statusFilter === "TO_CALL");
+            return (
+              <button
+                key={chip.filter}
+                type="button"
+                onClick={() => setStatusFilter(chip.filter)}
+                title={`${def.meaning} ${def.whenToUse}`}
+                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+                  active
+                    ? `${def.selected} text-white`
+                    : count === 0
+                    ? "border-zinc-800/70 bg-[#09090b] text-zinc-600 hover:border-zinc-700"
+                    : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-600"
+                }`}
+              >
+                <span className={`h-2 w-2 rounded-full ${def.dot}`} />
+                <span>{chip.label}</span>
+                <span className="rounded bg-black/30 px-1 text-[10px] font-bold">{count}</span>
+              </button>
+            );
+          })}
+
+          <span className="mx-1 hidden h-5 w-px bg-zinc-800 sm:block" />
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter("FOLLOW_UP")}
+            title="Leads with a scheduled follow-up date"
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+              statusFilter === "FOLLOW_UP"
+                ? "border-indigo-300 bg-indigo-500/20 text-white ring-1 ring-indigo-300/60"
+                : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-600"
+            }`}
+          >
+            <Calendar className="h-3 w-3 text-indigo-300" />
+            <span>Follow-Ups</span>
+            <span className="rounded bg-black/30 px-1 text-[10px] font-bold">{followUpCount}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilter("OVERDUE")}
+            title="Follow-up date has passed. Call these first."
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+              statusFilter === "OVERDUE"
+                ? "border-rose-300 bg-rose-500/25 text-white ring-1 ring-rose-300/60"
+                : overdueCount > 0
+                ? "border-rose-500/50 bg-rose-500/10 text-rose-200 hover:border-rose-400"
+                : "border-zinc-800/70 bg-[#09090b] text-zinc-600"
+            }`}
+          >
+            <Clock className="h-3 w-3" />
+            <span>Overdue</span>
+            <span className="rounded bg-black/30 px-1 text-[10px] font-bold">{overdueCount}</span>
+          </button>
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -1180,7 +1183,7 @@ export function CrmLeadSheet({
               <option value="INTAKE_DATE">Sort: Intake Date (Newest first)</option>
               <option value="ICP_SCORE">Sort: ICP Score (High to Low)</option>
               <option value="NAME_AZ">Sort: Company Name (A-Z)</option>
-              <option value="STAGE">Sort: Pipeline Stage</option>
+              <option value="STAGE">Sort: Call Status (funnel order)</option>
             </select>
           </div>
 
@@ -1247,6 +1250,14 @@ export function CrmLeadSheet({
         )}
       </div>
 
+      {/* Color key: same colors as the Sales Funnel page */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/60 bg-[#0a0a0d] px-3 py-2">
+        <CallStatusLegend />
+        <span className="text-[10px] text-zinc-500">
+          Status updates automatically from <strong className="text-zinc-300">Log Call</strong>
+        </span>
+      </div>
+
       {/* Spreadsheet Table View */}
       {filteredLeads.length === 0 ? (
         <div className="p-10 text-center text-xs text-zinc-400 space-y-3">
@@ -1293,7 +1304,7 @@ export function CrmLeadSheet({
                 {(isOwner || canManageSettings) && (
                   <th className="px-3 py-3 whitespace-nowrap min-w-[130px]">Assigned Caller</th>
                 )}
-                <th className="px-3 py-3 whitespace-nowrap min-w-[155px]">Pipeline Stage</th>
+                <th className="px-3 py-3 whitespace-nowrap min-w-[175px]">Call Status</th>
                 {smartFields.map((field) => (
                   <th key={field.key} className="px-3 py-3 whitespace-nowrap min-w-[125px]">
                     <div className="flex items-center gap-1.5">
@@ -1636,28 +1647,25 @@ export function CrmLeadSheet({
                         </td>
                       )}
 
-                      {/* Interactive Status Dropdown with Vivid Stage Badges */}
-                      <td className="px-3 py-3.5 whitespace-nowrap min-w-[155px]">
-                        {canEdit ? (
-                          <select
-                            value={lead.status}
-                            onChange={(e) =>
-                              handleInlineStatusChange(lead, e.target.value as LifecycleStatus)
-                            }
-                            className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold focus:outline-none cursor-pointer transition ${
-                              CRM_STAGE_OPTIONS.find((s) => s.value === lead.status)?.badgeClass ||
-                              "border-zinc-700 bg-[#09090b] text-zinc-100"
-                            }`}
-                          >
-                            {CRM_STAGE_OPTIONS.map((st) => (
-                              <option key={st.value} value={st.value} className="bg-[#121215] text-zinc-200">
-                                {st.label}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className="text-xs text-zinc-300">{lead.status}</span>
-                        )}
+                      {/* Call Status: derived automatically from Log Call (no manual pipeline stage) */}
+                      <td className="px-3 py-3.5 whitespace-nowrap min-w-[175px]">
+                        {(() => {
+                          const derived = derivedById.get(lead.id) ?? deriveCallStatus(lead);
+                          return (
+                            <div className="flex flex-col items-start gap-1">
+                              <CallStatusBadge
+                                statusKey={derived.key}
+                                attempts={derived.attempts}
+                                onClick={canCall ? () => openCallModal(lead) : undefined}
+                              />
+                              <span className="text-[10px] text-zinc-500">
+                                {derived.lastLog
+                                  ? `Last call: ${derived.lastLog.timestampRaw}`
+                                  : "No calls logged yet"}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       {/* Niche-Specific Smart Qualification Fields + Custom Columns */}
@@ -1955,7 +1963,7 @@ export function CrmLeadSheet({
               <div>
                 <h3 className="text-sm font-bold text-white">Edit CRM Lead: {editingLead.name}</h3>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                  Update company info, decision maker, phone, stage, follow-up, or notes.
+                  Update company info, decision maker, phone, follow-up, or notes.
                 </p>
               </div>
               <button
@@ -1983,19 +1991,37 @@ export function CrmLeadSheet({
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                    Pipeline Stage
+                    Call Status
                   </label>
-                  <select
-                    value={editStatus}
-                    onChange={(e) => setEditStatus(e.target.value as LifecycleStatus)}
-                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
-                  >
-                    {CRM_STAGE_OPTIONS.map((st) => (
-                      <option key={st.value} value={st.value}>
-                        {st.label}
-                      </option>
-                    ))}
-                  </select>
+                  {isOwner ? (
+                    <>
+                      <select
+                        value={editStatus}
+                        onChange={(e) => setEditStatus(e.target.value as LifecycleStatus)}
+                        className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:border-zinc-600 focus:outline-none"
+                      >
+                        {CRM_STAGE_OPTIONS.map((st) => (
+                          <option key={st.value} value={st.value}>
+                            {st.label}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-[10px] text-amber-300/80">
+                        Owner override. Status is set automatically by Log Call; change this only to
+                        correct a mistake.
+                      </p>
+                    </>
+                  ) : (
+                    <div className="space-y-1">
+                      <CallStatusBadge
+                        statusKey={(derivedById.get(editingLead.id) ?? deriveCallStatus(editingLead)).key}
+                        attempts={(derivedById.get(editingLead.id) ?? deriveCallStatus(editingLead)).attempts}
+                      />
+                      <p className="text-[10px] text-zinc-500">
+                        Updates automatically when you use Log Call.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2220,31 +2246,9 @@ export function CrmLeadSheet({
             <form onSubmit={handleSaveCall} className="p-6 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 mb-2">
-                  Call Outcome *
+                  What happened on this call? *
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                  {[
-                    { key: "MEETING_BOOKED", label: "Meeting Booked" },
-                    { key: "CONNECTED", label: "Connected / Spoke" },
-                    { key: "GATEKEEPER_BLOCKED", label: "Gatekeeper" },
-                    { key: "NO_ANSWER", label: "No Answer" },
-                    { key: "CALL_COMPLETED", label: "Left Voicemail" },
-                    { key: "WRONG_NUMBER", label: "Wrong Number" },
-                  ].map((opt) => (
-                    <button
-                      key={opt.key}
-                      type="button"
-                      onClick={() => setOutcome(opt.key as any)}
-                      className={`p-2.5 rounded-lg border text-left transition ${
-                        outcome === opt.key
-                          ? "border-white bg-zinc-800 text-white font-bold"
-                          : "border-zinc-800 bg-[#09090b] text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
+                <CallOutcomePicker value={outcome} onChange={setOutcome} />
               </div>
 
               <div>
@@ -2288,10 +2292,11 @@ export function CrmLeadSheet({
                 </button>
                 <button
                   type="submit"
-                  disabled={isPending}
-                  className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black font-bold text-xs transition"
+                  disabled={isPending || !outcome}
+                  title={!outcome ? "Pick what happened on the call first" : undefined}
+                  className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black font-bold text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  {isPending ? "Saving..." : "Save Call Note"}
+                  {isPending ? "Saving..." : outcome ? "Save Call" : "Pick an outcome to save"}
                 </button>
               </div>
             </form>

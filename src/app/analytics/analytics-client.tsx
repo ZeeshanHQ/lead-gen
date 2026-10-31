@@ -1,10 +1,33 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import type { LeadRow } from "@/server/repo/queue";
 import type { TeamMember } from "@/server/domain/team";
-import { parseLatestCallerNote } from "@/components/crm-date-utils";
+import {
+  CALL_STATUS_DEFS,
+  type CallOutcomeKey,
+  type CallStatusKey,
+} from "@/server/domain/call-outcomes";
+import {
+  CALLER_TIMEZONE,
+  CALLER_TZ_LABEL,
+  US_TZ_GROUPS,
+  formatClock,
+  formatHour12,
+  wallClock,
+} from "@/server/domain/call-time";
+import {
+  buildCallEvents,
+  computeFunnel,
+  type AuditCallInput,
+  type FunnelFilters,
+  type FunnelLead,
+  type FunnelMember,
+  type FunnelResult,
+  type Timeframe,
+} from "@/server/domain/funnel-analytics";
+import { CallStatusBadge, CallStatusLegend } from "@/components/call-status-ui";
 import {
   TrendingUp,
   PhoneCall,
@@ -25,16 +48,17 @@ import {
   Filter,
   Zap,
   Flame,
-  Compass,
-  RefreshCw,
   Layers,
   PieChart,
   Activity,
   ShieldCheck,
   Sparkles,
   HelpCircle,
-  PhoneIncoming,
   PhoneOff,
+  Globe,
+  Calendar,
+  ArrowUpRight,
+  Info,
 } from "lucide-react";
 
 export interface CallAuditEntry {
@@ -57,22 +81,225 @@ interface SalesFunnelClientProps {
   activeMemberName?: string;
 }
 
-type TimeframeOption = "ALL" | "TODAY" | "YESTERDAY" | "LAST_7_DAYS" | "LAST_30_DAYS";
-type AnalyticsTab = "OVERVIEW" | "TRENDS" | "HOURLY" | "CALLERS" | "ICP_QUALITY";
+type FunnelViewMode = "CIRCULAR" | "STEPPED" | "BOTH";
+type AnalyticsTab = "OVERVIEW" | "HOURLY" | "CALLERS" | "ICP_QUALITY" | "TRENDS";
 
-interface NormalizedCall {
-  id: string;
-  companyId?: string | null;
-  companyName?: string;
-  actor: string;
-  outcome: "CONNECTED" | "MEETING_BOOKED" | "GATEKEEPER_BLOCKED" | "NO_ANSWER" | "VOICEMAIL" | "WRONG_NUMBER" | "OTHER";
-  notes?: string;
-  date: Date;
-  dateKey: string; // YYYY-MM-DD
-  dayLabel: string; // "Oct 28"
-  hour: number; // 0..23
-  painIdentified?: boolean;
+// ---------------------------------------------------------------------------
+// SVG Circular Gauge Component
+// ---------------------------------------------------------------------------
+
+function CircularGauge({
+  value,
+  size = 120,
+  strokeWidth = 10,
+  color = "#10b981",
+  bgColor = "#27272a",
+  label,
+  sublabel,
+  countText,
+}: {
+  value: number;
+  size?: number;
+  strokeWidth?: number;
+  color?: string;
+  bgColor?: string;
+  label: string;
+  sublabel?: string;
+  countText?: string;
+}) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const validValue = Math.min(100, Math.max(0, isNaN(value) ? 0 : value));
+  const strokeDashoffset = circumference - (validValue / 100) * circumference;
+
+  return (
+    <div className="flex flex-col items-center text-center p-3">
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="transform -rotate-90">
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke={bgColor}
+            strokeWidth={strokeWidth}
+            fill="transparent"
+          />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke={color}
+            strokeWidth={strokeWidth}
+            fill="transparent"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            className="transition-all duration-700 ease-out"
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-xl font-black font-mono text-white tracking-tight">
+            {validValue}%
+          </span>
+          {countText && (
+            <span className="text-[10px] font-medium text-zinc-400 mt-0.5">
+              {countText}
+            </span>
+          )}
+        </div>
+      </div>
+      <span className="text-xs font-bold text-zinc-200 mt-2.5">{label}</span>
+      {sublabel && <span className="text-[10px] text-zinc-400 mt-0.5">{sublabel}</span>}
+    </div>
+  );
 }
+
+// ---------------------------------------------------------------------------
+// SVG Outcome Donut Chart Component
+// ---------------------------------------------------------------------------
+
+function OutcomeDonutChart({
+  outcomeCounts,
+  totalDials,
+}: {
+  outcomeCounts: Record<CallOutcomeKey, number>;
+  totalDials: number;
+}) {
+  const size = 160;
+  const strokeWidth = 22;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  const segments: Array<{
+    key: CallOutcomeKey;
+    label: string;
+    count: number;
+    color: string;
+    dotClass: string;
+  }> = [
+    {
+      key: "MEETING_BOOKED",
+      label: CALL_STATUS_DEFS.MEETING_BOOKED.label,
+      count: outcomeCounts.MEETING_BOOKED || 0,
+      color: "#10b981", // emerald
+      dotClass: "bg-emerald-400",
+    },
+    {
+      key: "CONNECTED",
+      label: CALL_STATUS_DEFS.CONNECTED.label,
+      count: outcomeCounts.CONNECTED || 0,
+      color: "#6366f1", // indigo
+      dotClass: "bg-indigo-400",
+    },
+    {
+      key: "GATEKEEPER_BLOCKED",
+      label: CALL_STATUS_DEFS.GATEKEEPER_BLOCKED.label,
+      count: outcomeCounts.GATEKEEPER_BLOCKED || 0,
+      color: "#f97316", // orange
+      dotClass: "bg-orange-400",
+    },
+    {
+      key: "NO_ANSWER",
+      label: CALL_STATUS_DEFS.NO_ANSWER.label,
+      count: outcomeCounts.NO_ANSWER || 0,
+      color: "#f59e0b", // amber
+      dotClass: "bg-amber-400",
+    },
+    {
+      key: "CALL_COMPLETED",
+      label: CALL_STATUS_DEFS.CALL_COMPLETED.label,
+      count: outcomeCounts.CALL_COMPLETED || 0,
+      color: "#0ea5e9", // sky
+      dotClass: "bg-sky-400",
+    },
+    {
+      key: "WRONG_NUMBER",
+      label: CALL_STATUS_DEFS.WRONG_NUMBER.label,
+      count: outcomeCounts.WRONG_NUMBER || 0,
+      color: "#f43f5e", // rose
+      dotClass: "bg-rose-400",
+    },
+    {
+      key: "NOT_INTERESTED",
+      label: CALL_STATUS_DEFS.NOT_INTERESTED.label,
+      count: outcomeCounts.NOT_INTERESTED || 0,
+      color: "#71717a", // zinc
+      dotClass: "bg-zinc-400",
+    },
+  ];
+
+  let accumulatedPercent = 0;
+
+  return (
+    <div className="flex flex-col lg:flex-row items-center gap-6 p-4">
+      <div className="relative shrink-0" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="transform -rotate-90">
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke="#27272a"
+            strokeWidth={strokeWidth}
+            fill="transparent"
+          />
+          {totalDials > 0 &&
+            segments.map((seg) => {
+              if (seg.count <= 0) return null;
+              const percent = seg.count / totalDials;
+              const strokeDasharray = `${circumference * percent} ${circumference * (1 - percent)}`;
+              const strokeDashoffset = -circumference * accumulatedPercent;
+              accumulatedPercent += percent;
+              return (
+                <circle
+                  key={seg.key}
+                  cx={size / 2}
+                  cy={size / 2}
+                  r={radius}
+                  stroke={seg.color}
+                  strokeWidth={strokeWidth}
+                  fill="transparent"
+                  strokeDasharray={strokeDasharray}
+                  strokeDashoffset={strokeDashoffset}
+                  className="transition-all duration-500 hover:opacity-80"
+                />
+              );
+            })}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-2xl font-black font-mono text-white">{totalDials}</span>
+          <span className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">
+            Total Dials
+          </span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs w-full">
+        {segments.map((item) => {
+          const pct = totalDials > 0 ? Math.round((item.count / totalDials) * 100) : 0;
+          return (
+            <div
+              key={item.key}
+              className="flex items-center justify-between p-2 rounded-lg bg-zinc-900/60 border border-zinc-800/80"
+            >
+              <div className="flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${item.dotClass}`} />
+                <span className="text-zinc-300 font-medium">{item.label}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-mono font-bold text-white">{item.count}</span>
+                <span className="text-[10px] text-zinc-400 font-mono">({pct}%)</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main Component
+// ---------------------------------------------------------------------------
 
 export function SalesFunnelClient({
   leads,
@@ -84,1064 +311,725 @@ export function SalesFunnelClient({
   activeMemberName,
 }: SalesFunnelClientProps) {
   const [selectedCallerId, setSelectedCallerId] = useState<string>("ALL");
-  const [timeframe, setTimeframe] = useState<TimeframeOption>("ALL");
+  const [timeframe, setTimeframe] = useState<Timeframe>("ALL");
   const [activeTab, setActiveTab] = useState<AnalyticsTab>("OVERVIEW");
-  const [hoveredDayKey, setHoveredDayKey] = useState<string | null>(null);
-  const [hoveredHour, setHoveredHour] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<FunnelViewMode>("BOTH");
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [hourlyTzMode, setHourlyTzMode] = useState<"PROSPECT" | "CALLER">("PROSPECT");
+  const [showLegendMeaning, setShowLegendMeaning] = useState<boolean>(false);
 
-  // 1. Build Lead Map for fast lookups
-  const leadMap = useMemo(() => {
-    const map = new Map<string, LeadRow>();
-    for (const lead of leads) {
-      map.set(lead.id, lead);
-    }
-    return map;
+  // Live Clock Tick (every 10 seconds)
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // 1. Adapt leads to pure domain FunnelLead[]
+  const funnelLeads: FunnelLead[] = useMemo(() => {
+    return leads.map((l) => ({
+      id: l.id,
+      name: l.name,
+      state: l.state,
+      status: l.status,
+      notes: l.notes,
+      icpScore: l.icpScore,
+      assignedMemberId: l.assignedMemberId || null,
+      createdAtMs: l.createdAt ? new Date(l.createdAt).getTime() : null,
+    }));
   }, [leads]);
 
-  // 2. Normalize and Deduplicate all Call Events (from auditLogs + notes fallback)
-  const allCalls = useMemo(() => {
-    const list: NormalizedCall[] = [];
-    const seenSignatures = new Set<string>();
+  // 2. Adapt raw audit logs to domain AuditCallInput[]
+  const auditInputs: AuditCallInput[] = useMemo(() => {
+    return callEvents.map((evt) => ({
+      id: evt.id,
+      actor: evt.actor,
+      companyId: evt.companyId || null,
+      callOutcome: evt.callOutcome,
+      notes: evt.notes || "",
+      createdAtMs: new Date(evt.createdAt).getTime(),
+    }));
+  }, [callEvents]);
 
-    // A. Audit Log entries (authoritative timestamps & outcomes)
-    for (const evt of callEvents) {
-      const d = new Date(evt.createdAt);
-      if (isNaN(d.getTime())) continue;
+  // 3. Adapt callers to domain FunnelMember[]
+  const funnelMembers: FunnelMember[] = useMemo(() => {
+    return teamCallers.map((m) => ({
+      id: m.id,
+      name: m.name,
+      email: m.email,
+      title: m.title || "Sales Caller",
+    }));
+  }, [teamCallers]);
 
-      const dateKey = d.toISOString().slice(0, 10);
-      const dayLabel = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      const hour = d.getHours();
+  // 4. Build deduplicated call events
+  const rawEvents = useMemo(() => {
+    return buildCallEvents(funnelLeads, auditInputs, funnelMembers, nowMs);
+  }, [funnelLeads, auditInputs, funnelMembers, nowMs]);
 
-      let normOutcome: NormalizedCall["outcome"] = "OTHER";
-      const rawOutcome = evt.callOutcome.toUpperCase();
-      if (rawOutcome.includes("MEETING")) normOutcome = "MEETING_BOOKED";
-      else if (rawOutcome.includes("CONNECTED") || rawOutcome.includes("SPOKE")) normOutcome = "CONNECTED";
-      else if (rawOutcome.includes("GATEKEEPER")) normOutcome = "GATEKEEPER_BLOCKED";
-      else if (rawOutcome.includes("NO_ANSWER")) normOutcome = "NO_ANSWER";
-      else if (rawOutcome.includes("VOICEMAIL")) normOutcome = "VOICEMAIL";
-      else if (rawOutcome.includes("WRONG")) normOutcome = "WRONG_NUMBER";
-
-      const signature = `${evt.companyId || "na"}-${dateKey}-${hour}-${normOutcome}`;
-      seenSignatures.add(signature);
-
-      const lead = evt.companyId ? leadMap.get(evt.companyId) : undefined;
-
-      list.push({
-        id: evt.id,
-        companyId: evt.companyId,
-        companyName: lead?.name || "Company Call",
-        actor: evt.actor,
-        outcome: normOutcome,
-        notes: evt.notes,
-        date: d,
-        dateKey,
-        dayLabel,
-        hour,
-        painIdentified: evt.painIdentified,
-      });
-    }
-
-    // B. Parse notes from leads as historical fallback
-    for (const lead of leads) {
-      if (!lead.notes) continue;
-      const lines = lead.notes.split("\n");
-
-      for (const line of lines) {
-        const match = line.match(/^\[([^•\]]+)(?:•\s*([^(]+))?(?:\(([^)]+)\))?\]:\s*(.*)$/);
-        if (match) {
-          const rawTime = (match[1] || "").trim();
-          const author = (match[2] || "").trim();
-          const outcomeRaw = (match[3] || "").trim().toLowerCase();
-          const noteText = (match[4] || "").trim();
-
-          const parsedDate = new Date(rawTime);
-          const validDate = !isNaN(parsedDate.getTime()) ? parsedDate : new Date(lead.createdAt || Date.now());
-          const dateKey = validDate.toISOString().slice(0, 10);
-          const dayLabel = validDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-          const hour = validDate.getHours();
-
-          let normOutcome: NormalizedCall["outcome"] = "OTHER";
-          if (outcomeRaw.includes("meeting")) normOutcome = "MEETING_BOOKED";
-          else if (outcomeRaw.includes("connected") || outcomeRaw.includes("spoke")) normOutcome = "CONNECTED";
-          else if (outcomeRaw.includes("gatekeeper")) normOutcome = "GATEKEEPER_BLOCKED";
-          else if (outcomeRaw.includes("no answer")) normOutcome = "NO_ANSWER";
-          else if (outcomeRaw.includes("voicemail")) normOutcome = "VOICEMAIL";
-          else if (outcomeRaw.includes("wrong")) normOutcome = "WRONG_NUMBER";
-
-          const signature = `${lead.id}-${dateKey}-${hour}-${normOutcome}`;
-          if (seenSignatures.has(signature)) continue;
-          seenSignatures.add(signature);
-
-          list.push({
-            id: `${lead.id}-${validDate.getTime()}`,
-            companyId: lead.id,
-            companyName: lead.name,
-            actor: author || lead.assignedMemberName || "Caller",
-            outcome: normOutcome,
-            notes: noteText,
-            date: validDate,
-            dateKey,
-            dayLabel,
-            hour,
-          });
-        }
-      }
-    }
-
-    // Sort calls descending by date
-    return list.sort((a, b) => b.date.getTime() - a.date.getTime());
-  }, [callEvents, leads, leadMap]);
-
-  // 3. Filter by Timeframe & Caller Scope
-  const filteredData = useMemo(() => {
-    const now = new Date();
-    const todayKey = now.toISOString().slice(0, 10);
-    const yesterdayDate = new Date(now.getTime() - 86400000);
-    const yesterdayKey = yesterdayDate.toISOString().slice(0, 10);
-    const sevenDaysAgo = now.getTime() - 7 * 86400000;
-    const thirtyDaysAgo = now.getTime() - 30 * 86400000;
-
-    const callerObj = teamCallers.find((c) => c.id === selectedCallerId);
-    const callerNameLower = callerObj?.name.toLowerCase();
-
-    // Filter Leads
-    const scopedLeads = leads.filter((lead) => {
-      if (lead.status === "REJECTED") return false;
-      if (selectedCallerId === "ALL") return true;
-      if (selectedCallerId === "UNASSIGNED") return !lead.assignedMemberId;
-      return lead.assignedMemberId === selectedCallerId;
-    });
-
-    // Filter Calls
-    const scopedCalls = allCalls.filter((c) => {
-      // Caller Match
-      if (selectedCallerId !== "ALL" && selectedCallerId !== "UNASSIGNED") {
-        const lead = c.companyId ? leadMap.get(c.companyId) : null;
-        const matchesLeadAssignee = lead?.assignedMemberId === selectedCallerId;
-        const matchesActor = callerNameLower && c.actor.toLowerCase().includes(callerNameLower);
-        if (!matchesLeadAssignee && !matchesActor) return false;
-      } else if (selectedCallerId === "UNASSIGNED") {
-        const lead = c.companyId ? leadMap.get(c.companyId) : null;
-        if (lead?.assignedMemberId) return false;
-      }
-
-      // Timeframe Match
-      if (timeframe === "TODAY") return c.dateKey === todayKey;
-      if (timeframe === "YESTERDAY") return c.dateKey === yesterdayKey;
-      if (timeframe === "LAST_7_DAYS") return c.date.getTime() >= sevenDaysAgo;
-      if (timeframe === "LAST_30_DAYS") return c.date.getTime() >= thirtyDaysAgo;
-      return true;
-    });
-
-    // Compute Metrics
-    const totalLeads = scopedLeads.length;
-    const leadsWithCallsSet = new Set<string>();
-    for (const call of scopedCalls) {
-      if (call.companyId) leadsWithCallsSet.add(call.companyId);
-    }
-    const contactedLeadsCount = leadsWithCallsSet.size;
-    const untouchedLeadsCount = Math.max(0, totalLeads - contactedLeadsCount);
-
-    const totalDials = scopedCalls.length;
-    let meetingsBooked = 0;
-    let connectedSpoke = 0;
-    let gatekeeperBlocked = 0;
-    let noAnswerCount = 0;
-    let voicemailCount = 0;
-    let wrongNumberCount = 0;
-    let otherCount = 0;
-
-    for (const c of scopedCalls) {
-      if (c.outcome === "MEETING_BOOKED") meetingsBooked++;
-      else if (c.outcome === "CONNECTED") connectedSpoke++;
-      else if (c.outcome === "GATEKEEPER_BLOCKED") gatekeeperBlocked++;
-      else if (c.outcome === "NO_ANSWER") noAnswerCount++;
-      else if (c.outcome === "VOICEMAIL") voicemailCount++;
-      else if (c.outcome === "WRONG_NUMBER") wrongNumberCount++;
-      else otherCount++;
-    }
-
-    const answeredCalls = connectedSpoke + gatekeeperBlocked + voicemailCount + meetingsBooked;
-    const pickRate = totalDials > 0 ? Math.round((answeredCalls / totalDials) * 100) : 0;
-    const gatekeeperAttempts = connectedSpoke + gatekeeperBlocked + meetingsBooked;
-    const gatekeeperBypassRate =
-      gatekeeperAttempts > 0
-        ? Math.round(((connectedSpoke + meetingsBooked) / gatekeeperAttempts) * 100)
-        : 0;
-    const totalSpokeOrBooked = connectedSpoke + meetingsBooked;
-    const spokeConversionRate =
-      totalSpokeOrBooked > 0 ? Math.round((meetingsBooked / totalSpokeOrBooked) * 100) : 0;
-    const dialsPerBooking = meetingsBooked > 0 ? Math.round(totalDials / meetingsBooked) : 0;
-
-    // Follow-ups active in lead pool
-    const activeFollowUps = scopedLeads.filter(
-      (l) => l.notes && l.notes.includes("Follow-up Scheduled")
-    ).length;
-
-    // Caller Leaderboard Matrix
-    const callerMatrixMap = new Map<
-      string,
-      {
-        id: string;
-        name: string;
-        title: string;
-        assignedLeads: number;
-        callsLogged: number;
-        meetings: number;
-        connected: number;
-        gatekeeper: number;
-        noAnswer: number;
-        voicemail: number;
-        conversionRate: number;
-      }
-    >();
-
-    for (const caller of teamCallers) {
-      callerMatrixMap.set(caller.id, {
-        id: caller.id,
-        name: caller.name,
-        title: caller.title || "Sales Caller",
-        assignedLeads: 0,
-        callsLogged: 0,
-        meetings: 0,
-        connected: 0,
-        gatekeeper: 0,
-        noAnswer: 0,
-        voicemail: 0,
-        conversionRate: 0,
-      });
-    }
-
-    for (const lead of scopedLeads) {
-      if (lead.assignedMemberId && callerMatrixMap.has(lead.assignedMemberId)) {
-        callerMatrixMap.get(lead.assignedMemberId)!.assignedLeads++;
-      }
-    }
-
-    for (const call of scopedCalls) {
-      const caller = teamCallers.find(
-        (c) =>
-          c.name.toLowerCase() === call.actor.toLowerCase() ||
-          c.email.toLowerCase() === call.actor.toLowerCase() ||
-          (call.companyId && leadMap.get(call.companyId)?.assignedMemberId === c.id)
-      );
-      if (caller && callerMatrixMap.has(caller.id)) {
-        const row = callerMatrixMap.get(caller.id)!;
-        row.callsLogged++;
-        if (call.outcome === "MEETING_BOOKED") row.meetings++;
-        else if (call.outcome === "CONNECTED") row.connected++;
-        else if (call.outcome === "GATEKEEPER_BLOCKED") row.gatekeeper++;
-        else if (call.outcome === "NO_ANSWER") row.noAnswer++;
-        else if (call.outcome === "VOICEMAIL") row.voicemail++;
-      }
-    }
-
-    for (const row of callerMatrixMap.values()) {
-      const spokeTotal = row.connected + row.meetings;
-      row.conversionRate = spokeTotal > 0 ? Math.round((row.meetings / spokeTotal) * 100) : 0;
-    }
-
-    // Daily Calling Trends (Last 14 days or filtered period)
-    const dailyMap = new Map<
-      string,
-      {
-        dateKey: string;
-        dayLabel: string;
-        dials: number;
-        answered: number;
-        spoke: number;
-        meetings: number;
-      }
-    >();
-
-    // Seed last 14 days so chart is never empty
-    for (let i = 13; i >= 0; i--) {
-      const dt = new Date(now.getTime() - i * 86400000);
-      const key = dt.toISOString().slice(0, 10);
-      const lbl = dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      dailyMap.set(key, { dateKey: key, dayLabel: lbl, dials: 0, answered: 0, spoke: 0, meetings: 0 });
-    }
-
-    for (const c of scopedCalls) {
-      if (!dailyMap.has(c.dateKey)) {
-        dailyMap.set(c.dateKey, {
-          dateKey: c.dateKey,
-          dayLabel: c.dayLabel,
-          dials: 0,
-          answered: 0,
-          spoke: 0,
-          meetings: 0,
-        });
-      }
-      const dayEntry = dailyMap.get(c.dateKey)!;
-      dayEntry.dials++;
-      if (c.outcome !== "NO_ANSWER") dayEntry.answered++;
-      if (c.outcome === "CONNECTED" || c.outcome === "MEETING_BOOKED") dayEntry.spoke++;
-      if (c.outcome === "MEETING_BOOKED") dayEntry.meetings++;
-    }
-
-    const dailyTrendArray = Array.from(dailyMap.values()).slice(-14);
-
-    // Hourly Heatmap (Hours 8 AM to 6 PM)
-    const hourlyData: { hour: number; label: string; dials: number; answered: number; pickRate: number }[] = [];
-    for (let h = 8; h <= 18; h++) {
-      const hourCalls = scopedCalls.filter((c) => c.hour === h);
-      const hourDials = hourCalls.length;
-      const hourAnswered = hourCalls.filter((c) => c.outcome !== "NO_ANSWER").length;
-      const hRate = hourDials > 0 ? Math.round((hourAnswered / hourDials) * 100) : 0;
-      const formattedLabel = `${h > 12 ? h - 12 : h}:00 ${h >= 12 ? "PM" : "AM"}`;
-      hourlyData.push({
-        hour: h,
-        label: formattedLabel,
-        dials: hourDials,
-        answered: hourAnswered,
-        pickRate: hRate,
-      });
-    }
-
-    // ICP Quality Tier Correlation
-    const icpTiers = {
-      tierA: { label: "Tier A (ICP 80-100)", leads: 0, dials: 0, answered: 0, spoke: 0, booked: 0 },
-      tierB: { label: "Tier B (ICP 50-79)", leads: 0, dials: 0, answered: 0, spoke: 0, booked: 0 },
-      tierC: { label: "Tier C (ICP <50)", leads: 0, dials: 0, answered: 0, spoke: 0, booked: 0 },
+  // 5. Pure Funnel Computation
+  const funnelResult: FunnelResult = useMemo(() => {
+    const filters: FunnelFilters = {
+      scope: selectedCallerId,
+      timeframe,
+      nowMs,
     };
+    return computeFunnel(funnelLeads, rawEvents, funnelMembers, filters);
+  }, [funnelLeads, rawEvents, funnelMembers, selectedCallerId, timeframe, nowMs]);
 
-    for (const lead of scopedLeads) {
-      const score = lead.icpScore ?? 0;
-      const tierKey = score >= 80 ? "tierA" : score >= 50 ? "tierB" : "tierC";
-      icpTiers[tierKey].leads++;
-      if (lead.status === "MEETING_BOOKED") icpTiers[tierKey].booked++;
-      if (["CONNECTED", "PAIN_FOUND", "MEETING_BOOKED"].includes(lead.status)) icpTiers[tierKey].spoke++;
-    }
+  // Lead Penetration Rate: dialed leads / total pool
+  const poolPenetrationRate =
+    funnelResult.pool > 0
+      ? Math.round((funnelResult.dial.dialedLeads / funnelResult.pool) * 100)
+      : 0;
 
-    return {
-      totalLeads,
-      contactedLeadsCount,
-      untouchedLeadsCount,
-      totalDials,
-      meetingsBooked,
-      connectedSpoke,
-      gatekeeperBlocked,
-      noAnswerCount,
-      voicemailCount,
-      wrongNumberCount,
-      otherCount,
-      answeredCalls,
-      pickRate,
-      gatekeeperBypassRate,
-      spokeConversionRate,
-      dialsPerBooking,
-      activeFollowUps,
-      callerMatrix: Array.from(callerMatrixMap.values()),
-      dailyTrendArray,
-      hourlyData,
-      icpTiers,
-      scopedCalls,
-    };
-  }, [leads, allCalls, teamCallers, selectedCallerId, timeframe, leadMap]);
+  // Gatekeeper bypass calculation
+  const stage1Count = funnelResult.stages[1]?.count ?? 0;
+  const stage2Count = funnelResult.stages[2]?.count ?? 0;
+  const stage3Count = funnelResult.stages[3]?.count ?? 0;
 
-  // Max value for daily trend chart scaling
-  const maxDailyDials = useMemo(() => {
-    const maxVal = Math.max(...filteredData.dailyTrendArray.map((d) => d.dials), 10);
-    return Math.ceil(maxVal * 1.25);
-  }, [filteredData.dailyTrendArray]);
+  const gatekeeperBypassRate =
+    stage1Count > 0 && stage2Count > 0
+      ? Math.round((stage2Count / stage1Count) * 100)
+      : funnelResult.dial.human > 0
+      ? Math.round((funnelResult.dial.owner / funnelResult.dial.human) * 100)
+      : 0;
+
+  // Decision maker discovery depth
+  const discoveryDepthRate =
+    stage2Count > 0 && stage3Count > 0
+      ? Math.round((stage3Count / stage2Count) * 100)
+      : 0;
+
+  // Closing efficiency
+  const closingRate = funnelResult.dial.closeRate;
+
+  // Determine top bottleneck for AI diagnosis banner
+  const primaryLeak = useMemo(() => {
+    const untouched = funnelResult.pool - funnelResult.dial.dialedLeads;
+    const noAnswer = funnelResult.outcomeCounts.NO_ANSWER || 0;
+    const gatekeeper = funnelResult.outcomeCounts.GATEKEEPER_BLOCKED || 0;
+    const notInterested = funnelResult.outcomeCounts.NOT_INTERESTED || 0;
+
+    const leaks = [
+      {
+        type: "UNTOUCHED",
+        count: untouched,
+        rate: funnelResult.pool > 0 ? Math.round((untouched / funnelResult.pool) * 100) : 0,
+        title: "Untouched Leads Pool",
+        explanation: `${untouched} verified leads (${Math.round(
+          (untouched / funnelResult.pool) * 100
+        )}%) have not received a single call yet. Dialing capacity is your highest leverage bottleneck.`,
+        actionLabel: "Open Untouched Leads in CRM",
+        filterUrl: "/caller?status=UNTOUCHED",
+        severity: untouched > 50 ? ("high" as const) : ("medium" as const),
+      },
+      {
+        type: "NO_ANSWER",
+        count: noAnswer,
+        rate:
+          funnelResult.dial.total > 0
+            ? Math.round((noAnswer / funnelResult.dial.total) * 100)
+            : 0,
+        title: "High No-Answer Ring Out",
+        explanation: `${noAnswer} calls (${Math.round(
+          (noAnswer / Math.max(1, funnelResult.dial.total)) * 100
+        )}%) rang out without an answer. Synchronize your calling blocks with prospect Golden Windows (8:30–10:00 AM local).`,
+        actionLabel: "Open No-Answer Retries in CRM",
+        filterUrl: "/caller?status=NO_ANSWER",
+        severity: noAnswer > 25 ? ("high" as const) : ("medium" as const),
+      },
+      {
+        type: "GATEKEEPER",
+        count: gatekeeper,
+        rate:
+          funnelResult.dial.total > 0
+            ? Math.round((gatekeeper / funnelResult.dial.total) * 100)
+            : 0,
+        title: "Front Desk & Gatekeeper Blocks",
+        explanation: `${gatekeeper} dials were stopped at the front desk. Use authority-framed executive transfers: "Hi, I'm calling for [Owner First Name], is he in?"`,
+        actionLabel: "Review Gatekeeper Leads in CRM",
+        filterUrl: "/caller?status=GATEKEEPER_BLOCKED",
+        severity: gatekeeper > 15 ? ("high" as const) : ("medium" as const),
+      },
+      {
+        type: "NOT_INTERESTED",
+        count: notInterested,
+        rate:
+          funnelResult.dial.owner > 0
+            ? Math.round((notInterested / funnelResult.dial.owner) * 100)
+            : 0,
+        title: "Objections During Discovery",
+        explanation: `${notInterested} decision-maker conversations ended in not interested. Focus opening pitch on direct pain points and quick 15-minute value rather than a hard pitch.`,
+        actionLabel: "Review Objection Leads in CRM",
+        filterUrl: "/caller?status=NOT_INTERESTED",
+        severity: notInterested > 5 ? ("high" as const) : ("medium" as const),
+      },
+    ];
+
+    leaks.sort((a, b) => b.count - a.count);
+    return leaks[0];
+  }, [funnelResult]);
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-16">
-      {/* 1. Header & Live Feedback Status Bar */}
-      <div className="relative overflow-hidden rounded-2xl border border-zinc-800/80 bg-gradient-to-b from-[#14141a] via-[#101014] to-[#0a0a0d] p-6 shadow-2xl">
-        {/* Background glow accent */}
-        <div className="absolute -top-24 -right-24 h-64 w-64 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -left-24 h-64 w-64 rounded-full bg-emerald-500/10 blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+    <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 py-6 pb-20">
+      {/* ------------------------------------------------------------------- */}
+      {/* HEADER & TIMEZONE-SYNCED LIVE CLOCKS                               */}
+      {/* ------------------------------------------------------------------- */}
+      <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-5 shadow-sm space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400 mb-2">
-              <span className="font-semibold text-zinc-300">{tenantName}</span>
-              <span>/</span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700/80 bg-[#0d0d12] px-2.5 py-0.5 text-zinc-200 font-medium">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                {marketName}
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[11px] font-mono uppercase tracking-wider text-emerald-400 font-bold">
+                Real-Time Sales Telemetry
               </span>
-              <span className="inline-flex items-center gap-1 rounded-md border border-indigo-500/30 bg-indigo-500/15 px-2.5 py-0.5 text-[11px] font-bold text-indigo-300">
-                <Activity className="w-3 h-3 text-indigo-400" />
-                <span>Real-Time Sales Intelligence &amp; Feedback Loop</span>
-              </span>
+              <span className="text-zinc-600">•</span>
+              <span className="text-xs text-zinc-400 font-semibold">{marketName}</span>
+              <span className="text-zinc-600">•</span>
+              <span className="text-xs text-zinc-400">{tenantName}</span>
             </div>
-
-            <h1 className="text-2xl md:text-3xl font-black text-white tracking-tight flex items-center gap-3">
-              <TrendingUp className="w-7 h-7 text-indigo-400" />
-              <span>Sales Pipeline Tracking &amp; Executive Analytics</span>
+            <h1 className="text-2xl font-black text-white tracking-tight mt-1">
+              Sales Pipeline &amp; Conversion Funnel
             </h1>
-            <p className="text-xs md:text-sm text-zinc-400 mt-1 max-w-3xl leading-relaxed">
-              Track conversion telemetry at every touchpoint: dial coverage, pick rates, gatekeeper resistance, decision maker connection, and booked demos. Use data-backed feedback loops to make instant operational decisions.
+            <p className="text-xs text-zinc-400 mt-0.5">
+              Single-source telemetry derived directly from logged call outcomes. Track bottlenecks,
+              golden calling hours, and close-rate velocity.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <Link
-              href="/caller"
-              className="inline-flex items-center gap-2 rounded-xl bg-white hover:bg-zinc-200 px-4 py-2.5 text-xs font-bold text-black transition shadow-md"
-            >
-              <PhoneCall className="w-3.5 h-3.5 text-black" />
-              <span>Caller Workbench</span>
-              <ArrowRight className="w-3.5 h-3.5 ml-0.5 text-zinc-700" />
-            </Link>
+          {/* Timeframe & Scope Filters */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Caller Selector */}
+            <div className="flex items-center gap-1.5 bg-[#09090c] border border-zinc-800 rounded-lg px-2.5 py-1.5">
+              <Users className="w-3.5 h-3.5 text-zinc-400" />
+              <select
+                value={selectedCallerId}
+                onChange={(e) => setSelectedCallerId(e.target.value)}
+                className="bg-transparent text-xs text-zinc-200 font-semibold focus:outline-none cursor-pointer"
+              >
+                <option value="ALL" className="bg-[#101014] text-zinc-200">
+                  All Callers ({teamCallers.length})
+                </option>
+                <option value="UNASSIGNED" className="bg-[#101014] text-zinc-200">
+                  Unassigned Leads
+                </option>
+                {teamCallers.map((c) => (
+                  <option key={c.id} value={c.id} className="bg-[#101014] text-zinc-200">
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Timeframe Selector */}
+            <div className="flex items-center rounded-lg bg-[#09090c] border border-zinc-800 p-0.5">
+              {(
+                [
+                  { id: "ALL", label: "All Time" },
+                  { id: "TODAY", label: "Today" },
+                  { id: "YESTERDAY", label: "Yesterday" },
+                  { id: "LAST_7_DAYS", label: "7 Days" },
+                  { id: "LAST_30_DAYS", label: "30 Days" },
+                ] as const
+              ).map((tf) => (
+                <button
+                  key={tf.id}
+                  type="button"
+                  onClick={() => setTimeframe(tf.id)}
+                  className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+                    timeframe === tf.id
+                      ? "bg-zinc-800 text-white shadow-sm"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  {tf.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* Dynamic Filters Toolbar */}
-        <div className="mt-6 pt-5 border-t border-zinc-800/80 flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs">
-          {/* Timeframe Selector */}
-          <div className="flex flex-wrap items-center gap-1.5 bg-[#09090c] p-1.5 rounded-xl border border-zinc-800">
-            <span className="text-[11px] font-semibold text-zinc-500 px-2 flex items-center gap-1">
-              <Clock className="w-3 h-3 text-zinc-500" />
-              <span>Period:</span>
-            </span>
-            {(
-              [
-                ["ALL", "All Time"],
-                ["TODAY", "Today"],
-                ["YESTERDAY", "Yesterday"],
-                ["LAST_7_DAYS", "Last 7 Days"],
-                ["LAST_30_DAYS", "Last 30 Days"],
-              ] as const
-            ).map(([val, label]) => (
-              <button
-                key={val}
-                type="button"
-                onClick={() => setTimeframe(val)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                  timeframe === val
-                    ? "bg-white text-black shadow-sm font-bold"
-                    : "text-zinc-400 hover:text-white hover:bg-zinc-800/60"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+        {/* Live Synchronized Clocks Bar (PKT vs US Territories) */}
+        <div className="pt-3 border-t border-zinc-800/80 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 text-xs">
+          {/* Pakistan Caller Shift Clock */}
+          <div className="p-2.5 rounded-xl border border-emerald-500/30 bg-emerald-950/20 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                <span>🇵🇰</span>
+                <span>Caller Base ({CALLER_TZ_LABEL})</span>
+              </span>
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            </div>
+            <div className="text-base font-black font-mono text-white mt-1">
+              {formatClock(nowMs, CALLER_TIMEZONE)}
+            </div>
+            <div className="text-[10px] text-emerald-400/80 mt-0.5">Karachi / Lahore Shift</div>
           </div>
 
-          {/* Caller Scope Selector */}
-          <div className="flex flex-wrap items-center gap-1.5 bg-[#09090c] p-1.5 rounded-xl border border-zinc-800">
-            <span className="text-[11px] font-semibold text-zinc-500 px-2 flex items-center gap-1">
-              <Filter className="w-3 h-3 text-zinc-500" />
-              <span>Scope:</span>
-            </span>
-            <button
-              type="button"
-              onClick={() => setSelectedCallerId("ALL")}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                selectedCallerId === "ALL"
-                  ? "bg-indigo-600 text-white font-bold shadow-sm"
-                  : "text-zinc-400 hover:text-white hover:bg-zinc-800/60"
-              }`}
-            >
-              All Team
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedCallerId("UNASSIGNED")}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                selectedCallerId === "UNASSIGNED"
-                  ? "bg-indigo-600 text-white font-bold shadow-sm"
-                  : "text-zinc-400 hover:text-white hover:bg-zinc-800/60"
-              }`}
-            >
-              Unassigned Pool
-            </button>
-            {teamCallers.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => setSelectedCallerId(c.id)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                  selectedCallerId === c.id
-                    ? "bg-indigo-600 text-white font-bold shadow-sm"
-                    : "text-zinc-400 hover:text-white hover:bg-zinc-800/60"
+          {/* US Eastern (ET) */}
+          {US_TZ_GROUPS.slice(0, 4).map((grp) => {
+            const clock = formatClock(nowMs, grp.iana);
+            const { hour } = wallClock(nowMs, grp.iana);
+            const isOpen = hour >= 9 && hour < 17;
+            const isGolden = (hour >= 8 && hour < 10) || (hour >= 16 && hour < 18);
+
+            return (
+              <div
+                key={grp.id}
+                className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                  isGolden
+                    ? "border-amber-500/40 bg-amber-950/20"
+                    : isOpen
+                    ? "border-sky-500/30 bg-sky-950/15"
+                    : "border-zinc-800 bg-[#09090c]"
                 }`}
               >
-                {c.name}
-              </button>
-            ))}
-          </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                    US {grp.label} ({grp.id})
+                  </span>
+                  {isGolden ? (
+                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      Golden Window
+                    </span>
+                  ) : isOpen ? (
+                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300">
+                      Open (9–5)
+                    </span>
+                  ) : (
+                    <span className="text-[9px] text-zinc-500">Off-Hours</span>
+                  )}
+                </div>
+                <div className="text-base font-black font-mono text-white mt-1">{clock}</div>
+                <div className="text-[10px] text-zinc-400 mt-0.5">
+                  {isGolden
+                    ? "Peak pick-up probability"
+                    : isOpen
+                    ? "Standard business hours"
+                    : "Closed / Desk unstaffed"}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* 2. Top-Tier Executive KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
-        {/* Metric 1: Total Dials & Coverage */}
-        <div className="relative overflow-hidden rounded-2xl border border-zinc-800/80 bg-[#101014] p-4.5 hover:border-zinc-700 transition">
-          <div className="flex items-center justify-between text-zinc-400 text-xs">
-            <span className="font-semibold text-zinc-300">Outbound Dials</span>
-            <PhoneCall className="w-4 h-4 text-indigo-400" />
-          </div>
-          <div className="text-3xl font-black text-white mt-1.5 tracking-tight font-mono">
-            {filteredData.totalDials}
-          </div>
-          <div className="text-[11px] text-zinc-400 mt-1 flex items-center justify-between">
-            <span>{filteredData.contactedLeadsCount} leads contacted</span>
-            <span className="text-indigo-400 font-semibold">
-              {filteredData.totalLeads > 0
-                ? Math.round((filteredData.contactedLeadsCount / filteredData.totalLeads) * 100)
-                : 0}
-              % pool coverage
-            </span>
-          </div>
-        </div>
-
-        {/* Metric 2: Human Answer Rate */}
-        <div className="relative overflow-hidden rounded-2xl border border-zinc-800/80 bg-[#101014] p-4.5 hover:border-zinc-700 transition">
-          <div className="flex items-center justify-between text-zinc-400 text-xs">
-            <span className="font-semibold text-zinc-300">Pick / Answer Rate</span>
-            <PhoneForwarded className="w-4 h-4 text-sky-400" />
-          </div>
-          <div className="text-3xl font-black text-sky-300 mt-1.5 tracking-tight font-mono">
-            {filteredData.pickRate}%
-          </div>
-          <div className="text-[11px] text-zinc-400 mt-1 flex items-center justify-between">
-            <span className="text-zinc-400">{filteredData.answeredCalls} calls answered</span>
-            <span className="text-amber-400/90 font-medium">{filteredData.noAnswerCount} rang out</span>
-          </div>
-        </div>
-
-        {/* Metric 3: Gatekeeper Bypass */}
-        <div className="relative overflow-hidden rounded-2xl border border-zinc-800/80 bg-[#101014] p-4.5 hover:border-zinc-700 transition">
-          <div className="flex items-center justify-between text-zinc-400 text-xs">
-            <span className="font-semibold text-zinc-300">Gatekeeper Bypass</span>
-            <ShieldAlert className="w-4 h-4 text-orange-400" />
-          </div>
-          <div className="text-3xl font-black text-orange-300 mt-1.5 tracking-tight font-mono">
-            {filteredData.gatekeeperBypassRate}%
-          </div>
-          <div className="text-[11px] text-zinc-400 mt-1 flex items-center justify-between">
-            <span className="text-orange-400">{filteredData.gatekeeperBlocked} blocked</span>
-            <span className="text-emerald-400 font-semibold">
-              {filteredData.connectedSpoke + filteredData.meetingsBooked} reached DM
-            </span>
-          </div>
-        </div>
-
-        {/* Metric 4: Decision Maker Conversations */}
-        <div className="relative overflow-hidden rounded-2xl border border-zinc-800/80 bg-[#101014] p-4.5 hover:border-zinc-700 transition">
-          <div className="flex items-center justify-between text-zinc-400 text-xs">
-            <span className="font-semibold text-zinc-300">DM Conversations</span>
-            <Target className="w-4 h-4 text-indigo-400" />
-          </div>
-          <div className="text-3xl font-black text-indigo-300 mt-1.5 tracking-tight font-mono">
-            {filteredData.connectedSpoke}
-          </div>
-          <div className="text-[11px] text-zinc-400 mt-1 flex items-center justify-between">
-            <span>Direct owner talks</span>
-            <span className="text-indigo-400 font-semibold">{filteredData.activeFollowUps} follow-ups</span>
-          </div>
-        </div>
-
-        {/* Metric 5: Meetings Booked & Close Rate */}
-        <div className="relative overflow-hidden rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-4.5 hover:border-emerald-500/50 transition">
-          <div className="flex items-center justify-between text-emerald-300 text-xs font-semibold">
-            <span>Meetings Booked</span>
-            <CalendarCheck className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div className="text-3xl font-black text-emerald-400 mt-1.5 tracking-tight font-mono">
-            {filteredData.meetingsBooked}
-          </div>
-          <div className="text-[11px] text-emerald-300/80 mt-1 flex items-center justify-between font-medium">
-            <span>{filteredData.spokeConversionRate}% spoke &rarr; demo</span>
-            <span>{filteredData.dialsPerBooking > 0 ? `${filteredData.dialsPerBooking} dials/deal` : "Active"}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 3. Actionable Closed-Loop Triggers (Data-Driven Decisions) */}
-      <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
+      {/* ------------------------------------------------------------------- */}
+      {/* UNIFIED COLOR LEGEND (Single Source of Truth)                       */}
+      {/* ------------------------------------------------------------------- */}
+      <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-4 shadow-sm">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <Flame className="w-4 h-4 text-amber-400" />
-            <h2 className="text-sm font-bold text-white uppercase tracking-wider">
-              Process Health &amp; Next Decision Directives
-            </h2>
+            <Layers className="w-3.5 h-3.5 text-zinc-400" />
+            <span className="text-xs font-bold text-white uppercase tracking-wider">
+              Unified Call Status &amp; Funnel Legend
+            </span>
           </div>
-          <span className="text-[11px] text-zinc-500">Continuous Closed-Loop Feedback</span>
+          <button
+            type="button"
+            onClick={() => setShowLegendMeaning((prev) => !prev)}
+            className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1 transition"
+          >
+            <HelpCircle className="w-3 h-3 text-zinc-400" />
+            <span>{showLegendMeaning ? "Hide Guidance" : "Show When To Use"}</span>
+          </button>
+        </div>
+        <CallStatusLegend showMeaning={showLegendMeaning} />
+      </div>
+
+      {/* ------------------------------------------------------------------- */}
+      {/* CORE KPI METRIC CARDS                                              */}
+      {/* ------------------------------------------------------------------- */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {/* Metric 1: Total Leads in Pool */}
+        <div className="p-4 rounded-xl border border-zinc-800 bg-[#101014]">
+          <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+            <Target className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Lead Pool</span>
+          </div>
+          <div className="text-2xl font-black font-mono text-white mt-1">
+            {funnelResult.pool}
+          </div>
+          <div className="text-[11px] text-zinc-400 mt-0.5">
+            <span className="text-emerald-400 font-bold">{poolPenetrationRate}%</span> dialed (
+            {funnelResult.dial.dialedLeads} leads)
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          {/* Directive 1: Untouched Leads */}
-          <div className="p-3.5 rounded-xl bg-[#09090c] border border-zinc-800/80 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-amber-400" />
-                Fresh Untouched
-              </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                {filteredData.untouchedLeadsCount} Leads
-              </span>
-            </div>
-            <p className="text-[11px] text-zinc-400 leading-relaxed">
-              {filteredData.untouchedLeadsCount > 0
-                ? `${filteredData.untouchedLeadsCount} verified leads have zero dials. Speed-to-lead dictates contacting them within 24 hours.`
-                : "100% of available leads have received outreach. Pipeline coverage is maximized."}
-            </p>
-            <Link
-              href="/caller"
-              className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold inline-flex items-center gap-1 pt-1"
-            >
-              <span>Distribute &amp; Dial Untouched &rarr;</span>
-            </Link>
+        {/* Metric 2: Total Dials Logged */}
+        <div className="p-4 rounded-xl border border-zinc-800 bg-[#101014]">
+          <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+            <PhoneCall className="w-3.5 h-3.5 text-sky-400" />
+            <span>Total Dials</span>
           </div>
-
-          {/* Directive 2: Stalled No-Answers */}
-          <div className="p-3.5 rounded-xl bg-[#09090c] border border-zinc-800/80 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
-                <PhoneOff className="w-3.5 h-3.5 text-sky-400" />
-                No Answer Redials
-              </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                {filteredData.noAnswerCount} Dials
-              </span>
-            </div>
-            <p className="text-[11px] text-zinc-400 leading-relaxed">
-              Calls rang out without pickup. Shifting redials to 4:00 PM – 5:30 PM recovers up to 28% of unreachable decision makers.
-            </p>
-            <Link
-              href="/caller"
-              className="text-[11px] text-sky-400 hover:text-sky-300 font-semibold inline-flex items-center gap-1 pt-1"
-            >
-              <span>View No-Answer Queue &rarr;</span>
-            </Link>
+          <div className="text-2xl font-black font-mono text-white mt-1">
+            {funnelResult.dial.total}
           </div>
-
-          {/* Directive 3: Gatekeeper Resistance */}
-          <div className="p-3.5 rounded-xl bg-[#09090c] border border-zinc-800/80 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-orange-400" />
-                Gatekeeper Bounces
-              </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-orange-500/10 text-orange-400 border border-orange-500/20">
-                {filteredData.gatekeeperBlocked} Blocked
-              </span>
-            </div>
-            <p className="text-[11px] text-zinc-400 leading-relaxed">
-              Front desk blocked transfer. Apply the &ldquo;First-Name Only&rdquo; casual authority rule or dial off-hours at 8:15 AM.
-            </p>
-            <Link
-              href="/caller"
-              className="text-[11px] text-orange-400 hover:text-orange-300 font-semibold inline-flex items-center gap-1 pt-1"
-            >
-              <span>Review Gatekeeper Bounces &rarr;</span>
-            </Link>
+          <div className="text-[11px] text-zinc-400 mt-0.5">
+            avg {funnelResult.dial.avgAttempts} attempts / lead
           </div>
+        </div>
 
-          {/* Directive 4: Follow-up Execution */}
-          <div className="p-3.5 rounded-xl bg-[#09090c] border border-zinc-800/80 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
-                <CalendarCheck className="w-3.5 h-3.5 text-emerald-400" />
-                Follow-up Retention
+        {/* Metric 3: Pick Rate */}
+        <div className="p-4 rounded-xl border border-zinc-800 bg-[#101014]">
+          <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+            <PhoneForwarded className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Pick Rate</span>
+          </div>
+          <div className="text-2xl font-black font-mono text-indigo-400 mt-1">
+            {funnelResult.dial.pickRate}%
+          </div>
+          <div className="text-[11px] text-zinc-400 mt-0.5">
+            {funnelResult.dial.human} answered calls
+          </div>
+        </div>
+
+        {/* Metric 4: Gatekeeper Bypass */}
+        <div className="p-4 rounded-xl border border-zinc-800 bg-[#101014]">
+          <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5 text-orange-400" />
+            <span>GK Bypass Rate</span>
+          </div>
+          <div className="text-2xl font-black font-mono text-orange-400 mt-1">
+            {gatekeeperBypassRate}%
+          </div>
+          <div className="text-[11px] text-zinc-400 mt-0.5">
+            {funnelResult.dial.owner} reached decision makers
+          </div>
+        </div>
+
+        {/* Metric 5: Meetings Booked */}
+        <div className="p-4 rounded-xl border border-emerald-500/40 bg-emerald-950/20">
+          <div className="text-[11px] text-emerald-400 flex items-center gap-1.5 font-bold">
+            <CalendarCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Meetings Booked</span>
+          </div>
+          <div className="text-2xl font-black font-mono text-emerald-400 mt-1">
+            {funnelResult.dial.meetings}
+          </div>
+          <div className="text-[11px] text-emerald-300 mt-0.5 font-semibold">
+            {funnelResult.dial.dialsPerMeeting > 0
+              ? `1 per ${funnelResult.dial.dialsPerMeeting} dials`
+              : "0 booked in timeframe"}
+          </div>
+        </div>
+
+        {/* Metric 6: Overdue Follow-ups Alert */}
+        <div
+          className={`p-4 rounded-xl border ${
+            funnelResult.followUps.overdue > 0
+              ? "border-rose-500/40 bg-rose-950/20"
+              : "border-zinc-800 bg-[#101014]"
+          }`}
+        >
+          <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5 text-amber-400" />
+            <span>Active Follow-Ups</span>
+          </div>
+          <div
+            className={`text-2xl font-black font-mono mt-1 ${
+              funnelResult.followUps.overdue > 0 ? "text-rose-400" : "text-white"
+            }`}
+          >
+            {funnelResult.followUps.scheduled}
+          </div>
+          <div className="text-[11px] text-zinc-400 mt-0.5">
+            {funnelResult.followUps.overdue > 0 ? (
+              <span className="text-rose-400 font-bold">
+                ⚠️ {funnelResult.followUps.overdue} Overdue
               </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                {filteredData.activeFollowUps} Active
-              </span>
-            </div>
-            <p className="text-[11px] text-zinc-400 leading-relaxed">
-              Scheduled callbacks represent warm pipeline. Ensure callers honor exact scheduled times to protect closing velocity.
-            </p>
-            <Link
-              href="/caller"
-              className="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold inline-flex items-center gap-1 pt-1"
-            >
-              <span>Open Follow-Up Calendar &rarr;</span>
-            </Link>
+            ) : (
+              <span className="text-zinc-500">All follow-ups current</span>
+            )}
           </div>
         </div>
       </div>
 
-      {/* 4. Section Navigation Tabs */}
-      <div className="flex items-center border-b border-zinc-800 bg-[#0c0c10] rounded-xl p-1 overflow-x-auto gap-1">
-        <button
-          type="button"
-          onClick={() => setActiveTab("OVERVIEW")}
-          className={`flex items-center gap-2 py-2 px-4 rounded-lg text-xs font-bold transition whitespace-nowrap ${
-            activeTab === "OVERVIEW"
-              ? "bg-zinc-800 text-white shadow-sm"
-              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
-          }`}
-        >
-          <BarChart3 className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Stepped Funnel &amp; Distribution</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("TRENDS")}
-          className={`flex items-center gap-2 py-2 px-4 rounded-lg text-xs font-bold transition whitespace-nowrap ${
-            activeTab === "TRENDS"
-              ? "bg-zinc-800 text-white shadow-sm"
-              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
-          }`}
-        >
-          <TrendingUp className="w-3.5 h-3.5 text-sky-400" />
-          <span>Daily Calling Trends (14-Day Velocity)</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("HOURLY")}
-          className={`flex items-center gap-2 py-2 px-4 rounded-lg text-xs font-bold transition whitespace-nowrap ${
-            activeTab === "HOURLY"
-              ? "bg-zinc-800 text-white shadow-sm"
-              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
-          }`}
-        >
-          <Clock className="w-3.5 h-3.5 text-amber-400" />
-          <span>Peak Hours &amp; Golden Window</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("CALLERS")}
-          className={`flex items-center gap-2 py-2 px-4 rounded-lg text-xs font-bold transition whitespace-nowrap ${
-            activeTab === "CALLERS"
-              ? "bg-zinc-800 text-white shadow-sm"
-              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
-          }`}
-        >
-          <Users className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Caller Leaderboard &amp; Matrix</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("ICP_QUALITY")}
-          className={`flex items-center gap-2 py-2 px-4 rounded-lg text-xs font-bold transition whitespace-nowrap ${
-            activeTab === "ICP_QUALITY"
-              ? "bg-zinc-800 text-white shadow-sm"
-              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
-          }`}
-        >
-          <Award className="w-3.5 h-3.5 text-purple-400" />
-          <span>Lead Quality Tier Impact</span>
-        </button>
-      </div>
-
-      {/* TAB 1: OVERVIEW & STEPPED FUNNEL */}
-      {activeTab === "OVERVIEW" && (
-        <div className="space-y-6">
-          {/* Stepped Funnel Progression */}
-          <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <h2 className="text-base font-bold text-white flex items-center gap-2">
-                  <BarChart3 className="w-4 h-4 text-indigo-400" />
-                  <span>5-Stage Sales Funnel Conversion</span>
-                </h2>
-                <p className="text-xs text-zinc-400 mt-0.5">
-                  Step-by-step conversion progression showing exactly where leads drop off and where deals close.
-                </p>
-              </div>
+      {/* ------------------------------------------------------------------- */}
+      {/* BOTTLENECK & CRITICAL LEAK AI DIAGNOSIS BANNER                     */}
+      {/* ------------------------------------------------------------------- */}
+      {primaryLeak && primaryLeak.count > 0 && (
+        <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-r from-amber-950/25 via-[#101014] to-zinc-900/60 p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 shrink-0 mt-0.5">
+              <AlertTriangle className="w-5 h-5 text-amber-400" />
             </div>
-
-            <div className="space-y-4">
-              {/* Stage 1: Lead Pool */}
-              <div>
-                <div className="flex items-center justify-between text-xs font-semibold text-zinc-300 mb-1.5">
-                  <span className="flex items-center gap-2">
-                    <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-200 flex items-center justify-center text-[10px] font-bold">1</span>
-                    <span>Total Outbound Leads In CRM</span>
-                  </span>
-                  <span className="text-white font-bold">{filteredData.totalLeads} leads (100%)</span>
-                </div>
-                <div className="w-full h-5 rounded-lg bg-zinc-900 overflow-hidden border border-zinc-800 flex">
-                  <div className="h-full bg-zinc-600 transition-all duration-500" style={{ width: "100%" }} />
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-zinc-400 mt-1">
-                  <span>{filteredData.contactedLeadsCount} contacted ({filteredData.totalDials} dials logged)</span>
-                  <span className="text-amber-400">{filteredData.untouchedLeadsCount} untouched leads awaiting dial</span>
-                </div>
-              </div>
-
-              {/* Stage 2: Pick Up / Answer */}
-              <div>
-                <div className="flex items-center justify-between text-xs font-semibold text-zinc-300 mb-1.5">
-                  <span className="flex items-center gap-2">
-                    <span className="w-5 h-5 rounded-full bg-sky-950 text-sky-300 flex items-center justify-center text-[10px] font-bold">2</span>
-                    <span>Calls Answered (Pick Rate)</span>
-                  </span>
-                  <span className="text-sky-300 font-bold">
-                    {filteredData.answeredCalls} of {filteredData.totalDials} dials ({filteredData.pickRate}%)
-                  </span>
-                </div>
-                <div className="w-full h-5 rounded-lg bg-zinc-900 overflow-hidden border border-zinc-800 flex">
-                  <div
-                    className="h-full bg-sky-500 transition-all duration-500"
-                    style={{ width: `${Math.max(5, filteredData.pickRate)}%` }}
-                  />
-                  <div
-                    className="h-full bg-amber-500/30 transition-all duration-500"
-                    style={{ width: `${Math.max(0, 100 - filteredData.pickRate)}%` }}
-                    title={`${filteredData.noAnswerCount} No-Answer`}
-                  />
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-zinc-400 mt-1">
-                  <span className="text-sky-400">{filteredData.answeredCalls} calls connected with human or IVR</span>
-                  <span className="text-amber-400/90">{filteredData.noAnswerCount} rang out ({filteredData.totalDials > 0 ? Math.round((filteredData.noAnswerCount / filteredData.totalDials) * 100) : 0}% missed)</span>
-                </div>
-              </div>
-
-              {/* Stage 3: Gatekeeper Bypass */}
-              <div>
-                <div className="flex items-center justify-between text-xs font-semibold text-zinc-300 mb-1.5">
-                  <span className="flex items-center gap-2">
-                    <span className="w-5 h-5 rounded-full bg-orange-950 text-orange-300 flex items-center justify-center text-[10px] font-bold">3</span>
-                    <span>Gatekeeper Bypassed (Passed Front Desk)</span>
-                  </span>
-                  <span className="text-orange-300 font-bold">
-                    {filteredData.connectedSpoke + filteredData.meetingsBooked} reached DM ({filteredData.gatekeeperBypassRate}% bypass)
-                  </span>
-                </div>
-                <div className="w-full h-5 rounded-lg bg-zinc-900 overflow-hidden border border-zinc-800 flex">
-                  <div
-                    className="h-full bg-indigo-500 transition-all duration-500"
-                    style={{ width: `${Math.max(5, filteredData.gatekeeperBypassRate)}%` }}
-                  />
-                  <div
-                    className="h-full bg-orange-500/30 transition-all duration-500"
-                    style={{ width: `${Math.max(0, 100 - filteredData.gatekeeperBypassRate)}%` }}
-                    title={`${filteredData.gatekeeperBlocked} Gatekeeper Blocked`}
-                  />
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-zinc-400 mt-1">
-                  <span className="text-indigo-400">Transferred directly to decision maker</span>
-                  <span className="text-orange-400">{filteredData.gatekeeperBlocked} blocked by assistant</span>
-                </div>
-              </div>
-
-              {/* Stage 4: Decision Maker Spoke */}
-              <div>
-                <div className="flex items-center justify-between text-xs font-semibold text-zinc-300 mb-1.5">
-                  <span className="flex items-center gap-2">
-                    <span className="w-5 h-5 rounded-full bg-indigo-950 text-indigo-300 flex items-center justify-center text-[10px] font-bold">4</span>
-                    <span>Decision Maker 2-Way Discovery</span>
-                  </span>
-                  <span className="text-indigo-300 font-bold">
-                    {filteredData.connectedSpoke} Conversations
-                  </span>
-                </div>
-                <div className="w-full h-5 rounded-lg bg-zinc-900 overflow-hidden border border-zinc-800 flex">
-                  <div
-                    className="h-full bg-indigo-500 transition-all duration-500"
-                    style={{ width: `${Math.max(5, filteredData.totalDials > 0 ? Math.round((filteredData.connectedSpoke / filteredData.totalDials) * 100) : 0)}%` }}
-                  />
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-zinc-400 mt-1">
-                  <span className="text-indigo-300">Live discovery conversations with Owners &amp; Executives</span>
-                  <span className="text-indigo-400">{filteredData.activeFollowUps} warm callbacks scheduled</span>
-                </div>
-              </div>
-
-              {/* Stage 5: Meeting Booked */}
-              <div>
-                <div className="flex items-center justify-between text-xs font-semibold text-zinc-300 mb-1.5">
-                  <span className="flex items-center gap-2">
-                    <span className="w-5 h-5 rounded-full bg-emerald-950 text-emerald-300 flex items-center justify-center text-[10px] font-bold">5</span>
-                    <span>Appointments &amp; Demos Booked</span>
-                  </span>
-                  <span className="text-emerald-400 font-bold">
-                    {filteredData.meetingsBooked} Booked ({filteredData.spokeConversionRate}% of spoke)
-                  </span>
-                </div>
-                <div className="w-full h-5 rounded-lg bg-zinc-900 overflow-hidden border border-zinc-800 flex">
-                  <div
-                    className="h-full bg-emerald-500 transition-all duration-500"
-                    style={{ width: `${Math.max(3, filteredData.spokeConversionRate)}%` }}
-                  />
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-zinc-400 mt-1">
-                  <span className="text-emerald-400 font-semibold">{filteredData.meetingsBooked} qualified meetings booked</span>
-                  <span className="text-emerald-300/80">{filteredData.dialsPerBooking > 0 ? `${filteredData.dialsPerBooking} dials per booked demo` : "Active pipeline"}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Outcome Distribution Splitter Bar */}
-          <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-6 shadow-sm">
-            <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
-              <PieChart className="w-4 h-4 text-sky-400" />
-              <span>Dial Outcome Distribution Matrix</span>
-            </h3>
-            <p className="text-xs text-zinc-400 mb-4">
-              Breakdown of all {filteredData.totalDials} logged call attempts across response categories.
-            </p>
-
-            <div className="w-full h-4 rounded-full bg-zinc-900 overflow-hidden flex border border-zinc-800">
-              {filteredData.totalDials > 0 ? (
-                <>
-                  <div
-                    className="h-full bg-emerald-500"
-                    style={{ width: `${(filteredData.meetingsBooked / filteredData.totalDials) * 100}%` }}
-                    title={`Meeting Booked: ${filteredData.meetingsBooked}`}
-                  />
-                  <div
-                    className="h-full bg-indigo-500"
-                    style={{ width: `${(filteredData.connectedSpoke / filteredData.totalDials) * 100}%` }}
-                    title={`Connected / Spoke: ${filteredData.connectedSpoke}`}
-                  />
-                  <div
-                    className="h-full bg-orange-500"
-                    style={{ width: `${(filteredData.gatekeeperBlocked / filteredData.totalDials) * 100}%` }}
-                    title={`Gatekeeper: ${filteredData.gatekeeperBlocked}`}
-                  />
-                  <div
-                    className="h-full bg-amber-500"
-                    style={{ width: `${(filteredData.noAnswerCount / filteredData.totalDials) * 100}%` }}
-                    title={`No Answer: ${filteredData.noAnswerCount}`}
-                  />
-                  <div
-                    className="h-full bg-zinc-600"
-                    style={{
-                      width: `${
-                        ((filteredData.voicemailCount + filteredData.wrongNumberCount + filteredData.otherCount) /
-                          filteredData.totalDials) *
-                        100
-                      }%`,
-                    }}
-                    title="Voicemail / Other"
-                  />
-                </>
-              ) : (
-                <div className="h-full w-full bg-zinc-800" />
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                <span className="text-zinc-300">Booked:</span>
-                <strong className="text-white font-mono">{filteredData.meetingsBooked}</strong>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
-                <span className="text-zinc-300">Spoke:</span>
-                <strong className="text-white font-mono">{filteredData.connectedSpoke}</strong>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-orange-500" />
-                <span className="text-zinc-300">Gatekeeper:</span>
-                <strong className="text-white font-mono">{filteredData.gatekeeperBlocked}</strong>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                <span className="text-zinc-300">No Answer:</span>
-                <strong className="text-white font-mono">{filteredData.noAnswerCount}</strong>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-zinc-600" />
-                <span className="text-zinc-300">Voicemail/Other:</span>
-                <strong className="text-white font-mono">{filteredData.voicemailCount + filteredData.otherCount}</strong>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 2: DAILY CALLING TRENDS (Interactive SVG Chart) */}
-      {activeTab === "TRENDS" && (
-        <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-6 shadow-sm space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-sky-400" />
-                <span>Daily Outreach Velocity &amp; Conversion Timeline</span>
-              </h2>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                14-day chronological chart of outbound dials, answered calls, and meetings booked.
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 rounded">
+                  Primary Funnel Leak Detected
+                </span>
+                <span className="text-xs font-bold text-white">{primaryLeak.title}</span>
+              </div>
+              <p className="text-xs text-zinc-300 mt-1.5 max-w-2xl leading-relaxed">
+                {primaryLeak.explanation}
               </p>
             </div>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="flex items-center gap-1.5 text-zinc-300">
-                <span className="w-3 h-3 rounded bg-indigo-500" /> Dials
-              </span>
-              <span className="flex items-center gap-1.5 text-zinc-300">
-                <span className="w-3 h-3 rounded bg-sky-400" /> Answered
-              </span>
-              <span className="flex items-center gap-1.5 text-zinc-300">
-                <span className="w-3 h-3 rounded bg-emerald-400" /> Bookings
-              </span>
-            </div>
           </div>
 
-          {/* Custom SVG Bar Chart */}
-          <div className="w-full overflow-x-auto pt-4 pb-2">
-            <div className="min-w-[650px] h-64 flex items-end justify-between gap-2 px-2 border-b border-zinc-800">
-              {filteredData.dailyTrendArray.map((day) => {
-                const dialHeight = (day.dials / maxDailyDials) * 100;
-                const answeredHeight = (day.answered / maxDailyDials) * 100;
-                const meetingsHeight = (day.meetings / maxDailyDials) * 100;
-                const isHovered = hoveredDayKey === day.dateKey;
-
-                return (
-                  <div
-                    key={day.dateKey}
-                    onMouseEnter={() => setHoveredDayKey(day.dateKey)}
-                    onMouseLeave={() => setHoveredDayKey(null)}
-                    className="flex-1 flex flex-col items-center h-full justify-end group cursor-pointer relative"
-                  >
-                    {/* Hover Tooltip */}
-                    {isHovered && (
-                      <div className="absolute -top-16 z-30 bg-[#16161d] border border-zinc-700 p-2 rounded-lg shadow-xl text-[10px] whitespace-nowrap text-left pointer-events-none">
-                        <div className="font-bold text-white">{day.dayLabel}</div>
-                        <div className="text-indigo-300">{day.dials} Dials Made</div>
-                        <div className="text-sky-300">{day.answered} Answered ({day.dials > 0 ? Math.round((day.answered / day.dials) * 100) : 0}%)</div>
-                        <div className="text-emerald-400 font-bold">{day.meetings} Booked</div>
-                      </div>
-                    )}
-
-                    {/* Bars Container */}
-                    <div className="w-full flex items-end justify-center gap-1 h-full pb-1">
-                      {/* Dials Bar */}
-                      <div
-                        className={`w-3.5 rounded-t transition-all duration-300 ${
-                          isHovered ? "bg-indigo-400" : "bg-indigo-600/80 hover:bg-indigo-500"
-                        }`}
-                        style={{ height: `${Math.max(day.dials > 0 ? 8 : 2, dialHeight)}%` }}
-                        title={`${day.dayLabel}: ${day.dials} dials`}
-                      />
-                      {/* Answered Bar */}
-                      <div
-                        className={`w-2.5 rounded-t transition-all duration-300 ${
-                          isHovered ? "bg-sky-300" : "bg-sky-500/70"
-                        }`}
-                        style={{ height: `${Math.max(day.answered > 0 ? 6 : 0, answeredHeight)}%` }}
-                        title={`${day.dayLabel}: ${day.answered} answered`}
-                      />
-                      {/* Meetings Bar */}
-                      {day.meetings > 0 && (
-                        <div
-                          className="w-2.5 rounded-t bg-emerald-400 shadow-sm transition-all duration-300"
-                          style={{ height: `${Math.max(12, meetingsHeight)}%` }}
-                          title={`${day.dayLabel}: ${day.meetings} meetings booked`}
-                        />
-                      )}
-                    </div>
-
-                    <span className="text-[10px] text-zinc-500 group-hover:text-zinc-200 mt-2 font-mono">
-                      {day.dayLabel.split(" ")[1]}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div className="text-[11px] text-zinc-500 text-center">
-            Daily activity chart based on real-time event logs &bull; Hover over any column to inspect detailed conversion metrics.
+          <div className="shrink-0">
+            <Link
+              href={primaryLeak.filterUrl}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white hover:bg-zinc-200 text-black text-xs font-bold transition shadow-sm"
+            >
+              <span>{primaryLeak.actionLabel}</span>
+              <ArrowRight className="w-3.5 h-3.5 text-black" />
+            </Link>
           </div>
         </div>
       )}
 
-      {/* TAB 3: BEST CALLING HOURS (Heatmap) */}
+      {/* ------------------------------------------------------------------- */}
+      {/* NAVIGATION TABS                                                     */}
+      {/* ------------------------------------------------------------------- */}
+      <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+        <div className="flex items-center gap-2 overflow-x-auto">
+          {[
+            { id: "OVERVIEW", label: "Conversion Funnel & Gauges", icon: Target },
+            { id: "HOURLY", label: "Peak Calling Hours (PKT Synced)", icon: Clock },
+            { id: "CALLERS", label: "Caller Performance Leaderboard", icon: Users },
+            { id: "ICP_QUALITY", label: "Lead Quality Tier Correlation", icon: Award },
+            { id: "TRENDS", label: "Daily Conversion Trend", icon: TrendingUp },
+          ].map((t) => {
+            const Icon = t.icon;
+            const active = activeTab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setActiveTab(t.id as AnalyticsTab)}
+                className={`flex items-center gap-2 py-2 px-3.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+                  active
+                    ? "bg-zinc-800 text-white shadow-sm"
+                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+                }`}
+              >
+                <Icon className={`w-3.5 h-3.5 ${active ? "text-emerald-400" : "text-zinc-500"}`} />
+                <span>{t.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* View Mode Switcher for Main Funnel */}
+        {activeTab === "OVERVIEW" && (
+          <div className="hidden sm:flex items-center gap-1 bg-[#09090c] border border-zinc-800 rounded-lg p-0.5 text-xs">
+            {(
+              [
+                { id: "CIRCULAR", label: "Circular" },
+                { id: "STEPPED", label: "Stepped" },
+                { id: "BOTH", label: "Both" },
+              ] as const
+            ).map((vm) => (
+              <button
+                key={vm.id}
+                type="button"
+                onClick={() => setViewMode(vm.id)}
+                className={`px-2.5 py-1 rounded text-[11px] font-semibold transition ${
+                  viewMode === vm.id
+                    ? "bg-zinc-800 text-white shadow-sm"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {vm.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ------------------------------------------------------------------- */}
+      {/* TAB 1: CONVERSION FUNNEL & GAUGES                                  */}
+      {/* ------------------------------------------------------------------- */}
+      {activeTab === "OVERVIEW" && (
+        <div className="space-y-6">
+          {/* SECTION A: CIRCULAR TELEMETRY GAUGES */}
+          {(viewMode === "CIRCULAR" || viewMode === "BOTH") && (
+            <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-6 shadow-sm space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-bold text-white flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-emerald-400" />
+                    <span>Circular Conversion Gauges</span>
+                  </h2>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Step-by-step conversion efficiency rings tracking stage transitions through the funnel.
+                  </p>
+                </div>
+              </div>
+
+              {/* 5 Circular Ring Gauges */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 p-2 bg-[#09090c] rounded-2xl border border-zinc-800/80">
+                <CircularGauge
+                  value={poolPenetrationRate}
+                  color="#a1a1aa" // zinc
+                  label="1. Pool Coverage"
+                  sublabel="Leads with ≥1 dial"
+                  countText={`${funnelResult.dial.dialedLeads} / ${funnelResult.pool}`}
+                />
+                <CircularGauge
+                  value={funnelResult.dial.pickRate}
+                  color="#6366f1" // indigo
+                  label="2. Pick Rate"
+                  sublabel="Answered / Total dials"
+                  countText={`${funnelResult.dial.human} / ${funnelResult.dial.total}`}
+                />
+                <CircularGauge
+                  value={gatekeeperBypassRate}
+                  color="#f97316" // orange
+                  label="3. Gatekeeper Bypass"
+                  sublabel="Reached Decision Maker"
+                  countText={`${funnelResult.dial.owner} / ${Math.max(1, funnelResult.dial.human)}`}
+                />
+                <CircularGauge
+                  value={discoveryDepthRate}
+                  color="#38bdf8" // sky
+                  label="4. Discovery Depth"
+                  sublabel="Live 2-way conversation"
+                  countText={`${funnelResult.stages[3]?.count || 0} / ${Math.max(
+                    1,
+                    funnelResult.stages[2]?.count || 1
+                  )}`}
+                />
+                <CircularGauge
+                  value={closingRate}
+                  color="#10b981" // emerald
+                  label="5. Meeting Close Rate"
+                  sublabel="Booked from Discovery"
+                  countText={`${funnelResult.dial.meetings} / ${Math.max(
+                    1,
+                    funnelResult.stages[3]?.count || 1
+                  )}`}
+                />
+              </div>
+
+              {/* Donut Distribution Breakdown */}
+              <div className="pt-4 border-t border-zinc-800/80">
+                <div className="flex items-center gap-2 mb-2">
+                  <PieChart className="w-4 h-4 text-sky-400" />
+                  <span className="text-xs font-bold text-white uppercase tracking-wider">
+                    Dial Outcome Distribution Matrix
+                  </span>
+                </div>
+                <OutcomeDonutChart
+                  outcomeCounts={funnelResult.outcomeCounts}
+                  totalDials={funnelResult.dial.total}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* SECTION B: STEPPED FUNNEL WITH LEAK CARDS & CRM DEEP LINKS */}
+          {(viewMode === "STEPPED" || viewMode === "BOTH") && (
+            <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-6 shadow-sm space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-bold text-white flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4 text-indigo-400" />
+                    <span>5-Stage Sales Funnel Flow &amp; Leak Analysis</span>
+                  </h2>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Click any leak button to filter those exact leads directly in the CRM workbench.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {funnelResult.stages.map((stage, idx) => {
+                  const isFirst = idx === 0;
+                  const isLast = idx === funnelResult.stages.length - 1;
+
+                  return (
+                    <div
+                      key={stage.id}
+                      className="rounded-xl border border-zinc-800 bg-[#09090c] p-4 space-y-3 transition hover:border-zinc-700"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-3">
+                          <span
+                            className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold"
+                            style={{
+                              backgroundColor: `${stage.hex}25`,
+                              color: stage.hex,
+                              border: `1px solid ${stage.hex}50`,
+                            }}
+                          >
+                            {idx + 1}
+                          </span>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-white">{stage.label}</span>
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
+                                {stage.count} leads ({stage.pctOfPool}%)
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-zinc-400">{stage.description}</p>
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="text-sm font-black font-mono" style={{ color: stage.hex }}>
+                            {isFirst ? "100%" : `${stage.stepPct}% Transition`}
+                          </div>
+                          {!isFirst && (
+                            <div className="text-[10px] text-zinc-500">from previous stage</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Visual Stepped Bar */}
+                      <div className="w-full h-3 rounded-full bg-zinc-900 border border-zinc-800 overflow-hidden flex">
+                        <div
+                          className="h-full transition-all duration-700"
+                          style={{
+                            width: `${Math.max(3, stage.pctOfPool)}%`,
+                            backgroundColor: stage.hex,
+                          }}
+                        />
+                      </div>
+
+                      {/* Leaks & CRM Deep-Link Badges */}
+                      {stage.leaks && stage.leaks.length > 0 && (
+                        <div className="pt-2 border-t border-zinc-900 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[10px] uppercase font-bold text-zinc-500">
+                              Drop-Off Leaks:
+                            </span>
+                            {stage.leaks.map((leak) => {
+                              const leakDef = CALL_STATUS_DEFS[leak.colorKey];
+                              return (
+                                <Link
+                                  key={leak.key}
+                                  href={`/caller?status=${leak.crmFilter || "ALL"}`}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-800 bg-[#101014] hover:bg-zinc-800 text-xs text-zinc-300 transition group"
+                                  title={`Filter ${leak.count} leads with "${leak.label}" in CRM`}
+                                >
+                                  <span className={`h-2 w-2 rounded-full ${leakDef.dot}`} />
+                                  <span>
+                                    {leak.count} {leak.label}
+                                  </span>
+                                  <ArrowUpRight className="w-3 h-3 text-zinc-500 group-hover:text-white transition" />
+                                </Link>
+                              );
+                            })}
+                          </div>
+
+                          <div className="text-[11px] text-zinc-500">
+                            Lost at step: <strong className="text-zinc-400">{stage.lost}</strong>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------- */}
+      {/* TAB 2: PEAK CALLING HOURS (PKT SYNCHRONIZED)                        */}
+      {/* ------------------------------------------------------------------- */}
       {activeTab === "HOURLY" && (
         <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-6 shadow-sm space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1151,150 +1039,227 @@ export function SalesFunnelClient({
                 <span>Peak Calling Hours &amp; Golden Answer Windows</span>
               </h2>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Empirical hourly pick rates across working hours (8:00 AM – 6:00 PM). Schedule calling blocks during peak green windows.
+                Empirical hourly pick rates across working hours. Displays both US Prospect Local Time
+                and Pakistan Shift Time (PKT).
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold">
-                Golden Window: 8:30–10:00 AM &amp; 4:00–5:30 PM
-              </span>
+
+            {/* Timezone Switcher */}
+            <div className="flex items-center gap-1 bg-[#09090c] border border-zinc-800 rounded-lg p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setHourlyTzMode("PROSPECT")}
+                className={`px-3 py-1 rounded font-semibold transition ${
+                  hourlyTzMode === "PROSPECT"
+                    ? "bg-zinc-800 text-white shadow-sm"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                Prospect Local Clock (US)
+              </button>
+              <button
+                type="button"
+                onClick={() => setHourlyTzMode("CALLER")}
+                className={`px-3 py-1 rounded font-semibold transition ${
+                  hourlyTzMode === "CALLER"
+                    ? "bg-emerald-950 text-emerald-300 border border-emerald-500/40 shadow-sm"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                🇵🇰 Caller Shift Clock (PKT)
+              </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {filteredData.hourlyData.map((slot) => {
-              const isHigh = slot.pickRate >= 45;
-              const isMedium = slot.pickRate >= 25 && slot.pickRate < 45;
-
-              return (
-                <div
-                  key={slot.hour}
-                  onMouseEnter={() => setHoveredHour(slot.hour)}
-                  onMouseLeave={() => setHoveredHour(null)}
-                  className={`p-3.5 rounded-xl border text-left transition ${
-                    isHigh
-                      ? "border-emerald-500/40 bg-emerald-950/20 shadow-sm"
-                      : isMedium
-                      ? "border-sky-500/30 bg-[#121217]"
-                      : "border-zinc-800 bg-[#09090c]"
-                  }`}
-                >
-                  <div className="flex items-center justify-between text-xs font-mono font-bold text-zinc-300">
-                    <span>{slot.label}</span>
-                    {isHigh && <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />}
-                  </div>
-                  <div
-                    className={`text-2xl font-black mt-2 font-mono ${
-                      isHigh ? "text-emerald-400" : isMedium ? "text-sky-300" : "text-zinc-400"
-                    }`}
-                  >
-                    {slot.pickRate}%
-                  </div>
-                  <div className="text-[10px] text-zinc-400 mt-1 flex items-center justify-between">
-                    <span>{slot.dials} dials</span>
-                    <span>{slot.answered} pickups</span>
-                  </div>
+          {/* Golden Window Highlight Card */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-950/15 flex items-start gap-3">
+              <Flame className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                  Golden Calling Window (Highest Decision Maker Connects)
+                </span>
+                <div className="text-base font-black text-white mt-1">
+                  8:30 AM – 10:00 AM &amp; 4:00 PM – 5:30 PM (Prospect Local)
                 </div>
-              );
-            })}
+                <div className="text-xs text-amber-300 font-mono mt-0.5">
+                  🇵🇰 Pakistan Caller Shift: 5:30 PM – 7:00 PM &amp; 1:00 AM – 2:30 AM PKT
+                </div>
+                <p className="text-[11px] text-zinc-400 mt-2">
+                  Owners &amp; executives answer desk phones before admin staff arrives in the morning
+                  and after office hours in the late afternoon.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl border border-sky-500/30 bg-sky-950/15 flex items-start gap-3">
+              <Globe className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">
+                  Territory Calling Order Strategy
+                </span>
+                <div className="text-xs text-zinc-300 mt-1 leading-relaxed">
+                  Start shifts calling <strong>Eastern (ET)</strong> leads at 5:30 PM PKT (8:30 AM ET),
+                  rotate to <strong>Central (CT)</strong> at 6:30 PM PKT, <strong>Mountain (MT)</strong> at
+                  7:30 PM PKT, and <strong>Pacific (PT)</strong> at 8:30 PM PKT.
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-[#09090c] border border-zinc-800 text-xs text-zinc-300 flex items-start gap-3">
-            <Lightbulb className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
-            <div className="leading-relaxed">
-              <strong className="text-white">Caller Timing Strategy:</strong> Business owners and executives check voicemail and answer desk phones before administrative staff arrives (8:00–9:30 AM) and after office staff leaves (4:30–5:30 PM). Dials made during these two windows achieve up to <strong>2.8x higher decision-maker contact rates</strong> than midday calling.
+          {/* Hourly Distribution Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {(hourlyTzMode === "PROSPECT"
+              ? funnelResult.timing.prospectHours
+              : funnelResult.timing.callerHours
+            )
+              .filter((h) => h.hour >= 7 && h.hour <= 19)
+              .map((slot) => {
+                const isHigh = slot.rate >= 40;
+                const isMedium = slot.rate >= 20 && slot.rate < 40;
+
+                return (
+                  <div
+                    key={slot.hour}
+                    className={`p-3.5 rounded-xl border text-left transition ${
+                      isHigh
+                        ? "border-emerald-500/40 bg-emerald-950/20 shadow-sm"
+                        : isMedium
+                        ? "border-sky-500/30 bg-[#121217]"
+                        : "border-zinc-800 bg-[#09090c]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs font-mono font-bold text-zinc-300">
+                      <span>{formatHour12(slot.hour)}</span>
+                      {isHigh && (
+                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                      )}
+                    </div>
+                    <div
+                      className={`text-2xl font-black mt-2 font-mono ${
+                        isHigh ? "text-emerald-400" : isMedium ? "text-sky-300" : "text-zinc-500"
+                      }`}
+                    >
+                      {slot.rate}%
+                    </div>
+                    <div className="text-[10px] text-zinc-400 mt-1 flex items-center justify-between">
+                      <span>{slot.dials} dials</span>
+                      <span>{slot.human} answered</span>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+
+          {/* Timezone Territory Lead Distribution */}
+          <div className="pt-4 border-t border-zinc-800/80">
+            <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-3">
+              Prospect Leads by Timezone Territory
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {funnelResult.timing.zoneLeads.slice(0, 4).map((zone) => {
+                const group = US_TZ_GROUPS.find((g) => g.id === zone.groupId);
+                const { hour } = group
+                  ? wallClock(nowMs, group.iana)
+                  : { hour: 0 };
+                const isOpen = hour >= 9 && hour < 17;
+
+                return (
+                  <div
+                    key={zone.groupId}
+                    className="p-3 rounded-xl border border-zinc-800 bg-[#09090c]"
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-white">US {group?.label || zone.groupId}</span>
+                      {isOpen ? (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300">
+                          Active Now
+                        </span>
+                      ) : (
+                        <span className="text-[9px] text-zinc-500">Off-Hours</span>
+                      )}
+                    </div>
+                    <div className="text-xl font-black font-mono text-white mt-1">
+                      {zone.total} leads
+                    </div>
+                    <div className="text-[10px] text-zinc-400 mt-0.5 flex justify-between">
+                      <span>{zone.untouched} untouched</span>
+                      <span>{zone.retry} retries</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
       )}
 
-      {/* TAB 4: CALLER PERFORMANCE & LEADERBOARD */}
+      {/* ------------------------------------------------------------------- */}
+      {/* TAB 3: CALLER PERFORMANCE LEADERBOARD                              */}
+      {/* ------------------------------------------------------------------- */}
       {activeTab === "CALLERS" && (
         <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] overflow-hidden shadow-sm">
           <div className="p-6 border-b border-zinc-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <Users className="w-4 h-4 text-emerald-400" />
-                <span>Caller Performance Matrix &amp; Conversion Efficiency</span>
+                <Users className="w-4 h-4 text-sky-400" />
+                <span>Sales Caller Productivity &amp; Conversion Leaderboard</span>
               </h2>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Head-to-head comparison of dial volume, DM conversations, gatekeeper navigation, and closed meetings.
+                Transparent accountability tracking dials logged, owner conversation depth, and meetings booked.
               </p>
             </div>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-[#09090c] text-[11px] font-bold text-zinc-400 uppercase tracking-wider border-b border-zinc-800">
+              <thead className="bg-[#09090c] text-zinc-400 border-b border-zinc-800 uppercase font-bold tracking-wider">
                 <tr>
-                  <th className="px-5 py-3.5">Caller Name</th>
-                  <th className="px-4 py-3.5">Assigned Leads</th>
-                  <th className="px-4 py-3.5">Total Dials</th>
-                  <th className="px-4 py-3.5">Connected / Spoke</th>
-                  <th className="px-4 py-3.5">Gatekeeper Blocked</th>
-                  <th className="px-4 py-3.5">No Answer %</th>
-                  <th className="px-4 py-3.5">Meetings Booked</th>
-                  <th className="px-4 py-3.5 text-right">Spoke &rarr; Demo %</th>
+                  <th className="px-5 py-3">Caller</th>
+                  <th className="px-4 py-3">Assigned</th>
+                  <th className="px-4 py-3">Dials</th>
+                  <th className="px-4 py-3">Pick Rate</th>
+                  <th className="px-4 py-3">DM Spoke</th>
+                  <th className="px-4 py-3">Gatekeeper</th>
+                  <th className="px-4 py-3">Overdue Follow-ups</th>
+                  <th className="px-4 py-3 text-right">Meetings Booked</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800/60 font-medium">
-                {filteredData.callerMatrix.map((c) => {
-                  return (
-                    <tr key={c.id} className="hover:bg-zinc-900/60 transition">
-                      <td className="px-5 py-3.5 whitespace-nowrap">
-                        <div className="font-bold text-white flex items-center gap-2">
-                          <span>{c.name}</span>
-                          {c.meetings >= 3 ? (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                              <Award className="w-3 h-3" /> Top Closer
-                            </span>
-                          ) : c.callsLogged >= 50 ? (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                              High Volume
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="text-[10px] text-zinc-500">{c.title}</div>
-                      </td>
-                      <td className="px-4 py-3.5 text-zinc-300">{c.assignedLeads} leads</td>
-                      <td className="px-4 py-3.5 font-bold text-white">{c.callsLogged} dials</td>
-                      <td className="px-4 py-3.5">
-                        <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-sky-500/15 text-sky-300 border border-sky-500/30">
-                          {c.connected} Spoke
+              <tbody className="divide-y divide-zinc-800/60 font-mono">
+                {funnelResult.callers.map((c) => (
+                  <tr key={c.id} className="hover:bg-zinc-900/40 transition">
+                    <td className="px-5 py-3.5 font-sans">
+                      <div className="font-bold text-white text-sm">{c.name}</div>
+                      <div className="text-[10px] text-zinc-500">{c.title}</div>
+                    </td>
+                    <td className="px-4 py-3.5 text-zinc-300">{c.assignedLeads} leads</td>
+                    <td className="px-4 py-3.5 font-bold text-white">{c.dials} dials</td>
+                    <td className="px-4 py-3.5 text-sky-300 font-bold">{c.pickRate}%</td>
+                    <td className="px-4 py-3.5">
+                      <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                        {c.owner} Spoke
+                      </span>
+                    </td>
+                    <td className="px-4 py-3.5 text-orange-400">{c.gatekeeper} blocked</td>
+                    <td className="px-4 py-3.5">
+                      {c.overdueFollowUps > 0 ? (
+                        <span className="text-rose-400 font-bold">
+                          ⚠️ {c.overdueFollowUps} Overdue
                         </span>
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-orange-500/15 text-orange-300 border border-orange-500/30">
-                          {c.gatekeeper} Blocked
-                        </span>
-                      </td>
-                      <td className="px-4 py-3.5 text-zinc-400">
-                        {c.callsLogged > 0 ? Math.round((c.noAnswer / c.callsLogged) * 100) : 0}%
-                      </td>
-                      <td className="px-4 py-3.5 font-black text-emerald-400 text-sm">
-                        {c.meetings} Booked
-                      </td>
-                      <td className="px-4 py-3.5 text-right font-bold text-white">
-                        <span
-                          className={`inline-block px-2.5 py-0.5 rounded text-xs ${
-                            c.conversionRate >= 20
-                              ? "bg-emerald-500/20 text-emerald-300 font-black border border-emerald-500/30"
-                              : c.conversionRate > 0
-                              ? "bg-indigo-500/20 text-indigo-300"
-                              : "text-zinc-500"
-                          }`}
-                        >
-                          {c.conversionRate}%
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
+                      ) : (
+                        <span className="text-zinc-500">0 Overdue</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3.5 text-right font-black text-emerald-400 text-sm">
+                      {c.meetings} Booked
+                    </td>
+                  </tr>
+                ))}
 
-                {filteredData.callerMatrix.length === 0 && (
+                {funnelResult.callers.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-5 py-8 text-center text-zinc-500">
-                      No callers found in this workspace. Add team members in Team &amp; Settings.
+                    <td colSpan={8} className="px-5 py-8 text-center text-zinc-500 font-sans">
+                      No active callers found in this workspace. Add team members in Team &amp; Settings.
                     </td>
                   </tr>
                 )}
@@ -1304,102 +1269,96 @@ export function SalesFunnelClient({
         </div>
       )}
 
-      {/* TAB 5: LEAD QUALITY TIER IMPACT */}
+      {/* ------------------------------------------------------------------- */}
+      {/* TAB 4: ICP QUALITY TIERS                                            */}
+      {/* ------------------------------------------------------------------- */}
       {activeTab === "ICP_QUALITY" && (
         <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-6 shadow-sm space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <Award className="w-4 h-4 text-purple-400" />
-                <span>ICP Lead Quality Score vs. Conversion Correlation</span>
-              </h2>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Empirical evidence demonstrating how deeper research &amp; higher ICP confidence directly multiply caller conversion rates.
-              </p>
-            </div>
+          <div>
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <Award className="w-4 h-4 text-purple-400" />
+              <span>ICP Lead Quality Score vs. Conversion Correlation</span>
+            </h2>
+            <p className="text-xs text-zinc-400 mt-0.5">
+              Empirical evidence demonstrating how deeper research &amp; verified decision-maker info directly multiplies caller conversion rates.
+            </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Tier A */}
-            <div className="p-5 rounded-xl border border-emerald-500/30 bg-emerald-950/15 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-emerald-300 text-sm">Tier A: Elite Matches</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
-                  ICP Score 80–100
-                </span>
+            {funnelResult.tiers.map((tier) => (
+              <div
+                key={tier.id}
+                className={`p-5 rounded-xl border space-y-3 ${
+                  tier.id === "A"
+                    ? "border-emerald-500/30 bg-emerald-950/15"
+                    : "border-zinc-800 bg-[#09090c]"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-white text-sm">{tier.label}</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
+                    ICP Score {tier.range}
+                  </span>
+                </div>
+                <div className="pt-3 border-t border-zinc-800/80 space-y-1.5 text-xs">
+                  <div className="flex justify-between text-zinc-300">
+                    <span>Total Leads:</span>
+                    <strong className="text-white font-mono">{tier.leads}</strong>
+                  </div>
+                  <div className="flex justify-between text-zinc-300">
+                    <span>Pick Rate:</span>
+                    <strong className="text-sky-300 font-mono">{tier.answerRate}%</strong>
+                  </div>
+                  <div className="flex justify-between text-zinc-300">
+                    <span>Decision Makers Reached:</span>
+                    <strong className="text-indigo-300 font-mono">{tier.owner}</strong>
+                  </div>
+                  <div className="flex justify-between text-emerald-300 font-bold">
+                    <span>Meetings Booked:</span>
+                    <strong className="text-emerald-400 font-mono text-sm">{tier.meetings}</strong>
+                  </div>
+                </div>
               </div>
-              <p className="text-xs text-zinc-300">
-                Verified owner name, confirmed direct phone, and high niche alignment.
-              </p>
-              <div className="pt-3 border-t border-emerald-500/20 space-y-1.5 text-xs">
-                <div className="flex justify-between text-zinc-300">
-                  <span>Total Leads:</span>
-                  <strong className="text-white font-mono">{filteredData.icpTiers.tierA.leads}</strong>
-                </div>
-                <div className="flex justify-between text-zinc-300">
-                  <span>Conversations:</span>
-                  <strong className="text-sky-300 font-mono">{filteredData.icpTiers.tierA.spoke}</strong>
-                </div>
-                <div className="flex justify-between text-emerald-300 font-bold">
-                  <span>Meetings Booked:</span>
-                  <strong className="text-emerald-400 font-mono text-sm">{filteredData.icpTiers.tierA.booked}</strong>
-                </div>
-              </div>
-            </div>
+            ))}
+          </div>
+        </div>
+      )}
 
-            {/* Tier B */}
-            <div className="p-5 rounded-xl border border-zinc-800 bg-[#09090c] space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-zinc-200 text-sm">Tier B: Standard Matches</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
-                  ICP Score 50–79
-                </span>
-              </div>
-              <p className="text-xs text-zinc-400">
-                Active company profile with general office switchboard phone.
-              </p>
-              <div className="pt-3 border-t border-zinc-800 space-y-1.5 text-xs">
-                <div className="flex justify-between text-zinc-300">
-                  <span>Total Leads:</span>
-                  <strong className="text-white font-mono">{filteredData.icpTiers.tierB.leads}</strong>
-                </div>
-                <div className="flex justify-between text-zinc-300">
-                  <span>Conversations:</span>
-                  <strong className="text-sky-300 font-mono">{filteredData.icpTiers.tierB.spoke}</strong>
-                </div>
-                <div className="flex justify-between text-zinc-300 font-bold">
-                  <span>Meetings Booked:</span>
-                  <strong className="text-white font-mono text-sm">{filteredData.icpTiers.tierB.booked}</strong>
-                </div>
-              </div>
-            </div>
+      {/* ------------------------------------------------------------------- */}
+      {/* TAB 5: DAILY TRENDS                                                */}
+      {/* ------------------------------------------------------------------- */}
+      {activeTab === "TRENDS" && (
+        <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-6 shadow-sm space-y-6">
+          <div>
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-emerald-400" />
+              <span>Daily Conversion Progression</span>
+            </h2>
+            <p className="text-xs text-zinc-400 mt-0.5">
+              Daily dial velocity, contact volume, and appointment generation.
+            </p>
+          </div>
 
-            {/* Tier C */}
-            <div className="p-5 rounded-xl border border-zinc-800/80 bg-[#09090c] space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-zinc-400 text-sm">Tier C: Broad Matches</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800/60 text-zinc-400">
-                  ICP Score &lt;50
-                </span>
-              </div>
-              <p className="text-xs text-zinc-500">
-                Early discovery leads without deep research verification.
-              </p>
-              <div className="pt-3 border-t border-zinc-800 space-y-1.5 text-xs">
-                <div className="flex justify-between text-zinc-400">
-                  <span>Total Leads:</span>
-                  <strong className="text-zinc-300 font-mono">{filteredData.icpTiers.tierC.leads}</strong>
-                </div>
-                <div className="flex justify-between text-zinc-400">
-                  <span>Conversations:</span>
-                  <strong className="text-zinc-300 font-mono">{filteredData.icpTiers.tierC.spoke}</strong>
-                </div>
-                <div className="flex justify-between text-zinc-400 font-bold">
-                  <span>Meetings Booked:</span>
-                  <strong className="text-zinc-300 font-mono text-sm">{filteredData.icpTiers.tierC.booked}</strong>
+          <div className="space-y-3">
+            {funnelResult.daily.map((day) => (
+              <div
+                key={day.dayKey}
+                className="p-3 rounded-xl border border-zinc-800 bg-[#09090c] flex items-center justify-between text-xs"
+              >
+                <span className="font-mono font-bold text-white">{day.dayLabel}</span>
+                <div className="flex items-center gap-4 font-mono">
+                  <span className="text-zinc-400">{day.dials} dials</span>
+                  <span className="text-indigo-300">{day.human} answered</span>
+                  <span className="text-emerald-400 font-bold">{day.meetings} booked</span>
                 </div>
               </div>
-            </div>
+            ))}
+
+            {funnelResult.daily.length === 0 && (
+              <div className="p-8 text-center text-zinc-500 text-xs">
+                No call events recorded yet for this timeframe.
+              </div>
+            )}
           </div>
         </div>
       )}

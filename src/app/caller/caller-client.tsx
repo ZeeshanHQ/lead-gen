@@ -36,6 +36,15 @@ import {
 } from "@/components/crm-lead-sheet";
 import { classifyLeadDate, parseLatestCallerNote, type LeadDateCategory } from "@/components/crm-date-utils";
 import {
+  CALL_STATUS_DEFS,
+  CRM_FILTER_CHIPS,
+  STATUS_FILTER_TO_KEY,
+  deriveCallStatus,
+  type CallOutcomeKey,
+  type CallStatusKey,
+} from "@/server/domain/call-outcomes";
+import { CallOutcomePicker, CallStatusBadge, CallStatusLegend } from "@/components/call-status-ui";
+import {
   DEFAULT_DIALER_CONFIG,
   type DialerConfig,
 } from "@/server/domain/dialer";
@@ -72,6 +81,8 @@ import {
 interface CallerClientProps {
   initialQueue: CallerLeadView[];
   initialCallerFilter?: string;
+  /** Pre-selects a status filter, e.g. from Sales Funnel deep links (?status=NO_ANSWER). */
+  initialStatusFilter?: string;
   nicheName?: string;
   nicheCategory?: string;
   initialCustomColumns?: CustomCrmColumn[];
@@ -135,6 +146,7 @@ function getSmartOpeningScript({
 export function CallerClient({
   initialQueue,
   initialCallerFilter = "ALL",
+  initialStatusFilter = "ALL",
   nicheName = "Active Niche",
   nicheCategory,
   initialCustomColumns = [],
@@ -183,7 +195,7 @@ export function CallerClient({
 
   const smartFields = getSmartFieldsForNiche(nicheCategory, nicheName, customColumns);
 
-  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter || "ALL");
   const [distributePending, startDistribute] = useTransition();
   const [assignPendingId, setAssignPendingId] = useState<string | null>(null);
   const [crmToast, setCrmToast] = useState<string | null>(null);
@@ -392,14 +404,8 @@ export function CallerClient({
 
   // Form state for Log Call modal
   const [isPending, startTransition] = useTransition();
-  const [outcome, setOutcome] = useState<
-    | "CONNECTED"
-    | "MEETING_BOOKED"
-    | "GATEKEEPER_BLOCKED"
-    | "WRONG_NUMBER"
-    | "NO_ANSWER"
-    | "CALL_COMPLETED"
-  >("CONNECTED");
+  // No default outcome: the caller must pick what actually happened (prevents false "Connected" logs).
+  const [outcome, setOutcome] = useState<CallOutcomeKey | null>(null);
   const [notes, setNotes] = useState("");
   const [followUpDate, setFollowUpDate] = useState("");
   const [actor] = useState(activeActorName);
@@ -688,17 +694,18 @@ export function CallerClient({
 
     if (statusFilter === "MY_LEADS") {
       if (!activeMember || lead.assignedMemberId !== activeMember.id) return false;
-    } else if (statusFilter === "TO_CALL") {
-      if (!["APPROVED", "SYNCED", "CALLING"].includes(lead.status)) return false;
-    } else if (statusFilter === "CONNECTED") {
-      if (!["CONNECTED", "PAIN_FOUND"].includes(lead.status)) return false;
-    } else if (statusFilter === "MEETINGS") {
-      if (lead.status !== "MEETING_BOOKED") return false;
     } else if (statusFilter === "FOLLOW_UP") {
       if (!lead.nextFollowUp && !(lead.notes && lead.notes.includes("Follow-up Scheduled")))
         return false;
+    } else if (statusFilter === "OVERDUE") {
+      if (!lead.nextFollowUp || new Date(lead.nextFollowUp).getTime() >= Date.now()) return false;
     } else if (statusFilter !== "ALL") {
-      if (lead.status !== statusFilter) return false;
+      const wanted = STATUS_FILTER_TO_KEY[statusFilter];
+      if (wanted) {
+        if (deriveCallStatus(lead).key !== wanted) return false;
+      } else if (lead.status !== statusFilter) {
+        return false;
+      }
     }
 
     if (dateFilter !== "ALL") {
@@ -730,7 +737,7 @@ export function CallerClient({
 
   const openLogCallModal = (lead: CallerLeadView) => {
     setSelectedLead(lead);
-    setOutcome("CONNECTED");
+    setOutcome(null);
     setNotes("");
     setFollowUpDate(lead.nextFollowUp || "");
     const detectedSoft = lead.software && lead.software !== "UNKNOWN" ? lead.software : "";
@@ -742,7 +749,7 @@ export function CallerClient({
 
   const handleLogCallSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLead) return;
+    if (!selectedLead || !outcome) return;
 
     startTransition(async () => {
       const fleetNum = confirmedFleet.trim() ? parseInt(confirmedFleet.trim(), 10) : null;
@@ -896,25 +903,35 @@ export function CallerClient({
   }, [filteredQueue]);
 
   // Counters (scoped by active caller filter so Owner can inspect any caller's exact metrics)
+  // Every lead has exactly ONE derived call status, so these always add up to the total.
   const totalCount = callerScopedQueue.length;
-  const toCallCount = callerScopedQueue.filter((l) =>
-    ["APPROVED", "SYNCED", "CALLING"].includes(l.status)
-  ).length;
-  const connectedCount = callerScopedQueue.filter((l) =>
-    ["CONNECTED", "PAIN_FOUND"].includes(l.status)
-  ).length;
-  const meetingsCount = callerScopedQueue.filter((l) => l.status === "MEETING_BOOKED").length;
+  const derivedCounts = callerScopedQueue.reduce(
+    (acc, l) => {
+      acc[deriveCallStatus(l).key]++;
+      return acc;
+    },
+    {
+      UNTOUCHED: 0,
+      NO_ANSWER: 0,
+      CALL_COMPLETED: 0,
+      WRONG_NUMBER: 0,
+      GATEKEEPER_BLOCKED: 0,
+      CONNECTED: 0,
+      NOT_INTERESTED: 0,
+      MEETING_BOOKED: 0,
+    } as Record<CallStatusKey, number>
+  );
+  const toCallCount = derivedCounts.UNTOUCHED;
+  const connectedCount = derivedCounts.CONNECTED;
+  const meetingsCount = derivedCounts.MEETING_BOOKED;
   const followUpCount = callerScopedQueue.filter(
     (l) => l.nextFollowUp || (l.notes && l.notes.includes("Follow-up Scheduled"))
   ).length;
-  const noAnswerCount = callerScopedQueue.filter((l) => {
-    const parsed = parseLatestCallerNote(l.notes);
-    return parsed?.outcome?.toLowerCase().includes("no answer");
-  }).length;
-  const gatekeeperCount = callerScopedQueue.filter((l) => {
-    const parsed = parseLatestCallerNote(l.notes);
-    return parsed?.outcome?.toLowerCase().includes("gatekeeper");
-  }).length;
+  const overdueCount = callerScopedQueue.filter(
+    (l) => l.nextFollowUp && new Date(l.nextFollowUp).getTime() < Date.now()
+  ).length;
+  const noAnswerCount = derivedCounts.NO_ANSWER;
+  const gatekeeperCount = derivedCounts.GATEKEEPER_BLOCKED;
   const myLeadsCount = activeQueue.filter(
     (l) => activeMember && l.assignedMemberId === activeMember.id
   ).length;
@@ -1559,33 +1576,8 @@ export function CallerClient({
                             </span>
                           )}
 
-                          {/* 1-Click Inline Pipeline Stage Dropdown with Vivid Badges */}
-                          {canEditContacts ? (
-                            <select
-                              value={lead.status}
-                              onChange={(e) =>
-                                handleQuickStatusChange(
-                                  lead,
-                                  e.target.value as LifecycleStatus
-                                )
-                              }
-                              className={`rounded-lg border px-2.5 py-1 text-xs font-semibold focus:outline-none cursor-pointer transition ${
-                                CRM_STAGE_OPTIONS.find((s) => s.value === lead.status)?.badgeClass ||
-                                "border-zinc-700 bg-[#09090b] text-zinc-100"
-                              }`}
-                              title="Change pipeline stage"
-                            >
-                              {CRM_STAGE_OPTIONS.map((st) => (
-                                <option key={st.value} value={st.value} className="bg-[#121215] text-zinc-200">
-                                  {st.label}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs font-semibold text-zinc-200">
-                              {lead.status}
-                            </span>
-                          )}
+                          {/* Automatic Log-Derived Call Status (Unified Pipeline) */}
+                          <CallStatusBadge lead={lead} showAttempts showLastCalled />
 
                           {/* Lead Intake Time Badge */}
                           {(() => {
@@ -2684,29 +2676,11 @@ export function CallerClient({
                 <label className="block text-xs font-semibold text-zinc-300 mb-2">
                   Call Outcome *
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                  {[
-                    { key: "MEETING_BOOKED", label: "Meeting Booked" },
-                    { key: "CONNECTED", label: "Connected / Spoke" },
-                    { key: "GATEKEEPER_BLOCKED", label: "Gatekeeper" },
-                    { key: "NO_ANSWER", label: "No Answer" },
-                    { key: "CALL_COMPLETED", label: "Left Voicemail" },
-                    { key: "WRONG_NUMBER", label: "Wrong Number" },
-                  ].map((opt) => (
-                    <button
-                      key={opt.key}
-                      type="button"
-                      onClick={() => setOutcome(opt.key as any)}
-                      className={`p-2.5 rounded-lg border text-left transition ${
-                        outcome === opt.key
-                          ? "border-white bg-zinc-800 text-white font-bold"
-                          : "border-zinc-800 bg-[#09090b] text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
+                <CallOutcomePicker
+                  value={outcome}
+                  onChange={(k) => setOutcome(k)}
+                  disabled={isPending}
+                />
               </div>
 
               <div>

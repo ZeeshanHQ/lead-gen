@@ -334,7 +334,19 @@ export function canMemberAccessPath(member: TeamMember | null | undefined, pathn
     return Boolean(member.permissions.approveLeads || member.permissions.discoverLeads);
   }
   if (pathname.startsWith("/analytics")) {
-    return Boolean(member.permissions.approveLeads || member.permissions.manageTeamAndSettings);
+    return canViewSalesAnalytics(member);
   }
+  return Boolean(member.permissions.manageTeamAndSettings);
+}
+
+/**
+ * Sales Funnel & Analytics is a management view (every caller's numbers, team comparison,
+ * bottlenecks). It is limited to the Owner and team managers. Sales Callers and Viewers can
+ * never open it, even if the generic "Overview Dashboard" permission was switched on for them.
+ */
+export function canViewSalesAnalytics(member: TeamMember | null | undefined): boolean {
+  if (!member || member.id === "guest") return false;
+  if (member.role === "OWNER") return true;
+  if (member.role === "CALLER" || member.role === "VIEWER") return false;
   return Boolean(member.permissions.manageTeamAndSettings);
 }

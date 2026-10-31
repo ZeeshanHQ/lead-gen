@@ -14,12 +14,12 @@ export const dynamic = "force-dynamic";
 export default async function CallerQueuePage({
   searchParams,
 }: {
-  searchParams?: Promise<{ caller?: string }>;
+  searchParams?: Promise<{ caller?: string; status?: string }>;
 }) {
   const db = await getDb();
   const [resolvedParams, { market, allMarkets, rule }, { activeMember, allMembers }, savedDialer] =
     await Promise.all([
-      searchParams ? searchParams : Promise.resolve({} as { caller?: string }),
+      searchParams ? searchParams : Promise.resolve({} as { caller?: string; status?: string }),
       getActiveContext(db),
       getActiveTeamMember(db),
       getSetting<Partial<DialerConfig>>(db, "dialer_config"),
@@ -63,9 +63,10 @@ export default async function CallerQueuePage({
 
   return (
     <CallerClient
-      key={`${market.id}_${resolvedParams?.caller || "ALL"}`}
+      key={`${market.id}_${resolvedParams?.caller || "ALL"}_${resolvedParams?.status || "ALL"}`}
       initialQueue={visibleQueue}
       initialCallerFilter={resolvedParams?.caller || "ALL"}
+      initialStatusFilter={resolvedParams?.status || "ALL"}
       nicheName={market.name}
       nicheCategory={market.category}
       initialCustomColumns={customColumns}
