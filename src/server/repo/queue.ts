@@ -65,7 +65,7 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
     .from(companies)
     .where(whereClause)
     .orderBy(desc(companies.createdAt))
-    .limit(250);
+    .limit(2000);
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
 

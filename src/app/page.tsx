@@ -8,6 +8,7 @@ import { getActiveTeamMember } from "@/server/repo/team";
 import { canMemberAccessPath, getDefaultRouteForMember } from "@/server/domain/team";
 import { loadLeadRows } from "@/server/repo/queue";
 import { resolveGate } from "@/server/domain/gate";
+import { computeLiveCrmTelemetry } from "@/server/domain/call-outcomes";
 import { formatDateTime } from "@/lib/utils";
 import { ActiveQualityGateCard } from "@/components/active-quality-gate-card";
 import {
@@ -74,16 +75,16 @@ export default async function OverviewPage() {
     return true;
   });
 
-  const readyToCall = qualifiedRows.filter((l) =>
-    ["APPROVED", "SYNCED", "CALLING"].includes(l.status)
-  ).length;
-  const connected = qualifiedRows.filter((l) =>
-    ["CONNECTED", "PAIN_FOUND", "QUALIFIED"].includes(l.status)
-  ).length;
-  const meetingsBooked = qualifiedRows.filter((l) => l.status === "MEETING_BOOKED").length;
-  const followUpsCount = qualifiedRows.filter(
-    (l) => l.notes && l.notes.includes("Follow-up Scheduled")
-  ).length;
+  const liveTelemetry = computeLiveCrmTelemetry(qualifiedRows, activeCallers);
+  const fullWorkspaceTelemetry = computeLiveCrmTelemetry(allWorkspaceApprovedRows, activeCallers);
+
+  const readyToCall = liveTelemetry.untouchedLeads;
+  const connected = liveTelemetry.connectedLeads;
+  const meetingsBooked = liveTelemetry.meetingsBooked;
+  const followUpsCount = liveTelemetry.followUpsScheduled;
+  const totalCallsDialed = liveTelemetry.totalCallsDialed;
+  const answeredLeads = liveTelemetry.answeredLeads;
+  const answerRatePct = liveTelemetry.answerRatePct;
 
   const perms = activeMember.permissions;
   const priorityLeads = qualifiedRows
@@ -198,7 +199,7 @@ export default async function OverviewPage() {
             {readyToCall}
           </div>
           <div className="mt-1 flex items-center justify-between text-xs text-zinc-400">
-            <span>Dialable phone numbers</span>
+            <span>{totalCallsDialed} calls dialed</span>
             <span className="text-emerald-400 flex items-center gap-0.5 text-[11px] font-medium group-hover:underline">
               Start Calling <ChevronRight className="w-3 h-3" />
             </span>
@@ -217,7 +218,7 @@ export default async function OverviewPage() {
             {followUpsCount}
           </div>
           <div className="mt-1 flex items-center justify-between text-xs text-zinc-400">
-            <span>Callbacks &amp; nurture</span>
+            <span>{answeredLeads} answered ({answerRatePct}% pickup)</span>
             <span className="text-amber-400 flex items-center gap-0.5 text-[11px] font-medium group-hover:underline">
               View Follow-Ups <ChevronRight className="w-3 h-3" />
             </span>
@@ -236,7 +237,7 @@ export default async function OverviewPage() {
             {meetingsBooked}
           </div>
           <div className="mt-1 flex items-center justify-between text-xs text-zinc-400">
-            <span>{connected} connected calls</span>
+            <span>{connected} connected ({liveTelemetry.connectRatePct}% spoke)</span>
             <span className="text-emerald-400 flex items-center gap-0.5 text-[11px] font-medium group-hover:underline">
               View Pipeline <ChevronRight className="w-3 h-3" />
             </span>
@@ -261,19 +262,14 @@ export default async function OverviewPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {activeCallers.map((caller) => {
-              const cLeads = allWorkspaceApprovedRows.filter(
-                (l) => l.assignedMemberId === caller.id
-              );
-              const cReady = cLeads.filter((l) =>
-                ["APPROVED", "SYNCED", "CALLING"].includes(l.status)
-              ).length;
-              const cConnected = cLeads.filter((l) =>
-                ["CONNECTED", "PAIN_FOUND", "QUALIFIED"].includes(l.status)
-              ).length;
-              const cMeetings = cLeads.filter((l) => l.status === "MEETING_BOOKED").length;
-              const cFollowUps = cLeads.filter(
-                (l) => l.notes && l.notes.includes("Follow-up Scheduled")
-              ).length;
+              const cStats = fullWorkspaceTelemetry.callerMap[caller.id];
+              const cAssigned = cStats?.assigned ?? 0;
+              const cReady = cStats?.toCall ?? 0;
+              const cDialed = cStats?.callsLogged ?? 0;
+              const cAnswered = cStats?.answered ?? 0;
+              const cConnected = cStats?.connected ?? 0;
+              const cMeetings = cStats?.meetings ?? 0;
+              const cFollowUps = cStats?.followUps ?? 0;
 
               const nicheNames =
                 caller.nicheScope === "ALL"
@@ -303,14 +299,22 @@ export default async function OverviewPage() {
                       </div>
                     </div>
                     <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 text-xs font-bold text-emerald-300 shrink-0">
-                      {cLeads.length} leads
+                      {cAssigned} leads
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-[11px] bg-zinc-900/60 rounded-lg p-2.5 border border-zinc-800/80">
+                  <div className="grid grid-cols-3 gap-2 text-[11px] bg-zinc-900/60 rounded-lg p-2.5 border border-zinc-800/80">
                     <div>
-                      <span className="text-zinc-500 block">Ready to Call</span>
+                      <span className="text-zinc-500 block">Ready</span>
                       <span className="font-semibold text-white">{cReady}</span>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500 block">Dials</span>
+                      <span className="font-semibold text-sky-300">{cDialed}</span>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500 block">Answered</span>
+                      <span className="font-semibold text-cyan-300">{cAnswered}</span>
                     </div>
                     <div>
                       <span className="text-zinc-500 block">Connected</span>

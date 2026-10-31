@@ -332,6 +332,7 @@ export function SalesFunnelClient({
       state: l.state,
       status: l.status,
       notes: l.notes,
+      facts: l.facts,
       icpScore: l.icpScore,
       assignedMemberId: l.assignedMemberId || null,
       createdAtMs: l.createdAt ? new Date(l.createdAt).getTime() : null,

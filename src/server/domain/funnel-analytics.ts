@@ -44,9 +44,12 @@ export interface FunnelLead {
   state: string | null;
   status: string;
   notes: string | null;
+  facts?: Record<string, unknown> | null;
+  nextFollowUp?: string | null;
   icpScore: number | null;
   assignedMemberId: string | null;
   createdAtMs: number | null;
+  updatedAtMs?: number | null;
 }
 
 export interface FunnelMember {
@@ -116,6 +119,7 @@ export function buildCallEvents(
   const leadById = new Map(leads.map((l) => [l.id, l]));
   const events: CallEvent[] = [];
   const hasAudit = new Set<string>();
+  const hasAnyEvent = new Set<string>();
 
   for (const a of audit) {
     if (!a.companyId) continue;
@@ -124,6 +128,7 @@ export function buildCallEvents(
     const outcome = outcomeKeyFromEnum(a.callOutcome);
     if (!outcome) continue;
     hasAudit.add(a.companyId);
+    hasAnyEvent.add(a.companyId);
     events.push({
       id: a.id,
       companyId: a.companyId,
@@ -136,18 +141,45 @@ export function buildCallEvents(
   }
 
   for (const lead of leads) {
-    if (hasAudit.has(lead.id)) continue;
-    for (const [idx, entry] of parseCallLog(lead.notes).entries()) {
-      const ts = parseNoteTimestamp(entry.timestampRaw, nowMs) ?? lead.createdAtMs ?? nowMs;
-      events.push({
-        id: `${lead.id}#${idx}`,
-        companyId: lead.id,
-        actor: entry.author || "Caller",
-        memberId: resolveMemberId(entry.author, members, lead.assignedMemberId),
-        outcome: entry.outcome,
-        atMs: ts,
-        source: "note",
-      });
+    if (!hasAudit.has(lead.id)) {
+      for (const [idx, entry] of parseCallLog(lead.notes).entries()) {
+        const ts =
+          parseNoteTimestamp(entry.timestampRaw, nowMs) ??
+          lead.updatedAtMs ??
+          lead.createdAtMs ??
+          nowMs;
+        hasAnyEvent.add(lead.id);
+        events.push({
+          id: `${lead.id}#${idx}`,
+          companyId: lead.id,
+          actor: entry.author || "Caller",
+          memberId: resolveMemberId(entry.author, members, lead.assignedMemberId),
+          outcome: entry.outcome,
+          atMs: ts,
+          source: "note",
+        });
+      }
+    }
+
+    // If a lead was updated in CRM (status changed, smart qualification fields filled, or follow-up set)
+    // without a separate call log entry yet, synthesize the call event so CRM and Funnel Analytics
+    // always agree 100% on dialed, answered, connected, and booked counts.
+    if (!hasAnyEvent.has(lead.id)) {
+      const derived = deriveCallStatus(lead);
+      if (derived.key !== "UNTOUCHED") {
+        const assignedMember = lead.assignedMemberId
+          ? members.find((m) => m.id === lead.assignedMemberId)
+          : undefined;
+        events.push({
+          id: `${lead.id}#derived`,
+          companyId: lead.id,
+          actor: assignedMember?.name || "Caller",
+          memberId: lead.assignedMemberId,
+          outcome: derived.key,
+          atMs: lead.updatedAtMs ?? lead.createdAtMs ?? nowMs,
+          source: "note",
+        });
+      }
     }
   }
 

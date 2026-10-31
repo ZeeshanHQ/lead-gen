@@ -206,11 +206,77 @@ export function outcomeKeyFromLabel(label: string | null | undefined): CallOutco
   return null;
 }
 
+/**
+ * Infers a CallOutcomeKey from freeform caller notes, inline table notes,
+ * follow-up reminders, or custom column dropdown values.
+ */
+export function inferOutcomeFromText(text: string | null | undefined): CallOutcomeKey | null {
+  const t = (text || "").trim().toLowerCase();
+  if (!t) return null;
+  const direct = outcomeKeyFromLabel(t);
+  if (direct) return direct;
+
+  if (
+    /\b((meeting|demo|call|appointment)\s*(booked|scheduled|set|confirmed)|booked\s*(a\s*)?(meeting|demo|call|appointment)|scheduled\s*(a\s*)?(meeting|demo|call|appointment)|calendar\s*invite)\b/i.test(
+      t
+    )
+  ) {
+    return "MEETING_BOOKED";
+  }
+  if (
+    /\b(not\s*interested|no\s*interest|declined|hung\s*up|do\s*not\s*call|dnc|remove\s*me|stop\s*calling|don't\s*need|no\s*need|already\s*have\s*a\s*system)\b/i.test(
+      t
+    )
+  ) {
+    return "NOT_INTERESTED";
+  }
+  if (
+    /\b(wrong\s*number|invalid\s*number|disconnected|not\s*in\s*service|bad\s*number|out\s*of\s*service|fax\s*line|dead\s*line)\b/i.test(
+      t
+    )
+  ) {
+    return "WRONG_NUMBER";
+  }
+  if (
+    /\b(left\s*(a\s*)?voicemail|voicemail|voice\s*mail|left\s*(a\s*)?message|vm\s*left|sent\s*to\s*voicemail|mailbox\s*full|answering\s*machine)\b/i.test(
+      t
+    )
+  ) {
+    return "CALL_COMPLETED";
+  }
+  if (
+    /\b(no\s*answer|didn't\s*answer|did\s*not\s*answer|rang\s*out|no\s*pick\s*up|didn't\s*pick\s*up|did\s*not\s*pick\s*up|busy\s*signal|line\s*busy|unanswered|no\s*response)\b/i.test(
+      t
+    ) ||
+    t === "na" ||
+    t === "n/a" ||
+    t === "rnr" ||
+    t === "ringing"
+  ) {
+    return "NO_ANSWER";
+  }
+  if (
+    /\b(gatekeeper|receptionist|front\s*desk|secretary|assistant|office\s*manager\s*blocked|wouldn't\s*transfer|refused\s*transfer|in\s*a\s*meeting|not\s*available|busy\s*right\s*now|out\s*of\s*office|took\s*a\s*message|send\s*an?\s*email)\b/i.test(
+      t
+    )
+  ) {
+    return "GATEKEEPER_BLOCKED";
+  }
+  if (
+    /\b(connected|spoke\s*(with|to)?|talked\s*(with|to)?|answered|picked\s*up|owner\s*said|decision\s*maker|interested|call\s*back|callback|follow\s*up|send\s*info|confirmed|qualified)\b/i.test(
+      t
+    )
+  ) {
+    return "CONNECTED";
+  }
+  return null;
+}
+
 /** Maps the raw enum stored in audit logs to an outcome. */
 export function outcomeKeyFromEnum(raw: string | null | undefined): CallOutcomeKey | null {
   const v = (raw || "").trim().toUpperCase();
   if ((ALL_OUTCOME_KEYS as string[]).includes(v)) return v as CallOutcomeKey;
-  return outcomeKeyFromLabel(raw);
+  return outcomeKeyFromLabel(raw) || inferOutcomeFromText(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,25 +292,95 @@ export interface ParsedCallLogEntry {
 }
 
 const CALL_LOG_LINE = /^\[([^•\]]+)(?:•\s*([^(]+))?(?:\(([^)]+)\))?\]:\s*(.*)$/;
+const FOLLOW_UP_NOTE_LINE = /^\[Follow-Up Note\s+([^\]]+)\]\s*(.*)$/i;
+
+function isSystemBattlecardOrTagLine(line: string): boolean {
+  if (!line) return true;
+  if (/^\[Next Follow-up Scheduled:\s*[^\]]+\]$/i.test(line)) return true;
+  return (
+    line.startsWith("BATTLECARD:") ||
+    line.startsWith("15-SECOND OPENING SCRIPT:") ||
+    line.startsWith("Focus:") ||
+    line.startsWith("Local Market:") ||
+    line.startsWith("Gatekeeper Strategy:") ||
+    line.startsWith("Reputation:") ||
+    line.startsWith("Authority:") ||
+    line.startsWith("PITCH ANGLE:") ||
+    line.startsWith("Verified Direct") ||
+    line.startsWith("Added directly to Leads CRM")
+  );
+}
 
 /** Returns every logged call in the notes, newest first (new calls are prepended). */
 export function parseCallLog(notes: string | null | undefined): ParsedCallLogEntry[] {
   if (!notes) return [];
+  const cleanedNotes = notes.replace(/\[Next Follow-up Scheduled:\s*[^\]]+\]\s*/gi, "");
   const out: ParsedCallLogEntry[] = [];
-  for (const rawLine of notes.split("\n")) {
+  const freeformLines: string[] = [];
+
+  for (const rawLine of cleanedNotes.split("\n")) {
     const line = rawLine.trim();
-    if (!line.startsWith("[")) continue;
-    const m = line.match(CALL_LOG_LINE);
-    if (!m) continue;
-    const outcome = outcomeKeyFromLabel(m[3]);
-    if (!outcome) continue;
-    out.push({
-      timestampRaw: (m[1] || "").trim(),
-      author: (m[2] || "").trim(),
-      outcome,
-      text: (m[4] || "").trim(),
-    });
+    if (!line || isSystemBattlecardOrTagLine(line)) continue;
+
+    if (line.startsWith("[")) {
+      const m = line.match(CALL_LOG_LINE);
+      if (m) {
+        const outcome =
+          outcomeKeyFromLabel(m[3]) ||
+          inferOutcomeFromText(m[3]) ||
+          inferOutcomeFromText(m[4]);
+        if (outcome) {
+          out.push({
+            timestampRaw: (m[1] || "").trim(),
+            author: (m[2] || "").trim(),
+            outcome,
+            text: (m[4] || "").trim(),
+          });
+          continue;
+        }
+      }
+      const fm = line.match(FOLLOW_UP_NOTE_LINE);
+      if (fm) {
+        const noteText = (fm[2] || "").trim();
+        const outcome = inferOutcomeFromText(noteText) ?? "CONNECTED";
+        out.push({
+          timestampRaw: (fm[1] || "").trim(),
+          author: "",
+          outcome,
+          text: noteText,
+        });
+        continue;
+      }
+    }
+
+    freeformLines.push(line);
   }
+
+  // If the caller typed freeform inline notes directly into the CRM without a [timestamp] header,
+  // treat those human caller notes as a logged call entry so CRM counters and analytics stay in sync.
+  if (out.length === 0 && freeformLines.length > 0) {
+    const combinedFreeform = freeformLines.join(" — ");
+    const inferred = inferOutcomeFromText(combinedFreeform) ?? "CONNECTED";
+    out.push({
+      timestampRaw: "Inline CRM Note",
+      author: "",
+      outcome: inferred,
+      text: combinedFreeform,
+    });
+  } else if (out.length > 0 && freeformLines.length > 0) {
+    for (const fl of freeformLines) {
+      const inferred = inferOutcomeFromText(fl);
+      if (inferred) {
+        out.push({
+          timestampRaw: "Inline CRM Note",
+          author: "",
+          outcome: inferred,
+          text: fl,
+        });
+      }
+    }
+  }
+
   return out;
 }
 
@@ -302,6 +438,89 @@ export interface DerivedCallStatus {
   /** Number of calls logged for this lead. */
   attempts: number;
   lastLog: ParsedCallLogEntry | null;
+  /** Number of qualification / custom CRM fields confirmed by a caller on this lead. */
+  qualifiedFieldsCount: number;
+}
+
+const CALLER_SMART_FIELD_KEYS = new Set([
+  "decision_maker_confirmed",
+  "current_crm",
+  "lead_response_speed",
+  "after_hours_answering",
+  "str_pms_software",
+  "twenty_four_seven_concierge",
+  "dispatch_model",
+  "commercial_mix",
+  "intake_speed",
+  "caller_last_outcome",
+]);
+
+export function inspectCallerSmartFields(
+  facts: Record<string, unknown> | null | undefined
+): {
+  qualifiedFieldsCount: number;
+  inferredOutcome: CallOutcomeKey | null;
+} {
+  if (!facts || typeof facts !== "object") {
+    return { qualifiedFieldsCount: 0, inferredOutcome: null };
+  }
+
+  let qualifiedFieldsCount = 0;
+  let explicitOutcome: CallOutcomeKey | null = null;
+
+  for (const [k, rawVal] of Object.entries(facts)) {
+    const isCustomOrSmartKey =
+      k.startsWith("custom_") || CALLER_SMART_FIELD_KEYS.has(k);
+
+    let strVal = "";
+    let isHumanConfirmed = false;
+
+    if (rawVal && typeof rawVal === "object" && "value" in rawVal) {
+      const vObj = rawVal as {
+        value?: unknown;
+        provenance?: string;
+        sourceType?: string;
+      };
+      strVal = String(vObj.value ?? "").trim();
+      isHumanConfirmed =
+        vObj.provenance === "HUMAN_CONFIRMED" || vObj.sourceType === "manual_entry";
+    } else if (typeof rawVal === "string" || typeof rawVal === "number") {
+      strVal = String(rawVal).trim();
+    }
+
+    if (!strVal) continue;
+    const lower = strVal.toLowerCase();
+    if (
+      lower === "ask on call" ||
+      lower === "verify on call" ||
+      lower === "unknown" ||
+      lower === "n/a" ||
+      lower === "none"
+    ) {
+      continue;
+    }
+
+    // Only count fields that belong to caller qualification columns or were human-confirmed
+    if (!isCustomOrSmartKey && !isHumanConfirmed) continue;
+    if (k === "linkedin" || k === "linkedin_url") continue;
+
+    qualifiedFieldsCount++;
+
+    const out = outcomeKeyFromEnum(strVal) || inferOutcomeFromText(strVal);
+    if (out) {
+      if (
+        !explicitOutcome ||
+        CALL_STATUS_DEFS[out].depth > CALL_STATUS_DEFS[explicitOutcome].depth
+      ) {
+        explicitOutcome = out;
+      }
+    }
+  }
+
+  const inferredOutcome: CallOutcomeKey | null =
+    explicitOutcome ?? (qualifiedFieldsCount > 0 ? "CONNECTED" : null);
+
+  return { qualifiedFieldsCount, inferredOutcome };
 }
 
 /** Minimum depth a lifecycle status implies even when no call log exists (legacy data). */
@@ -318,6 +537,7 @@ export function lifecycleDepthFloor(status: string | null | undefined): FunnelDe
     case "PAIN_FOUND":
       return 3;
     case "CALLING":
+    case "NURTURE":
       return 1;
     default:
       return 0;
@@ -327,25 +547,326 @@ export function lifecycleDepthFloor(status: string | null | undefined): FunnelDe
 export function deriveCallStatus(lead: {
   status?: string | null;
   notes?: string | null;
+  facts?: Record<string, unknown> | null;
+  nextFollowUp?: string | null;
 }): DerivedCallStatus {
   const log = parseCallLog(lead.notes);
   const lastLog = log[0] ?? null;
   const status = lead.status || "";
+  const { qualifiedFieldsCount, inferredOutcome } = inspectCallerSmartFields(lead.facts);
+  const hasFollowUp = Boolean(lead.nextFollowUp || extractFollowUp(lead.notes));
 
   let key: CallStatusKey;
   if (status === "MEETING_BOOKED" || status === "QUALIFIED" || status === "CLOSED") {
     key = "MEETING_BOOKED";
   } else if (lastLog) {
-    key = lastLog.outcome;
+    if (
+      (status === "CONNECTED" || status === "PAIN_FOUND") &&
+      CALL_STATUS_DEFS[lastLog.outcome].depth < 3
+    ) {
+      key = "CONNECTED";
+    } else if (status === "LOST" && lastLog.outcome !== "NOT_INTERESTED") {
+      key = "NOT_INTERESTED";
+    } else {
+      key = lastLog.outcome;
+    }
   } else if (status === "CONNECTED" || status === "PAIN_FOUND") {
     key = "CONNECTED";
   } else if (status === "LOST") {
     key = "NOT_INTERESTED";
+  } else if (inferredOutcome) {
+    key = inferredOutcome;
+  } else if (status === "CALLING" || status === "NURTURE" || hasFollowUp) {
+    key = "NO_ANSWER";
   } else {
     key = "UNTOUCHED";
   }
 
-  return { key, def: CALL_STATUS_DEFS[key], attempts: log.length, lastLog };
+  const attempts = Math.max(log.length, key !== "UNTOUCHED" ? 1 : 0);
+
+  return {
+    key,
+    def: CALL_STATUS_DEFS[key],
+    attempts,
+    lastLog,
+    qualifiedFieldsCount,
+  };
+}
+
+export interface CallerTelemetrySummary {
+  total: number;
+  assigned: number;
+  untouched: number;
+  toCall: number;
+  dialedLeads: number;
+  callsLogged: number;
+  answered: number;
+  connected: number;
+  meetings: number;
+  followUps: number;
+  overdueFollowUps: number;
+  noAnswer: number;
+  gatekeeper: number;
+  voicemail: number;
+  wrongNumber: number;
+  notInterested: number;
+  qualifiedLeads: number;
+}
+
+export interface LiveCrmTelemetry {
+  totalLeads: number;
+  untouchedLeads: number;
+  dialedLeads: number;
+  totalCallsDialed: number;
+  answeredLeads: number;
+  answeredCalls: number;
+  answerRatePct: number;
+  connectedLeads: number;
+  connectRatePct: number;
+  meetingsBooked: number;
+  noAnswerLeads: number;
+  voicemailLeads: number;
+  gatekeeperLeads: number;
+  wrongNumberLeads: number;
+  notInterestedLeads: number;
+  followUpsScheduled: number;
+  followUpsOverdue: number;
+  qualifiedLeadsCount: number;
+  unassignedCount: number;
+  statusCounts: Record<CallStatusKey, number>;
+  callerMap: Record<string, CallerTelemetrySummary>;
+  teamTotals: CallerTelemetrySummary;
+}
+
+export function computeLiveCrmTelemetry(
+  leads: Array<{
+    id?: string;
+    companyId?: string;
+    status?: string | null;
+    notes?: string | null;
+    facts?: Record<string, unknown> | null;
+    nextFollowUp?: string | null;
+    assignedMemberId?: string | null;
+  }>,
+  teamCallers: Array<{ id: string; name: string; email?: string }> = [],
+  nowMs: number = Date.now()
+): LiveCrmTelemetry {
+  const emptyCallerSummary = (): CallerTelemetrySummary => ({
+    total: 0,
+    assigned: 0,
+    untouched: 0,
+    toCall: 0,
+    dialedLeads: 0,
+    callsLogged: 0,
+    answered: 0,
+    connected: 0,
+    meetings: 0,
+    followUps: 0,
+    overdueFollowUps: 0,
+    noAnswer: 0,
+    gatekeeper: 0,
+    voicemail: 0,
+    wrongNumber: 0,
+    notInterested: 0,
+    qualifiedLeads: 0,
+  });
+
+  const callerMap: Record<string, CallerTelemetrySummary> = {};
+  for (const c of teamCallers) {
+    callerMap[c.id] = emptyCallerSummary();
+  }
+  const teamTotals = emptyCallerSummary();
+
+  const statusCounts: Record<CallStatusKey, number> = {
+    UNTOUCHED: 0,
+    NO_ANSWER: 0,
+    CALL_COMPLETED: 0,
+    WRONG_NUMBER: 0,
+    GATEKEEPER_BLOCKED: 0,
+    CONNECTED: 0,
+    NOT_INTERESTED: 0,
+    MEETING_BOOKED: 0,
+  };
+
+  let totalLeads = 0;
+  let untouchedLeads = 0;
+  let dialedLeads = 0;
+  let totalCallsDialed = 0;
+  let answeredLeads = 0;
+  let answeredCalls = 0;
+  let connectedLeads = 0;
+  let meetingsBooked = 0;
+  let noAnswerLeads = 0;
+  let voicemailLeads = 0;
+  let gatekeeperLeads = 0;
+  let wrongNumberLeads = 0;
+  let notInterestedLeads = 0;
+  let followUpsScheduled = 0;
+  let followUpsOverdue = 0;
+  let qualifiedLeadsCount = 0;
+  let unassignedCount = 0;
+
+  for (const lead of leads) {
+    if ( lead.status === "REJECTED") continue;
+    totalLeads++;
+    teamTotals.total++;
+    teamTotals.assigned++;
+
+    if (!lead.assignedMemberId) {
+      unassignedCount++;
+    }
+
+    const assignedSummary = lead.assignedMemberId ? callerMap[lead.assignedMemberId] : undefined;
+    if (assignedSummary) {
+      assignedSummary.total++;
+      assignedSummary.assigned++;
+    }
+
+    const derived = deriveCallStatus(lead);
+    const logs = parseCallLog(lead.notes);
+    statusCounts[derived.key]++;
+
+    const fu = lead.nextFollowUp || extractFollowUp(lead.notes);
+    const isOverdue = fu ? isFollowUpOverdue(fu, nowMs) : false;
+
+    if (fu && derived.key !== "NOT_INTERESTED") {
+      followUpsScheduled++;
+      teamTotals.followUps++;
+      if (assignedSummary) assignedSummary.followUps++;
+      if (isOverdue) {
+        followUpsOverdue++;
+        teamTotals.overdueFollowUps++;
+        if (assignedSummary) assignedSummary.overdueFollowUps++;
+      }
+    }
+
+    const isQualified =
+      derived.qualifiedFieldsCount > 0 || lead.status === "QUALIFIED";
+
+    if (isQualified) {
+      qualifiedLeadsCount++;
+      teamTotals.qualifiedLeads++;
+      if (assignedSummary) assignedSummary.qualifiedLeads++;
+    }
+
+    if (derived.key === "UNTOUCHED") {
+      untouchedLeads++;
+      teamTotals.untouched++;
+      teamTotals.toCall++;
+      if (assignedSummary) {
+        assignedSummary.untouched++;
+        assignedSummary.toCall++;
+      }
+      continue;
+    }
+
+    // Lead has been dialed / touched at least once
+    dialedLeads++;
+    teamTotals.dialedLeads++;
+    if (assignedSummary) assignedSummary.dialedLeads++;
+
+    const leadAttempts = Math.max(1, derived.attempts);
+    totalCallsDialed += leadAttempts;
+
+    // Lead-level outcome classification
+    const depth = derived.def.depth;
+    const everHumanInLogs = logs.some((l) => CALL_STATUS_DEFS[l.outcome].depth >= 2);
+    const everOwnerInLogs = logs.some((l) => CALL_STATUS_DEFS[l.outcome].depth >= 3);
+
+    if (depth >= 2 || everHumanInLogs) {
+      answeredLeads++;
+      teamTotals.answered++;
+      if (assignedSummary) assignedSummary.answered++;
+    }
+    if (depth >= 3 || everOwnerInLogs) {
+      connectedLeads++;
+      teamTotals.connected++;
+      if (assignedSummary) assignedSummary.connected++;
+    }
+
+    if (derived.key === "MEETING_BOOKED") {
+      meetingsBooked++;
+      teamTotals.meetings++;
+      if (assignedSummary) assignedSummary.meetings++;
+    } else if (derived.key === "GATEKEEPER_BLOCKED") {
+      gatekeeperLeads++;
+      teamTotals.gatekeeper++;
+      if (assignedSummary) assignedSummary.gatekeeper++;
+    } else if (derived.key === "NO_ANSWER") {
+      noAnswerLeads++;
+      teamTotals.noAnswer++;
+      if (assignedSummary) assignedSummary.noAnswer++;
+    } else if (derived.key === "CALL_COMPLETED") {
+      voicemailLeads++;
+      teamTotals.voicemail++;
+      if (assignedSummary) assignedSummary.voicemail++;
+    } else if (derived.key === "WRONG_NUMBER") {
+      wrongNumberLeads++;
+      teamTotals.wrongNumber++;
+      if (assignedSummary) assignedSummary.wrongNumber++;
+    } else if (derived.key === "NOT_INTERESTED") {
+      notInterestedLeads++;
+      teamTotals.notInterested++;
+      if (assignedSummary) assignedSummary.notInterested++;
+    }
+
+    // Attribute individual call attempts to the caller who logged them (or assigned caller)
+    if (logs.length > 0) {
+      for (const entry of logs) {
+        const authorLower = (entry.author || "").trim().toLowerCase();
+        const matchedCaller = authorLower
+          ? teamCallers.find(
+              (c) =>
+                c.name.toLowerCase() === authorLower ||
+                (c.email && c.email.toLowerCase() === authorLower)
+            )
+          : undefined;
+        const targetCallerSummary = matchedCaller
+          ? callerMap[matchedCaller.id]
+          : assignedSummary;
+
+        teamTotals.callsLogged++;
+        if (targetCallerSummary) targetCallerSummary.callsLogged++;
+
+        if (CALL_STATUS_DEFS[entry.outcome].depth >= 2) {
+          answeredCalls++;
+        }
+      }
+    } else {
+      // Synthesized call from status or smart field update
+      teamTotals.callsLogged += leadAttempts;
+      if (assignedSummary) assignedSummary.callsLogged += leadAttempts;
+      if (depth >= 2) answeredCalls++;
+    }
+  }
+
+  const answerRatePct = dialedLeads > 0 ? Math.round((answeredLeads / dialedLeads) * 100) : 0;
+  const connectRatePct = dialedLeads > 0 ? Math.round((connectedLeads / dialedLeads) * 100) : 0;
+
+  return {
+    totalLeads,
+    untouchedLeads,
+    dialedLeads,
+    totalCallsDialed,
+    answeredLeads,
+    answeredCalls: Math.max(answeredCalls, answeredLeads),
+    answerRatePct,
+    connectedLeads,
+    connectRatePct,
+    meetingsBooked,
+    noAnswerLeads,
+    voicemailLeads,
+    gatekeeperLeads,
+    wrongNumberLeads,
+    notInterestedLeads,
+    followUpsScheduled,
+    followUpsOverdue,
+    qualifiedLeadsCount,
+    unassignedCount,
+    statusCounts,
+    callerMap,
+    teamTotals,
+  };
 }
 
 export function isFollowUpOverdue(iso: string | null | undefined, nowMs: number): boolean {

@@ -39,6 +39,7 @@ import {
   CALL_STATUS_DEFS,
   CRM_FILTER_CHIPS,
   STATUS_FILTER_TO_KEY,
+  computeLiveCrmTelemetry,
   deriveCallStatus,
   type CallOutcomeKey,
   type CallStatusKey,
@@ -278,6 +279,20 @@ export function CallerClient({
       value: nextValue,
     });
     if (res.ok) {
+      if (res.nextStatus || res.updatedNotes !== undefined) {
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.companyId === lead.companyId
+              ? {
+                  ...item,
+                  facts: { ...(item.facts || {}), [field.key]: nextValue },
+                  ...(res.nextStatus ? { status: res.nextStatus } : {}),
+                  ...(res.updatedNotes !== undefined ? { notes: res.updatedNotes } : {}),
+                }
+              : item
+          )
+        );
+      }
       showToast(`Updated ${field.shortLabel} for ${lead.name} to "${nextValue}".`);
     }
   };
@@ -465,6 +480,19 @@ export function CallerClient({
       status: nextStatus,
     });
     if (res.ok) {
+      if (res.updatedNotes !== undefined || res.nextStatus !== undefined) {
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.companyId === lead.companyId
+              ? {
+                  ...item,
+                  status: res.nextStatus ?? nextStatus,
+                  ...(res.updatedNotes !== undefined ? { notes: res.updatedNotes } : {}),
+                }
+              : item
+          )
+        );
+      }
       const stageLabel =
         CRM_STAGE_OPTIONS.find((s) => s.value === nextStatus)?.label || nextStatus;
       showToast(`Moved ${lead.name} to "${stageLabel}".`);
@@ -605,6 +633,19 @@ export function CallerClient({
       });
 
       if (res.ok) {
+        if (res.updatedNotes !== undefined || res.nextStatus !== undefined) {
+          setQueue((prev) =>
+            prev.map((item) =>
+              item.companyId === targetId
+                ? {
+                    ...item,
+                    status: (res.nextStatus as LifecycleStatus) || item.status,
+                    notes: res.updatedNotes !== undefined ? res.updatedNotes : item.notes,
+                  }
+                : item
+            )
+          );
+        }
         showToast(`Updated CRM record for ${editName.trim()}.`);
       } else {
         showToast(res.error || "Failed to update lead");
@@ -885,10 +926,11 @@ export function CallerClient({
         map.set(info.groupKey, batch);
       }
       batch.leads.push(lead);
-      if (["APPROVED", "SYNCED", "CALLING"].includes(lead.status)) {
+      const derived = deriveCallStatus(lead);
+      if (derived.key === "UNTOUCHED") {
         batch.toCallCount++;
       }
-      if (["CONNECTED", "PAIN_FOUND", "MEETING_BOOKED"].includes(lead.status)) {
+      if (derived.def.depth >= 3) {
         batch.connectedCount++;
       }
     }
@@ -902,43 +944,34 @@ export function CallerClient({
     });
   }, [filteredQueue]);
 
-  // Counters (scoped by active caller filter so Owner can inspect any caller's exact metrics)
-  // Every lead has exactly ONE derived call status, so these always add up to the total.
-  const totalCount = callerScopedQueue.length;
-  const derivedCounts = callerScopedQueue.reduce(
-    (acc, l) => {
-      acc[deriveCallStatus(l).key]++;
-      return acc;
-    },
-    {
-      UNTOUCHED: 0,
-      NO_ANSWER: 0,
-      CALL_COMPLETED: 0,
-      WRONG_NUMBER: 0,
-      GATEKEEPER_BLOCKED: 0,
-      CONNECTED: 0,
-      NOT_INTERESTED: 0,
-      MEETING_BOOKED: 0,
-    } as Record<CallStatusKey, number>
+  const teamCallers = React.useMemo(
+    () => allMembers.filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER"),
+    [allMembers]
   );
-  const toCallCount = derivedCounts.UNTOUCHED;
-  const connectedCount = derivedCounts.CONNECTED;
-  const meetingsCount = derivedCounts.MEETING_BOOKED;
-  const followUpCount = callerScopedQueue.filter(
-    (l) => l.nextFollowUp || (l.notes && l.notes.includes("Follow-up Scheduled"))
-  ).length;
-  const overdueCount = callerScopedQueue.filter(
-    (l) => l.nextFollowUp && new Date(l.nextFollowUp).getTime() < Date.now()
-  ).length;
-  const noAnswerCount = derivedCounts.NO_ANSWER;
-  const gatekeeperCount = derivedCounts.GATEKEEPER_BLOCKED;
+
+  // Live CRM Telemetry (scoped by active caller filter so Owner or Caller sees exact live numbers)
+  const scopedTelemetry = React.useMemo(
+    () => computeLiveCrmTelemetry(callerScopedQueue, teamCallers),
+    [callerScopedQueue, teamCallers]
+  );
+  const fullQueueTelemetry = React.useMemo(
+    () => computeLiveCrmTelemetry(activeQueue, teamCallers),
+    [activeQueue, teamCallers]
+  );
+
+  const totalCount = scopedTelemetry.totalLeads;
+  const derivedCounts = scopedTelemetry.statusCounts;
+  const toCallCount = scopedTelemetry.untouchedLeads;
+  const connectedCount = scopedTelemetry.connectedLeads;
+  const meetingsCount = scopedTelemetry.meetingsBooked;
+  const followUpCount = scopedTelemetry.followUpsScheduled;
+  const overdueCount = scopedTelemetry.followUpsOverdue;
+  const noAnswerCount = scopedTelemetry.noAnswerLeads;
+  const gatekeeperCount = scopedTelemetry.gatekeeperLeads;
   const myLeadsCount = activeQueue.filter(
     (l) => activeMember && l.assignedMemberId === activeMember.id
   ).length;
-  const unassignedCount = activeQueue.filter((l) => !l.assignedMemberId).length;
-  const teamCallers = allMembers.filter(
-    (m) => m.status === "ACTIVE" && m.role !== "VIEWER"
-  );
+  const unassignedCount = fullQueueTelemetry.unassignedCount;
 
   return (
     <div className="space-y-5">
@@ -1172,10 +1205,12 @@ export function CallerClient({
                   {activeQueue.length}
                 </span>
               </div>
-              <div className="mt-1.5 flex items-center gap-2 text-[10px] text-zinc-400">
-                <span>Unassigned: {unassignedCount}</span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-zinc-400">
+                <span>Dials: <strong className="text-sky-300">{fullQueueTelemetry.totalCallsDialed}</strong></span>
                 <span>&bull;</span>
-                <span>Assigned: {activeQueue.length - unassignedCount}</span>
+                <span>Ans: <strong className="text-cyan-300">{fullQueueTelemetry.answeredLeads}</strong></span>
+                <span>&bull;</span>
+                <span>Spoke: <strong className="text-indigo-300">{fullQueueTelemetry.connectedLeads}</strong></span>
               </div>
             </button>
 
@@ -1202,12 +1237,13 @@ export function CallerClient({
 
             {/* Individual Caller Cards */}
             {teamCallers.map((caller) => {
-              const cLeads = activeQueue.filter((l) => l.assignedMemberId === caller.id);
-              const cConnected = cLeads.filter((l) =>
-                ["CONNECTED", "PAIN_FOUND"].includes(l.status)
-              ).length;
-              const cFollowUps = cLeads.filter((l) => Boolean(l.nextFollowUp)).length;
-              const cMeetings = cLeads.filter((l) => l.status === "MEETING_BOOKED").length;
+              const cStats = fullQueueTelemetry.callerMap[caller.id];
+              const cAssigned = cStats?.assigned ?? 0;
+              const cDialed = cStats?.callsLogged ?? 0;
+              const cAnswered = cStats?.answered ?? 0;
+              const cConnected = cStats?.connected ?? 0;
+              const cFollowUps = cStats?.followUps ?? 0;
+              const cMeetings = cStats?.meetings ?? 0;
               const isSelected = callerFilter === caller.id;
 
               return (
@@ -1227,15 +1263,23 @@ export function CallerClient({
                       <span className="truncate">{caller.name}</span>
                     </span>
                     <span className="rounded-full bg-zinc-900 border border-zinc-700 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
-                      {cLeads.length} leads
+                      {cAssigned} leads
                     </span>
                   </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-zinc-400">
-                    <span>Connected: <strong className="text-zinc-200">{cConnected}</strong></span>
+                    <span>Dials: <strong className="text-sky-300">{cDialed}</strong></span>
                     <span>&bull;</span>
-                    <span>Follow-Ups: <strong className="text-amber-300">{cFollowUps}</strong></span>
+                    <span>Ans: <strong className="text-cyan-300">{cAnswered}</strong></span>
                     <span>&bull;</span>
-                    <span>Meetings: <strong className="text-emerald-400">{cMeetings}</strong></span>
+                    <span>Spoke: <strong className="text-indigo-300">{cConnected}</strong></span>
+                    <span>&bull;</span>
+                    <span>Booked: <strong className="text-emerald-400">{cMeetings}</strong></span>
+                    {cFollowUps > 0 && (
+                      <>
+                        <span>&bull;</span>
+                        <span>Follow-Up: <strong className="text-amber-300">{cFollowUps}</strong></span>
+                      </>
+                    )}
                   </div>
                 </button>
               );
@@ -1258,21 +1302,30 @@ export function CallerClient({
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2.5 text-xs">
             <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
               Ready to Call: <strong className="text-white">{toCallCount}</strong>
+            </span>
+            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+              Calls Dialed: <strong className="text-sky-300">{scopedTelemetry.totalCallsDialed}</strong>{" "}
+              <span className="text-[10px] text-zinc-500">({scopedTelemetry.dialedLeads} leads)</span>
+            </span>
+            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+              Answered: <strong className="text-cyan-300">{scopedTelemetry.answeredLeads}</strong>{" "}
+              <span className="text-[10px] text-zinc-500">({scopedTelemetry.answerRatePct}%)</span>
+            </span>
+            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+              Connected: <strong className="text-indigo-300">{connectedCount}</strong>{" "}
+              <span className="text-[10px] text-zinc-500">({scopedTelemetry.connectRatePct}%)</span>
             </span>
             <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
               Follow-Ups: <strong className="text-amber-300">{followUpCount}</strong>
             </span>
             <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
-              Connected: <strong className="text-indigo-300">{connectedCount}</strong>
-            </span>
-            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
               Meetings Booked: <strong className="text-emerald-400">{meetingsCount}</strong>
             </span>
             <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
-              No Answer: <strong className="text-amber-400/90">{noAnswerCount}</strong>
+              No Answer / VM: <strong className="text-amber-400/90">{noAnswerCount + scopedTelemetry.voicemailLeads}</strong>
             </span>
             <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
               Gatekeeper: <strong className="text-orange-400">{gatekeeperCount}</strong>
@@ -1349,6 +1402,180 @@ export function CallerClient({
         />
       ) : (
         <div className="space-y-4">
+          {/* Live Calling & CRM Telemetry Bar for Cards View */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2.5">
+            <button
+              type="button"
+              onClick={() => setStatusFilter("TO_CALL")}
+              className={`rounded-xl border p-3 text-left transition ${
+                statusFilter === "TO_CALL"
+                  ? "border-white bg-zinc-800/90 shadow-sm"
+                  : "border-zinc-800/80 bg-[#121215] hover:border-zinc-700"
+              }`}
+            >
+              <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                Ready to Call
+              </div>
+              <div className="mt-1 flex items-baseline justify-between gap-1">
+                <span className="text-xl font-bold text-white tabular-nums">
+                  {toCallCount}
+                </span>
+                <span className="text-[10px] text-zinc-500">
+                  of {totalCount} leads
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter("ALL")}
+              className="rounded-xl border border-zinc-800/80 bg-[#121215] hover:border-zinc-700 p-3 text-left transition"
+            >
+              <div className="text-[10px] font-bold uppercase tracking-wider text-sky-400">
+                Calls Dialed
+              </div>
+              <div className="mt-1 flex items-baseline justify-between gap-1">
+                <span className="text-xl font-bold text-sky-300 tabular-nums">
+                  {scopedTelemetry.totalCallsDialed}
+                </span>
+                <span className="text-[10px] text-zinc-400">
+                  {scopedTelemetry.dialedLeads} leads dialed
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter("CONNECTED")}
+              className="rounded-xl border border-zinc-800/80 bg-[#121215] hover:border-zinc-700 p-3 text-left transition"
+            >
+              <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">
+                Answered (Human)
+              </div>
+              <div className="mt-1 flex items-baseline justify-between gap-1">
+                <span className="text-xl font-bold text-cyan-300 tabular-nums">
+                  {scopedTelemetry.answeredLeads}
+                </span>
+                <span className="text-[10px] font-semibold text-cyan-400/90">
+                  {scopedTelemetry.answerRatePct}% pickup
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter("CONNECTED")}
+              className={`rounded-xl border p-3 text-left transition ${
+                statusFilter === "CONNECTED"
+                  ? "border-indigo-400 bg-indigo-500/15 shadow-sm"
+                  : "border-zinc-800/80 bg-[#121215] hover:border-zinc-700"
+              }`}
+            >
+              <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">
+                Connected (DM)
+              </div>
+              <div className="mt-1 flex items-baseline justify-between gap-1">
+                <span className="text-xl font-bold text-indigo-300 tabular-nums">
+                  {connectedCount}
+                </span>
+                <span className="text-[10px] font-semibold text-indigo-300/90">
+                  {scopedTelemetry.connectRatePct}% spoke
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter("NO_ANSWER")}
+              className={`rounded-xl border p-3 text-left transition ${
+                statusFilter === "NO_ANSWER"
+                  ? "border-amber-400 bg-amber-500/15 shadow-sm"
+                  : "border-zinc-800/80 bg-[#121215] hover:border-zinc-700"
+              }`}
+            >
+              <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                No Answer / VM
+              </div>
+              <div className="mt-1 flex items-baseline justify-between gap-1">
+                <span className="text-xl font-bold text-amber-300 tabular-nums">
+                  {noAnswerCount + scopedTelemetry.voicemailLeads}
+                </span>
+                <span className="text-[10px] text-zinc-400">
+                  {noAnswerCount} NA &bull; {scopedTelemetry.voicemailLeads} VM
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter("GATEKEEPER")}
+              className={`rounded-xl border p-3 text-left transition ${
+                statusFilter === "GATEKEEPER"
+                  ? "border-orange-400 bg-orange-500/15 shadow-sm"
+                  : "border-zinc-800/80 bg-[#121215] hover:border-zinc-700"
+              }`}
+            >
+              <div className="text-[10px] font-bold uppercase tracking-wider text-orange-400">
+                Gatekeeper
+              </div>
+              <div className="mt-1 flex items-baseline justify-between gap-1">
+                <span className="text-xl font-bold text-orange-300 tabular-nums">
+                  {gatekeeperCount}
+                </span>
+                <span className="text-[10px] text-zinc-400">
+                  {scopedTelemetry.notInterestedLeads} Not Int.
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter("FOLLOW_UP")}
+              className={`rounded-xl border p-3 text-left transition ${
+                statusFilter === "FOLLOW_UP"
+                  ? "border-amber-400 bg-amber-500/15 shadow-sm"
+                  : "border-zinc-800/80 bg-[#121215] hover:border-zinc-700"
+              }`}
+            >
+              <div className="text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                Follow-Ups
+              </div>
+              <div className="mt-1 flex items-baseline justify-between gap-1">
+                <span className="text-xl font-bold text-amber-300 tabular-nums">
+                  {followUpCount}
+                </span>
+                <span
+                  className={`text-[10px] font-semibold ${
+                    overdueCount > 0 ? "text-rose-400" : "text-zinc-500"
+                  }`}
+                >
+                  {overdueCount} overdue
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter("MEETINGS")}
+              className={`rounded-xl border p-3 text-left transition ${
+                statusFilter === "MEETINGS"
+                  ? "border-emerald-400 bg-emerald-500/15 shadow-sm"
+                  : "border-emerald-500/30 bg-emerald-950/15 hover:border-emerald-500/50"
+              }`}
+            >
+              <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                Meetings Booked
+              </div>
+              <div className="mt-1 flex items-baseline justify-between gap-1">
+                <span className="text-xl font-bold text-emerald-400 tabular-nums">
+                  {meetingsCount}
+                </span>
+                <span className="text-[10px] text-emerald-300/80">
+                  {scopedTelemetry.qualifiedLeadsCount} qualified
+                </span>
+              </div>
+            </button>
+          </div>
 
           {/* Date Intake Batch Tabs (Breaks today's vs yesterday's vs older leads) */}
           <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-xl bg-[#121215] border border-zinc-800 text-xs font-semibold">

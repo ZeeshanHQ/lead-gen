@@ -34,6 +34,7 @@ import {
   CALL_STATUS_DEFS,
   CRM_FILTER_CHIPS,
   STATUS_FILTER_TO_KEY,
+  computeLiveCrmTelemetry,
   deriveCallStatus,
   extractFollowUp,
   type CallOutcomeKey,
@@ -349,6 +350,12 @@ export function CrmLeadSheet({
     const res = await updateLeadCrmDetailsAction(serverPayload);
     setSavingCellKey(null);
     if (res.ok) {
+      if (res.updatedNotes !== undefined || res.nextStatus !== undefined) {
+        applyLeadPatch(lead.id, {
+          ...(res.updatedNotes !== undefined ? { notes: res.updatedNotes } : {}),
+          ...(res.nextStatus !== undefined ? { status: res.nextStatus } : {}),
+        });
+      }
       setSyncFeedback(`Updated ${field} for ${lead.name}.`);
       setTimeout(() => setSyncFeedback(null), 2000);
     } else {
@@ -440,6 +447,13 @@ export function CrmLeadSheet({
       value: nextValue,
     });
     if (res.ok) {
+      if (res.nextStatus || res.updatedNotes !== undefined) {
+        applyLeadPatch(lead.id, {
+          facts: nextFacts,
+          ...(res.nextStatus ? { status: res.nextStatus } : {}),
+          ...(res.updatedNotes !== undefined ? { notes: res.updatedNotes } : {}),
+        });
+      }
       setSyncFeedback(`Updated ${field.shortLabel} for ${lead.name} to "${nextValue}".`);
       setTimeout(() => setSyncFeedback(null), 2500);
     }
@@ -581,6 +595,12 @@ export function CrmLeadSheet({
       });
 
       if (res.ok) {
+        if (res.updatedNotes !== undefined || res.nextStatus !== undefined) {
+          applyLeadPatch(targetId, {
+            ...(res.updatedNotes !== undefined ? { notes: res.updatedNotes } : {}),
+            ...(res.nextStatus !== undefined ? { status: res.nextStatus } : {}),
+          });
+        }
         setSyncFeedback(`Saved changes for ${editName.trim()}.`);
         setTimeout(() => setSyncFeedback(null), 2500);
       } else {
@@ -688,92 +708,11 @@ export function CrmLeadSheet({
     );
   }, [allMembers]);
 
-  const callerStats = React.useMemo(() => {
-    const map: Record<
-      string,
-      {
-        total: number;
-        callsLogged: number;
-        connected: number;
-        meetings: number;
-        followUps: number;
-        noAnswer: number;
-        gatekeeper: number;
-        voicemail: number;
-      }
-    > = {};
-    for (const c of teamCallers) {
-      map[c.id] = {
-        total: 0,
-        callsLogged: 0,
-        connected: 0,
-        meetings: 0,
-        followUps: 0,
-        noAnswer: 0,
-        gatekeeper: 0,
-        voicemail: 0,
-      };
-    }
-    let unassigned = 0;
-    const teamTotals = {
-      callsLogged: 0,
-      connected: 0,
-      meetings: 0,
-      followUps: 0,
-      noAnswer: 0,
-      gatekeeper: 0,
-      voicemail: 0,
-    };
-
-    for (const lead of leads) {
-      if (lead.status === "REJECTED") continue;
-      if (!lead.assignedMemberId) {
-        unassigned++;
-      }
-      const assignedEntry = lead.assignedMemberId ? map[lead.assignedMemberId] : null;
-      if (assignedEntry) {
-        assignedEntry.total++;
-        if (lead.nextFollowUp) assignedEntry.followUps++;
-      }
-
-      // Parse individual call log lines from lead.notes
-      if (lead.notes) {
-        const lines = lead.notes.split("\n");
-        for (const line of lines) {
-          const match = line.match(/^\[([^•\]]+)(?:•\s*([^(]+))?(?:\(([^)]+)\))?\]:/);
-          if (match) {
-            const author = (match[2] || "").trim().toLowerCase();
-            const outcome = (match[3] || "").trim().toLowerCase();
-
-            const targetCaller = teamCallers.find(
-              (c) =>
-                c.name.toLowerCase() === author ||
-                c.email.toLowerCase() === author ||
-                (lead.assignedMemberId === c.id && !author)
-            );
-            const entry = targetCaller ? map[targetCaller.id] : assignedEntry;
-
-            if (entry) {
-              entry.callsLogged++;
-              if (outcome.includes("connected") || outcome.includes("spoke")) entry.connected++;
-              else if (outcome.includes("meeting")) entry.meetings++;
-              else if (outcome.includes("no answer")) entry.noAnswer++;
-              else if (outcome.includes("gatekeeper")) entry.gatekeeper++;
-              else if (outcome.includes("voicemail")) entry.voicemail++;
-            }
-
-            teamTotals.callsLogged++;
-            if (outcome.includes("connected") || outcome.includes("spoke")) teamTotals.connected++;
-            else if (outcome.includes("meeting")) teamTotals.meetings++;
-            else if (outcome.includes("no answer")) teamTotals.noAnswer++;
-            else if (outcome.includes("gatekeeper")) teamTotals.gatekeeper++;
-            else if (outcome.includes("voicemail")) teamTotals.voicemail++;
-          }
-        }
-      }
-    }
-    return { callerMap: map, unassignedCount: unassigned, teamTotals };
+  const liveTelemetry = React.useMemo(() => {
+    return computeLiveCrmTelemetry(leads, teamCallers);
   }, [leads, teamCallers]);
+
+  const callerStats = liveTelemetry;
 
   const openCallModal = (lead: CrmLeadItem) => {
     setSelectedLead(lead);
@@ -968,33 +907,224 @@ export function CrmLeadSheet({
         </div>
       )}
 
+      {/* Real-Time Calling & CRM Telemetry Bar (Visible to Both Callers & Owners) */}
+      <div className="border-b border-zinc-800/80 bg-[#0b0b0f] p-3 text-xs space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="font-bold text-white text-xs">
+              Live Calling &amp; CRM Telemetry
+            </span>
+            <span className="text-[10px] text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
+              Updates instantaneously on every call, note &amp; field update
+            </span>
+          </div>
+          {isOwner && (
+            <Link
+              href="/analytics"
+              className="text-[11px] text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 transition"
+            >
+              <TrendingUp className="w-3 h-3" />
+              <span>Open Real-Time Funnel Analytics &rarr;</span>
+            </Link>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+          <button
+            type="button"
+            onClick={() => setStatusFilter("UNTOUCHED")}
+            className={`p-2.5 rounded-lg border text-left transition ${
+              statusFilter === "UNTOUCHED"
+                ? "border-zinc-400 bg-zinc-800 text-white"
+                : "border-zinc-800/90 bg-[#121215] hover:border-zinc-700"
+            }`}
+          >
+            <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-400">
+              Ready to Call
+            </div>
+            <div className="text-base font-extrabold text-white mt-0.5 font-mono">
+              {liveTelemetry.untouchedLeads}
+            </div>
+            <div className="text-[10px] text-zinc-500 mt-0.5">
+              of {liveTelemetry.totalLeads} total leads
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter("ALL")}
+            className="p-2.5 rounded-lg border border-sky-500/25 bg-sky-500/5 hover:bg-sky-500/10 text-left transition"
+          >
+            <div className="text-[10px] uppercase tracking-wider font-bold text-sky-300">
+              Calls Dialed
+            </div>
+            <div className="text-base font-extrabold text-white mt-0.5 font-mono">
+              {liveTelemetry.totalCallsDialed}
+            </div>
+            <div className="text-[10px] text-sky-300/80 mt-0.5">
+              {liveTelemetry.dialedLeads} unique leads dialed
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter("CONNECTED")}
+            className="p-2.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/15 text-left transition"
+          >
+            <div className="text-[10px] uppercase tracking-wider font-bold text-indigo-300">
+              Answered (Pickup)
+            </div>
+            <div className="flex items-baseline gap-1.5 mt-0.5">
+              <span className="text-base font-extrabold text-indigo-200 font-mono">
+                {liveTelemetry.answeredLeads}
+              </span>
+              <span className="text-[10px] font-bold text-indigo-300 font-mono">
+                ({liveTelemetry.answerRatePct}%)
+              </span>
+            </div>
+            <div className="text-[10px] text-indigo-300/80 mt-0.5">
+              Human picked up phone
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter("CONNECTED")}
+            className={`p-2.5 rounded-lg border text-left transition ${
+              statusFilter === "CONNECTED"
+                ? "border-sky-400 bg-sky-500/20 text-white"
+                : "border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/15"
+            }`}
+          >
+            <div className="text-[10px] uppercase tracking-wider font-bold text-sky-300">
+              Connected (Spoke)
+            </div>
+            <div className="flex items-baseline gap-1.5 mt-0.5">
+              <span className="text-base font-extrabold text-sky-200 font-mono">
+                {liveTelemetry.connectedLeads}
+              </span>
+              <span className="text-[10px] font-bold text-sky-300 font-mono">
+                ({liveTelemetry.connectRatePct}%)
+              </span>
+            </div>
+            <div className="text-[10px] text-sky-300/80 mt-0.5">
+              Spoke w/ Decision Maker
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter("NO_ANSWER")}
+            className={`p-2.5 rounded-lg border text-left transition ${
+              statusFilter === "NO_ANSWER"
+                ? "border-amber-400 bg-amber-500/20 text-white"
+                : "border-zinc-800/90 bg-[#121215] hover:border-zinc-700"
+            }`}
+          >
+            <div className="text-[10px] uppercase tracking-wider font-bold text-amber-300">
+              No Answer / VM
+            </div>
+            <div className="text-base font-extrabold text-amber-200 mt-0.5 font-mono">
+              {liveTelemetry.noAnswerLeads + liveTelemetry.voicemailLeads}
+            </div>
+            <div className="text-[10px] text-zinc-400 mt-0.5">
+              {liveTelemetry.noAnswerLeads} No Ans &bull; {liveTelemetry.voicemailLeads} VM
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter("GATEKEEPER")}
+            className={`p-2.5 rounded-lg border text-left transition ${
+              statusFilter === "GATEKEEPER"
+                ? "border-orange-400 bg-orange-500/20 text-white"
+                : "border-zinc-800/90 bg-[#121215] hover:border-zinc-700"
+            }`}
+          >
+            <div className="text-[10px] uppercase tracking-wider font-bold text-orange-300">
+              Gatekeeper
+            </div>
+            <div className="text-base font-extrabold text-orange-200 mt-0.5 font-mono">
+              {liveTelemetry.gatekeeperLeads}
+            </div>
+            <div className="text-[10px] text-zinc-400 mt-0.5">
+              Stopped at front desk
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter("FOLLOW_UP")}
+            className={`p-2.5 rounded-lg border text-left transition ${
+              statusFilter === "FOLLOW_UP"
+                ? "border-indigo-400 bg-indigo-500/20 text-white"
+                : liveTelemetry.followUpsOverdue > 0
+                ? "border-rose-500/40 bg-rose-500/10"
+                : "border-zinc-800/90 bg-[#121215] hover:border-zinc-700"
+            }`}
+          >
+            <div className="text-[10px] uppercase tracking-wider font-bold text-indigo-300">
+              Follow-Ups
+            </div>
+            <div className="text-base font-extrabold text-white mt-0.5 font-mono">
+              {liveTelemetry.followUpsScheduled}
+            </div>
+            <div className="text-[10px] mt-0.5">
+              {liveTelemetry.followUpsOverdue > 0 ? (
+                <span className="text-rose-300 font-bold">
+                  {liveTelemetry.followUpsOverdue} Overdue
+                </span>
+              ) : (
+                <span className="text-zinc-400">Callbacks scheduled</span>
+              )}
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter("MEETINGS")}
+            className={`p-2.5 rounded-lg border text-left transition ${
+              statusFilter === "MEETINGS"
+                ? "border-emerald-400 bg-emerald-500/25 text-white"
+                : "border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/15"
+            }`}
+          >
+            <div className="text-[10px] uppercase tracking-wider font-bold text-emerald-300">
+              Meetings Booked
+            </div>
+            <div className="text-base font-extrabold text-emerald-300 mt-0.5 font-mono">
+              {liveTelemetry.meetingsBooked}
+            </div>
+            <div className="text-[10px] text-emerald-200/80 mt-0.5">
+              {liveTelemetry.qualifiedLeadsCount} leads qualified
+            </div>
+          </button>
+        </div>
+      </div>
+
       {/* Owner Caller Activity & Live Performance Tracker */}
       {isOwner && teamCallers.length > 0 && (
         <div className="border-b border-zinc-800/80 bg-[#0a0a0d] p-3 text-xs">
           <div className="flex items-center justify-between mb-2">
             <div className="flex flex-wrap items-center gap-2">
               <Users className="w-4 h-4 text-indigo-400" />
-              <span className="font-bold text-white text-xs">Caller Activity &amp; Live Tracking</span>
-              <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 bg-zinc-900/80 px-2 py-0.5 rounded border border-zinc-800">
-                <span className="text-zinc-200 font-semibold">{callerStats.teamTotals.callsLogged} Calls Logged</span>
+              <span className="font-bold text-white text-xs">Per-Caller Live Queue &amp; Activity Filter</span>
+              <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-400 bg-zinc-900/80 px-2 py-0.5 rounded border border-zinc-800">
+                <span className="text-zinc-200 font-semibold">{callerStats.teamTotals.callsLogged} Calls</span>
                 <span>&bull;</span>
-                <span className="text-emerald-400 font-semibold">{callerStats.teamTotals.meetings} Booked</span>
+                <span className="text-indigo-300 font-semibold">{callerStats.teamTotals.answered} Answered</span>
                 <span>&bull;</span>
                 <span className="text-sky-300 font-semibold">{callerStats.teamTotals.connected} Spoke</span>
                 <span>&bull;</span>
-                <span className="text-amber-300 font-medium">{callerStats.teamTotals.noAnswer} No Answer</span>
+                <span className="text-emerald-400 font-semibold">{callerStats.teamTotals.meetings} Booked</span>
                 <span>&bull;</span>
-                <span className="text-orange-300 font-medium">{callerStats.teamTotals.gatekeeper} Gatekeeper</span>
+                <span className="text-amber-300 font-medium">{callerStats.teamTotals.noAnswer} No Ans</span>
+                <span>&bull;</span>
+                <span className="text-orange-300 font-medium">{callerStats.teamTotals.gatekeeper} GK</span>
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Link
-                href="/analytics"
-                className="text-[11px] text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 transition"
-              >
-                <TrendingUp className="w-3 h-3" />
-                <span>Deep Funnel Analytics &rarr;</span>
-              </Link>
               <button
                 type="button"
                 onClick={() => setIsPermissionsModalOpen(true)}
@@ -1017,7 +1147,9 @@ export function CrmLeadSheet({
             >
               <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-400">All Queue</div>
               <div className="text-base font-extrabold text-white mt-0.5">{totalCount} leads</div>
-              <div className="text-[10px] text-emerald-400 mt-0.5">{statusCounts.MEETING_BOOKED} booked</div>
+              <div className="text-[10px] text-emerald-400 mt-0.5">
+                {liveTelemetry.dialedLeads} dialed &bull; {statusCounts.MEETING_BOOKED} booked
+              </div>
             </button>
 
             <button
@@ -1037,13 +1169,20 @@ export function CrmLeadSheet({
             {teamCallers.map((caller) => {
               const stats = callerStats.callerMap[caller.id] || {
                 total: 0,
+                untouched: 0,
+                dialedLeads: 0,
                 callsLogged: 0,
+                answered: 0,
                 connected: 0,
                 meetings: 0,
                 followUps: 0,
+                overdueFollowUps: 0,
                 noAnswer: 0,
                 gatekeeper: 0,
                 voicemail: 0,
+                wrongNumber: 0,
+                notInterested: 0,
+                qualifiedLeads: 0,
               };
               const isSelected = callerFilter === caller.id;
               return (
@@ -1068,24 +1207,27 @@ export function CrmLeadSheet({
                     <span className="text-[10px] text-zinc-300 font-semibold">{stats.callsLogged} calls</span>
                   </div>
                   <div className="flex flex-wrap items-center gap-1 text-[9px] mt-1.5 font-semibold">
-                    <span className="px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                      {stats.meetings} Booked
+                    <span className="px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      {stats.answered} Answered
                     </span>
                     <span className="px-1 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
                       {stats.connected} Spoke
                     </span>
+                    <span className="px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      {stats.meetings} Booked
+                    </span>
                     {stats.noAnswer > 0 && (
                       <span className="px-1 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                        {stats.noAnswer} No Answer
+                        {stats.noAnswer} No Ans
                       </span>
                     )}
                     {stats.gatekeeper > 0 && (
                       <span className="px-1 py-0.5 rounded bg-orange-500/15 text-orange-300 border border-orange-500/30">
-                        {stats.gatekeeper} Gatekeeper
+                        {stats.gatekeeper} GK
                       </span>
                     )}
                     {stats.followUps > 0 && (
-                      <span className="px-1 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                      <span className="px-1 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">
                         {stats.followUps} Follow-ups
                       </span>
                     )}
@@ -1647,7 +1789,7 @@ export function CrmLeadSheet({
                         </td>
                       )}
 
-                      {/* Call Status: derived automatically from Log Call (no manual pipeline stage) */}
+                      {/* Call Status: derived automatically from Log Call, Notes & Qualification */}
                       <td className="px-3 py-3.5 whitespace-nowrap min-w-[175px]">
                         {(() => {
                           const derived = derivedById.get(lead.id) ?? deriveCallStatus(lead);
@@ -1661,6 +1803,10 @@ export function CrmLeadSheet({
                               <span className="text-[10px] text-zinc-500">
                                 {derived.lastLog
                                   ? `Last call: ${derived.lastLog.timestampRaw}`
+                                  : derived.qualifiedFieldsCount > 0
+                                  ? `${derived.qualifiedFieldsCount} field${derived.qualifiedFieldsCount === 1 ? "" : "s"} qualified`
+                                  : derived.key !== "UNTOUCHED"
+                                  ? `Updated: ${derived.def.label}`
                                   : "No calls logged yet"}
                               </span>
                             </div>

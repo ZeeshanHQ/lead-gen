@@ -16,6 +16,7 @@ import { getDb } from "@/server/db/client";
 import { sources, researchRuns, companies, auditLogs, markets } from "@/server/db/schema";
 import { getActiveTeamMember } from "@/server/repo/team";
 import { getDefaultRouteForMember, ROLE_PRESETS } from "@/server/domain/team";
+import { deriveCallStatus, parseCallLog } from "@/server/domain/call-outcomes";
 import { ensureDefaultSources } from "@/server/providers/registry";
 import { getTavilyApiKey } from "@/server/providers/tavily_adapter";
 import { formatDateTime } from "@/lib/utils";
@@ -111,14 +112,29 @@ export default async function UsagePage() {
     }, 0);
 
     // CRM leads currently assigned to this member
-    const assignedCompanies = companyRows.filter((c) => c.assignedMemberId === member.id);
+    const assignedCompanies = companyRows.filter(
+      (c) => c.assignedMemberId === member.id && c.status !== "REJECTED"
+    );
     const assignedCount = assignedCompanies.length;
-    const meetingsBookedCount = assignedCompanies.filter(
-      (c) => c.status === "MEETING_BOOKED"
-    ).length;
-    const connectedCount = assignedCompanies.filter((c) =>
-      ["CONNECTED", "PAIN_FOUND", "MEETING_BOOKED"].includes(c.status)
-    ).length;
+    let meetingsBookedCount = 0;
+    let connectedCount = 0;
+    let assignedCallLogsCount = 0;
+
+    for (const c of assignedCompanies) {
+      const derived = deriveCallStatus(c);
+      if (derived.key === "MEETING_BOOKED") {
+        meetingsBookedCount++;
+      }
+      if (derived.def.depth >= 3) {
+        connectedCount++;
+      }
+      const logs = parseCallLog(c.notes);
+      if (logs.length > 0) {
+        assignedCallLogsCount += logs.length;
+      } else if (derived.key !== "UNTOUCHED") {
+        assignedCallLogsCount += 1;
+      }
+    }
 
     // Audit events by this member
     const memberAudits = auditRows.filter((a) => {
@@ -127,12 +143,18 @@ export default async function UsagePage() {
       return (a.actor || "").toLowerCase().includes(memberNameLower);
     });
 
-    const callsLoggedCount = memberAudits.filter(
+    const auditCallsCount = memberAudits.filter(
       (a) =>
+        a.action === "caller.call_logged" ||
         a.action === "caller.feedback_recorded" ||
+        a.action === "crm.status_changed" ||
+        a.action === "crm.smart_field_updated" ||
+        a.action === "crm.lead_updated" ||
         a.action.includes("call") ||
         a.action === "company.status_updated"
     ).length;
+
+    const callsLoggedCount = Math.max(auditCallsCount, assignedCallLogsCount);
 
     const latestRun = memberRuns[0];
     const latestAudit = memberAudits[0];

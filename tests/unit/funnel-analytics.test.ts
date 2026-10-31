@@ -4,6 +4,8 @@ import {
   parseCallLog,
   parseNoteTimestamp,
   outcomeKeyFromLabel,
+  inferOutcomeFromText,
+  computeLiveCrmTelemetry,
 } from "@/server/domain/call-outcomes";
 import { zoneForState, convertHourBetweenZones, wallClock } from "@/server/domain/call-time";
 import {
@@ -157,5 +159,126 @@ describe("timing", () => {
     expect(res.timing.prospectHours[10]!.dials).toBe(1);
     expect(res.timing.callerHours[19]!.dials).toBe(1); // 14:00 UTC = 7 PM PKT
     expect(res.timing.confidence).toBe("LOW");
+  });
+});
+
+describe("live CRM inline notes, smart fields, and telemetry sync", () => {
+  it("infers outcomes from freeform inline caller notes and follow-up notes", () => {
+    expect(inferOutcomeFromText("Spoke with owner, uses ServiceTitan")).toBe("CONNECTED");
+    expect(inferOutcomeFromText("No answer, rang 5 times")).toBe("NO_ANSWER");
+    expect(inferOutcomeFromText("Left voicemail on cell")).toBe("CALL_COMPLETED");
+    expect(inferOutcomeFromText("Receptionist took a message")).toBe("GATEKEEPER_BLOCKED");
+    expect(inferOutcomeFromText("Owner said not interested right now")).toBe("NOT_INTERESTED");
+    expect(inferOutcomeFromText("Demo booked for Thursday at 2pm")).toBe("MEETING_BOOKED");
+
+    const parsed = parseCallLog(
+      "[Follow-Up Note 2026-10-29] Call back tomorrow afternoon\nNo answer on main office line"
+    );
+    expect(parsed.length).toBeGreaterThanOrEqual(2);
+    expect(parsed[0]!.outcome).toBe("CONNECTED");
+    expect(parsed[1]!.outcome).toBe("NO_ANSWER");
+  });
+
+  it("derives call status from smart qualification fields and custom columns when notes are empty", () => {
+    const d1 = deriveCallStatus({
+      status: "APPROVED",
+      notes: null,
+      facts: {
+        current_crm: { value: "Guesty", provenance: "HUMAN_CONFIRMED" },
+        twenty_four_seven_concierge: { value: "Missed Late-Night Calls (High Pain)", provenance: "HUMAN_CONFIRMED" },
+      },
+    });
+    expect(d1.key).toBe("CONNECTED");
+    expect(d1.attempts).toBeGreaterThanOrEqual(1);
+    expect(d1.qualifiedFieldsCount).toBe(2);
+
+    const d2 = deriveCallStatus({
+      status: "APPROVED",
+      notes: null,
+      facts: {
+        custom_call_result: { value: "No Answer", provenance: "HUMAN_CONFIRMED" },
+      },
+    });
+    expect(d2.key).toBe("NO_ANSWER");
+  });
+
+  it("computes live CRM telemetry accurately across pool and callers", () => {
+    const pool = [
+      {
+        id: "l1",
+        status: "APPROVED",
+        notes: null,
+        facts: {},
+        assignedMemberId: "m1",
+      },
+      {
+        id: "l2",
+        status: "CALLING",
+        notes: "[Oct 28, 3:05 PM • Hamda (No Answer)]: rang out",
+        facts: {},
+        assignedMemberId: "m1",
+      },
+      {
+        id: "l3",
+        status: "CONNECTED",
+        notes: "[Oct 28, 4:10 PM • Hamda (Connected / Spoke)]: spoke with owner",
+        facts: {
+          str_pms_software: { value: "Hostaway", provenance: "HUMAN_CONFIRMED" },
+        },
+        nextFollowUp: "2026-10-30",
+        assignedMemberId: "m1",
+      },
+      {
+        id: "l4",
+        status: "MEETING_BOOKED",
+        notes: "[Oct 28, 5:00 PM • Hamda (Meeting Booked)]: booked demo",
+        facts: {},
+        assignedMemberId: "m1",
+      },
+    ];
+
+    const telemetry = computeLiveCrmTelemetry(pool, members, NOW);
+    expect(telemetry.totalLeads).toBe(4);
+    expect(telemetry.untouchedLeads).toBe(1);
+    expect(telemetry.dialedLeads).toBe(3);
+    expect(telemetry.totalCallsDialed).toBe(3);
+    expect(telemetry.noAnswerLeads).toBe(1);
+    expect(telemetry.answeredLeads).toBe(2); // l3 (CONNECTED) + l4 (MEETING_BOOKED)
+    expect(telemetry.connectedLeads).toBe(2);
+    expect(telemetry.meetingsBooked).toBe(1);
+    expect(telemetry.followUpsScheduled).toBe(1);
+    expect(telemetry.qualifiedLeadsCount).toBe(1);
+    expect(telemetry.callerMap["m1"]?.assigned).toBe(4);
+    expect(telemetry.callerMap["m1"]?.callsLogged).toBe(3);
+    expect(telemetry.callerMap["m1"]?.answered).toBe(2);
+    expect(telemetry.callerMap["m1"]?.connected).toBe(2);
+    expect(telemetry.callerMap["m1"]?.meetings).toBe(1);
+  });
+
+  it("synthesizes funnel call events for CRM-updated leads so /analytics matches /caller", () => {
+    const crmLeads: FunnelLead[] = [
+      lead("c1", {
+        status: "APPROVED",
+        assignedMemberId: "m1",
+        facts: {
+          decision_maker_confirmed: { value: "Spoke to Owner", provenance: "HUMAN_CONFIRMED" },
+        },
+      }),
+      lead("c2", {
+        status: "CALLING",
+        assignedMemberId: "m1",
+        notes: "No answer on cell",
+      }),
+    ];
+    const events = buildCallEvents(crmLeads, [], members, NOW);
+    expect(events).toHaveLength(2);
+    const funnel = computeFunnel(crmLeads, events, members, {
+      scope: "ALL",
+      timeframe: "ALL",
+      nowMs: NOW,
+    });
+    expect(funnel.dial.total).toBe(2);
+    expect(funnel.dial.human).toBe(1);
+    expect(funnel.dial.owner).toBe(1);
   });
 });

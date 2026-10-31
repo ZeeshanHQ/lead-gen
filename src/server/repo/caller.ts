@@ -12,7 +12,13 @@ import { type CustomCrmColumn } from "../domain/niche-fields";
 import { setFact } from "./facts";
 import { audit } from "./audit";
 import { createNotification } from "./notifications";
-import { parseCallLog } from "../domain/call-outcomes";
+import {
+  CALL_STATUS_DEFS,
+  inferOutcomeFromText,
+  outcomeKeyFromEnum,
+  parseCallLog,
+  type CallOutcomeKey,
+} from "../domain/call-outcomes";
 import { CALLER_TIMEZONE } from "../domain/call-time";
 
 export function extractLatestFollowUp(notes: string | null | undefined): string | null {
@@ -409,11 +415,55 @@ export interface UpdateLeadCrmInput {
   assignedMemberName?: string | null;
 }
 
+function formatCallerTimeStr(): string {
+  return new Date().toLocaleString("en-US", {
+    timeZone: CALLER_TIMEZONE,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function outcomeToLifecycleStatus(outcome: CallOutcomeKey): LifecycleStatus {
+  switch (outcome) {
+    case "MEETING_BOOKED":
+      return "MEETING_BOOKED";
+    case "NOT_INTERESTED":
+      return "LOST";
+    case "CONNECTED":
+      return "CONNECTED";
+    case "WRONG_NUMBER":
+      return "NURTURE";
+    default:
+      return "CALLING";
+  }
+}
+
+function lifecycleStatusToOutcome(status: LifecycleStatus): CallOutcomeKey | null {
+  switch (status) {
+    case "MEETING_BOOKED":
+    case "QUALIFIED":
+    case "CLOSED":
+      return "MEETING_BOOKED";
+    case "CONNECTED":
+    case "PAIN_FOUND":
+      return "CONNECTED";
+    case "LOST":
+      return "NOT_INTERESTED";
+    case "CALLING":
+    case "NURTURE":
+      return "NO_ANSWER";
+    default:
+      return null;
+  }
+}
+
 export async function updateLeadCrmDetails(
   db: Db,
   input: UpdateLeadCrmInput,
   actor: string
-): Promise<void> {
+): Promise<{ updatedNotes: string | null; nextStatus: LifecycleStatus }> {
   const [company] = await db
     .select()
     .from(companies)
@@ -475,10 +525,48 @@ export async function updateLeadCrmDetails(
     companyUpdates.assignedMemberName = input.assignedMemberName || null;
   }
 
-  // Handle notes + nextFollowUp cleanly
+  let autoLoggedOutcome: CallOutcomeKey | null = null;
+  let autoLoggedNoteText = "";
+
+  // Handle notes + nextFollowUp cleanly, and auto-structure freeform caller notes
   if (input.notes !== undefined || input.nextFollowUp !== undefined) {
     const rawNotes = input.notes !== undefined ? (input.notes || "") : (company.notes || "");
-    const cleanedNotes = stripFollowUpTags(rawNotes);
+    let cleanedNotes = stripFollowUpTags(rawNotes);
+    const existingClean = stripFollowUpTags(company.notes);
+
+    // If the caller added or edited a freeform inline note without a [timestamp • actor (outcome)] tag,
+    // automatically structure the new note line so call logs, top KPI counters, and analytics stay in sync.
+    if (input.notes !== undefined && cleanedNotes && cleanedNotes !== existingClean) {
+      const lines = cleanedNotes.split("\n");
+      const timeStr = formatCallerTimeStr();
+      const formattedLines = lines.map((rawLine) => {
+        const l = rawLine.trim();
+        if (!l) return "";
+        if (
+          l.startsWith("[") ||
+          l.startsWith("BATTLECARD:") ||
+          l.startsWith("15-SECOND OPENING SCRIPT:") ||
+          l.startsWith("Focus:") ||
+          l.startsWith("Local Market:") ||
+          l.startsWith("Gatekeeper Strategy:") ||
+          l.startsWith("Reputation:") ||
+          l.startsWith("Authority:") ||
+          l.startsWith("PITCH ANGLE:")
+        ) {
+          return l;
+        }
+        const inferred =
+          inferOutcomeFromText(l) ??
+          (input.status ? lifecycleStatusToOutcome(input.status) : null) ??
+          "CONNECTED";
+        const label = CALL_STATUS_DEFS[inferred].noteLabel || "Connected / Spoke";
+        autoLoggedOutcome = inferred;
+        autoLoggedNoteText = l;
+        return `[${timeStr} • ${actor || "Caller"} (${label})]: ${l}`;
+      });
+      cleanedNotes = formattedLines.filter(Boolean).join("\n");
+    }
+
     const desiredFollowUp =
       input.nextFollowUp !== undefined
         ? input.nextFollowUp?.trim() || null
@@ -491,10 +579,37 @@ export async function updateLeadCrmDetails(
       : cleanedNotes || null;
   }
 
+  // If caller wrote a call note while status was still APPROVED/SYNCED, auto-advance lifecycle status
+  if (
+    autoLoggedOutcome &&
+    input.status === undefined &&
+    (company.status === "APPROVED" || company.status === "SYNCED")
+  ) {
+    companyUpdates.status = outcomeToLifecycleStatus(autoLoggedOutcome);
+  }
+
   await db
     .update(companies)
     .set(companyUpdates)
     .where(eq(companies.id, input.companyId));
+
+  if (autoLoggedOutcome) {
+    await audit(db, {
+      actor,
+      action: "caller.call_logged",
+      entityType: "company",
+      entityId: input.companyId,
+      companyId: input.companyId,
+      details: {
+        callOutcome: autoLoggedOutcome,
+        nextStatus: companyUpdates.status || company.status,
+        previousStatus: company.status,
+        attemptNumber: parseCallLog(companyUpdates.notes || company.notes).length,
+        notes: autoLoggedNoteText,
+        source: "inline_crm_note",
+      },
+    });
+  }
 
   // Update or create primary contact if contact fields were provided
   if (
@@ -577,6 +692,12 @@ export async function updateLeadCrmDetails(
       updatedFields: Object.keys(companyUpdates),
     },
   });
+
+  return {
+    updatedNotes:
+      companyUpdates.notes !== undefined ? companyUpdates.notes : company.notes,
+    nextStatus: (companyUpdates.status ?? company.status) as LifecycleStatus,
+  };
 }
 
 export async function updateLeadStatusQuick(
@@ -584,11 +705,33 @@ export async function updateLeadStatusQuick(
   companyId: string,
   status: LifecycleStatus,
   actor: string
-): Promise<void> {
+): Promise<{ updatedNotes: string | null; nextStatus: LifecycleStatus }> {
+  const [company] = await db
+    .select()
+    .from(companies)
+    .where(eq(companies.id, companyId))
+    .limit(1);
+
+  const mappedOutcome = lifecycleStatusToOutcome(status);
+  let nextNotes = company?.notes ?? null;
+  const existingLogs = parseCallLog(nextNotes);
+
+  if (mappedOutcome && (!existingLogs[0] || existingLogs[0].outcome !== mappedOutcome)) {
+    const timeStr = formatCallerTimeStr();
+    const label = CALL_STATUS_DEFS[mappedOutcome].noteLabel || status;
+    const noteBody = getDefaultCallNote(mappedOutcome);
+    const newEntry = `[${timeStr} • ${actor || "Caller"} (${label})]: ${noteBody}`;
+    const followUp = extractLatestFollowUp(nextNotes);
+    const baseClean = extractCallerNotes(stripFollowUpTags(nextNotes));
+    const combined = baseClean ? `${newEntry}\n${baseClean}` : newEntry;
+    nextNotes = followUp ? `[Next Follow-up Scheduled: ${followUp}]\n${combined}` : combined;
+  }
+
   await db
     .update(companies)
     .set({
       status,
+      ...(nextNotes !== (company?.notes ?? null) ? { notes: nextNotes } : {}),
       updatedAt: new Date(),
     })
     .where(eq(companies.id, companyId));
@@ -601,6 +744,26 @@ export async function updateLeadStatusQuick(
     companyId,
     details: { status },
   });
+
+  if (mappedOutcome) {
+    await audit(db, {
+      actor,
+      action: "caller.call_logged",
+      entityType: "company",
+      entityId: companyId,
+      companyId,
+      details: {
+        callOutcome: mappedOutcome,
+        nextStatus: status,
+        previousStatus: company?.status,
+        attemptNumber: existingLogs.length + 1,
+        notes: getDefaultCallNote(mappedOutcome),
+        source: "status_quick_change",
+      },
+    });
+  }
+
+  return { updatedNotes: nextNotes, nextStatus: status };
 }
 
 export async function updateLeadFollowUp(
@@ -984,31 +1147,70 @@ export async function updateLeadSmartField(
   fieldKey: string,
   value: string,
   actor: string
-): Promise<void> {
+): Promise<{ nextStatus: LifecycleStatus; updatedNotes: string | null }> {
   const [company] = await db
-    .select({ facts: companies.facts })
+    .select()
     .from(companies)
     .where(eq(companies.id, companyId))
     .limit(1);
 
   if (!company) throw new Error("Lead not found");
 
+  const trimmedVal = value.trim();
   const currentFacts = ((company.facts as Record<string, any>) || {});
   const updatedFacts = {
     ...currentFacts,
     [fieldKey]: {
-      value: value.trim(),
+      value: trimmedVal,
       confidence: 1.0,
       provenance: "HUMAN_CONFIRMED",
       sourceType: "manual_entry",
+      updatedBy: actor,
       updatedAt: new Date().toISOString(),
     },
   };
+
+  const lowerVal = trimmedVal.toLowerCase();
+  const isDefaultPlaceholder =
+    !trimmedVal ||
+    lowerVal === "ask on call" ||
+    lowerVal === "verify on call" ||
+    lowerVal === "unknown";
+
+  const inferredOutcome = !isDefaultPlaceholder
+    ? outcomeKeyFromEnum(trimmedVal) || inferOutcomeFromText(trimmedVal) || "CONNECTED"
+    : null;
+
+  let nextStatus = company.status as LifecycleStatus;
+  let nextNotes = company.notes;
+  const existingLogs = parseCallLog(company.notes);
+
+  if (inferredOutcome) {
+    if (company.status === "APPROVED" || company.status === "SYNCED") {
+      nextStatus = outcomeToLifecycleStatus(inferredOutcome);
+    }
+    if (existingLogs.length === 0) {
+      const timeStr = formatCallerTimeStr();
+      const label = CALL_STATUS_DEFS[inferredOutcome].noteLabel || "Connected / Spoke";
+      const prettyField = fieldKey
+        .replace(/^custom_/, "")
+        .replace(/_[a-z0-9]{4}$/, "")
+        .replace(/_/g, " ");
+      const noteBody = `Confirmed ${prettyField}: ${trimmedVal}`;
+      const newEntry = `[${timeStr} • ${actor || "Caller"} (${label})]: ${noteBody}`;
+      const followUp = extractLatestFollowUp(company.notes);
+      const baseClean = extractCallerNotes(stripFollowUpTags(company.notes));
+      const combined = baseClean ? `${newEntry}\n${baseClean}` : newEntry;
+      nextNotes = followUp ? `[Next Follow-up Scheduled: ${followUp}]\n${combined}` : combined;
+    }
+  }
 
   await db
     .update(companies)
     .set({
       facts: updatedFacts as any,
+      status: nextStatus,
+      notes: nextNotes,
       updatedAt: new Date(),
     })
     .where(eq(companies.id, companyId));
@@ -1019,8 +1221,28 @@ export async function updateLeadSmartField(
     entityType: "company",
     entityId: companyId,
     companyId,
-    details: { fieldKey, value: value.trim() },
+    details: { fieldKey, value: trimmedVal, nextStatus },
   });
+
+  if (inferredOutcome && existingLogs.length === 0) {
+    await audit(db, {
+      actor,
+      action: "caller.call_logged",
+      entityType: "company",
+      entityId: companyId,
+      companyId,
+      details: {
+        callOutcome: inferredOutcome,
+        nextStatus,
+        previousStatus: company.status,
+        attemptNumber: 1,
+        notes: `Confirmed ${fieldKey}: ${trimmedVal}`,
+        source: "smart_field_qualification",
+      },
+    });
+  }
+
+  return { nextStatus, updatedNotes: nextNotes };
 }
 
 export async function getCustomCrmColumns(

@@ -1,23 +1,55 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getDb } from "@/server/db/client";
+import { getDb, type Db } from "@/server/db/client";
 import { recordCallFeedback, type CallFeedbackInput } from "@/server/repo/caller";
 import { getSetting, setSetting, getActor } from "@/server/repo/settings";
+import { getActiveTeamMember } from "@/server/repo/team";
 import { DEFAULT_DIALER_CONFIG, type DialerConfig } from "@/server/domain/dialer";
 import { audit } from "@/server/repo/audit";
+
+async function resolveCallerActor(db: Db, explicitActor?: string | null): Promise<string> {
+  const trimmed = (explicitActor || "").trim();
+  const isGeneric =
+    !trimmed ||
+    trimmed === "Caller Workspace" ||
+    trimmed === "Workspace Operator" ||
+    trimmed === "Sales Caller";
+  try {
+    const { activeMember } = await getActiveTeamMember(db);
+    if (isGeneric && activeMember?.name) {
+      return activeMember.name;
+    }
+    return trimmed || activeMember?.name || (await getActor(db));
+  } catch {
+    return trimmed || (await getActor(db));
+  }
+}
+
+function revalidateCrmAndAnalytics(companyId?: string) {
+  revalidatePath("/caller");
+  revalidatePath("/leads");
+  revalidatePath("/analytics");
+  revalidatePath("/usage");
+  revalidatePath("/approved");
+  revalidatePath("/review");
+  revalidatePath("/sheets");
+  revalidatePath("/");
+  if (companyId) {
+    revalidatePath(`/company/${companyId}`);
+  }
+}
 
 export async function logCallFeedbackAction(input: CallFeedbackInput) {
   try {
     const db = await getDb();
-    const result = await recordCallFeedback(db, input);
+    const actor = await resolveCallerActor(db, input.actor);
+    const result = await recordCallFeedback(db, {
+      ...input,
+      actor,
+    });
 
-    revalidatePath("/caller");
-    revalidatePath("/approved");
-    revalidatePath("/review");
-    revalidatePath("/sheets");
-    revalidatePath("/");
-    revalidatePath(`/company/${input.companyId}`);
+    revalidateCrmAndAnalytics(input.companyId);
 
     return {
       success: true,
@@ -172,12 +204,10 @@ export async function assignLeadAction(input: {
 }) {
   try {
     const db = await getDb();
-    const actor = await getActor(db);
+    const actor = await resolveCallerActor(db);
     const { assignLeadToMember } = await import("@/server/repo/caller");
     await assignLeadToMember(db, input.companyId, input.memberId, input.memberName, actor);
-    revalidatePath("/caller");
-    revalidatePath("/leads");
-    revalidatePath("/");
+    revalidateCrmAndAnalytics(input.companyId);
     return { ok: true };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to assign lead" };
@@ -187,7 +217,7 @@ export async function assignLeadAction(input: {
 export async function autoDistributeLeadsAction(input: { marketId: string }) {
   try {
     const db = await getDb();
-    const actor = await getActor(db);
+    const actor = await resolveCallerActor(db);
     const { listTeamMembers } = await import("@/server/repo/team");
     const { autoDistributeLeads } = await import("@/server/repo/caller");
     const allMembers = await listTeamMembers(db);
@@ -203,9 +233,7 @@ export async function autoDistributeLeadsAction(input: { marketId: string }) {
     }
 
     const res = await autoDistributeLeads(db, input.marketId, activeMembers, actor);
-    revalidatePath("/caller");
-    revalidatePath("/leads");
-    revalidatePath("/");
+    revalidateCrmAndAnalytics();
     return { ok: true, distributedCount: res.distributedCount, membersCount: activeMembers.length };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to distribute leads" };
@@ -217,14 +245,11 @@ export async function updateLeadCrmDetailsAction(
 ) {
   try {
     const db = await getDb();
-    const actor = await getActor(db);
+    const actor = await resolveCallerActor(db);
     const { updateLeadCrmDetails } = await import("@/server/repo/caller");
-    await updateLeadCrmDetails(db, input, actor);
-    revalidatePath("/caller");
-    revalidatePath("/leads");
-    revalidatePath(`/company/${input.companyId}`);
-    revalidatePath("/");
-    return { ok: true };
+    const res = await updateLeadCrmDetails(db, input, actor);
+    revalidateCrmAndAnalytics(input.companyId);
+    return { ok: true, updatedNotes: res.updatedNotes, nextStatus: res.nextStatus };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to update lead details" };
   }
@@ -236,14 +261,11 @@ export async function updateLeadStatusQuickAction(input: {
 }) {
   try {
     const db = await getDb();
-    const actor = await getActor(db);
+    const actor = await resolveCallerActor(db);
     const { updateLeadStatusQuick } = await import("@/server/repo/caller");
-    await updateLeadStatusQuick(db, input.companyId, input.status, actor);
-    revalidatePath("/caller");
-    revalidatePath("/leads");
-    revalidatePath(`/company/${input.companyId}`);
-    revalidatePath("/");
-    return { ok: true };
+    const res = await updateLeadStatusQuick(db, input.companyId, input.status, actor);
+    revalidateCrmAndAnalytics(input.companyId);
+    return { ok: true, updatedNotes: res.updatedNotes, nextStatus: res.nextStatus };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to update status" };
   }
@@ -256,7 +278,7 @@ export async function updateLeadFollowUpAction(input: {
 }) {
   try {
     const db = await getDb();
-    const actor = await getActor(db);
+    const actor = await resolveCallerActor(db);
     const { updateLeadFollowUp } = await import("@/server/repo/caller");
     const res = await updateLeadFollowUp(
       db,
@@ -265,10 +287,7 @@ export async function updateLeadFollowUpAction(input: {
       input.note,
       actor
     );
-    revalidatePath("/caller");
-    revalidatePath("/leads");
-    revalidatePath(`/company/${input.companyId}`);
-    revalidatePath("/");
+    revalidateCrmAndAnalytics(input.companyId);
     return { ok: true, updatedNotes: res.updatedNotes, nextFollowUp: res.nextFollowUp };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to update follow-up" };
@@ -280,12 +299,10 @@ export async function createManualCrmLeadAction(
 ) {
   try {
     const db = await getDb();
-    const actor = await getActor(db);
+    const actor = await resolveCallerActor(db);
     const { createManualCrmLead } = await import("@/server/repo/caller");
     const lead = await createManualCrmLead(db, input, actor);
-    revalidatePath("/caller");
-    revalidatePath("/leads");
-    revalidatePath("/");
+    revalidateCrmAndAnalytics(lead.companyId);
     return { ok: true, lead };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to create lead" };
@@ -295,7 +312,6 @@ export async function createManualCrmLeadAction(
 export async function deleteCrmLeadAction(input: { companyId: string }) {
   try {
     const db = await getDb();
-    const { getActiveTeamMember } = await import("@/server/repo/team");
     const { activeMember } = await getActiveTeamMember(db);
     const isOwnerOrManager =
       activeMember.role === "OWNER" || Boolean(activeMember.permissions?.manageTeamAndSettings);
@@ -305,9 +321,7 @@ export async function deleteCrmLeadAction(input: { companyId: string }) {
     const actor = activeMember.name || (await getActor(db));
     const { deleteCrmLead } = await import("@/server/repo/caller");
     await deleteCrmLead(db, input.companyId, actor);
-    revalidatePath("/caller");
-    revalidatePath("/leads");
-    revalidatePath("/");
+    revalidateCrmAndAnalytics(input.companyId);
     return { ok: true };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to remove lead" };
@@ -321,12 +335,17 @@ export async function updateLeadSmartFieldAction(input: {
 }) {
   try {
     const db = await getDb();
-    const actor = await getActor(db);
+    const actor = await resolveCallerActor(db);
     const { updateLeadSmartField } = await import("@/server/repo/caller");
-    await updateLeadSmartField(db, input.companyId, input.fieldKey, input.value, actor);
-    revalidatePath("/caller");
-    revalidatePath(`/company/${input.companyId}`);
-    return { ok: true };
+    const res = await updateLeadSmartField(
+      db,
+      input.companyId,
+      input.fieldKey,
+      input.value,
+      actor
+    );
+    revalidateCrmAndAnalytics(input.companyId);
+    return { ok: true, nextStatus: res.nextStatus, updatedNotes: res.updatedNotes };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to update field" };
   }
