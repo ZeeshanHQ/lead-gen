@@ -137,6 +137,11 @@ async function applyContact(db: Db, companyId: string, f: ContactFinding, actor:
     if (!match.phoneDisplay && phone) {
       patch.phoneDisplay = phoneDisplay;
       patch.phoneE164 = phone.e164;
+      patch.phoneType = /cell|mobile|personal|whatsapp/i.test(f.evidenceText || "")
+        ? "PROFESSIONAL_MOBILE"
+        : match.name
+        ? "PUBLISHED_DIRECT"
+        : "UNKNOWN";
       notes.push(`phone ${phoneDisplay}`);
     }
     if (!match.title && f.title) {
@@ -197,7 +202,13 @@ async function applyContact(db: Db, companyId: string, f: ContactFinding, actor:
         emailType: classifyEmail(email, company.domain),
         phoneE164: phone?.e164 ?? null,
         phoneDisplay,
-        phoneType: "UNKNOWN",
+        phoneType: phoneDisplay
+          ? /cell|mobile|personal|whatsapp/i.test(f.evidenceText || "")
+            ? "PROFESSIONAL_MOBILE"
+            : name
+            ? "PUBLISHED_DIRECT"
+            : "UNKNOWN"
+          : "UNKNOWN",
         verified: f.verified,
         confidence: f.confidence,
         provenance: "PUBLICLY_VERIFIED",

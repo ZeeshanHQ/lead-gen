@@ -150,6 +150,9 @@ export const ruleConfigSchema = z.object({
   gate: gateSchema.default(() => defaultGate()),
   discovery: z.object({
     keywords: z.array(z.string()),
+    negativeKeywords: z.array(z.string()).optional(),
+    subNiche: z.string().optional(),
+    strictNicheMatch: z.boolean().optional(),
     serviceIntents: z.array(z.string()),
     limits: z.object({
       maxCandidates: int.positive(),
@@ -357,37 +360,70 @@ export function evaluateRule(company: EvalCompany, rule: RuleConfig): RuleEvalua
   if (yes(f, "one_person_operation")) {
     checks.push({ id: "one_person", label: "Not a one-person operation", status: "FAIL", detail: "Appears to be a one-person / handyman-type operation", required: true });
   }
-
-  // --- Business type (informational preference so multi-niche leads are never falsely failed)
-  if (rule.businessType === "residential") {
-    checks.push(triCheck("business_type", "Residential", false, f, "residential", "Residential service evidenced"));
-  } else if (rule.businessType === "commercial") {
-    checks.push(triCheck("business_type", "Commercial", false, f, "commercial", "Commercial service evidenced"));
+  if (yes(f, "off_niche_vendor")) {
+    checks.push({
+      id: "off_niche_vendor",
+      label: "Direct niche operator (not B2B vendor/agency)",
+      status: "FAIL",
+      detail: "Website is a web design, digital marketing, SEO, or software vendor rather than a target prospect",
+      required: true,
+    });
+  }
+  if (no(f, "niche_verified")) {
+    checks.push({
+      id: "niche_verified",
+      label: "Matches target ICP niche",
+      status: "FAIL",
+      detail: "Website content does not match the active niche / ICP keywords",
+      required: true,
+    });
+  }
+  if (yes(f, "casual_host_only")) {
+    checks.push({
+      id: "casual_host_only",
+      label: "Professional multi-property operator",
+      status: "FAIL",
+      detail: "Appears to be a casual 1-room / temporary host rather than a property management operator",
+      required: true,
+    });
+  }
+  if (no(f, "hvac") && (rule.services.requiredAnyOf.length > 0 || rule.discovery.keywords.some((k) => /hvac|air conditioning|heating/i.test(k)))) {
+    checks.push({ id: "hvac", label: "HVAC services", status: "FAIL", detail: "HVAC services: NO", required: true });
   }
 
-  // --- Service signals (informational preference)
+  // --- Business type (strictly enforced when set to residential or commercial)
+  if (rule.businessType === "residential") {
+    checks.push(triCheck("business_type", "Residential", true, f, "residential", "Residential service evidenced"));
+  } else if (rule.businessType === "commercial") {
+    checks.push(triCheck("business_type", "Commercial", true, f, "commercial", "Commercial service evidenced"));
+  }
+
+  // --- Service signals
   if (rule.services.requiredAnyOf.length > 0) {
     const keys = rule.services.requiredAnyOf as FactKey[];
     const label = `Service: ${keys.map((k) => FACT_LABELS[k]).join(" or ")}`;
     const hit = keys.find((k) => yes(f, k));
+    const allNo = keys.every((k) => no(f, k));
     if (hit) {
-      checks.push({ id: "services", label, status: "PASS", detail: `${FACT_LABELS[hit]}: YES`, required: false });
+      checks.push({ id: "services", label, status: "PASS", detail: `${FACT_LABELS[hit]}: YES`, required: true });
+    } else if (allNo) {
+      checks.push({ id: "services", label, status: "FAIL", detail: "None of the required services offered", required: true });
     } else {
-      checks.push({ id: "services", label, status: "UNKNOWN", detail: "Verified via niche discovery", required: false });
+      checks.push({ id: "services", label, status: "UNKNOWN", detail: "Required service not yet verified", required: true });
     }
   }
 
-  // --- Geography (state/city used for discovery & scoring, never hard-disqualifies nearby metro suburbs)
+  // --- Geography
   const g = rule.geography;
   if (g.states.length > 0) {
     const wanted = g.states.map((s) => normalizeUsState(s) ?? s.toUpperCase());
     const st = normalizeUsState(company.state);
     checks.push(
       !st
-        ? { id: "state", label: "State in scope", status: "UNKNOWN", detail: "State unknown", required: false }
+        ? { id: "state", label: "State in scope", status: "UNKNOWN", detail: "State unknown", required: true }
         : wanted.includes(st)
-          ? { id: "state", label: "State in scope", status: "PASS", detail: st, required: false }
-          : { id: "state", label: "State in scope", status: "UNKNOWN", detail: `${st} (outside ${wanted.join(", ")})`, required: false },
+          ? { id: "state", label: "State in scope", status: "PASS", detail: st, required: true }
+          : { id: "state", label: "State in scope", status: "FAIL", detail: `${st} (outside ${wanted.join(", ")})`, required: true },
     );
   }
   if (g.cities.length > 0) {
@@ -416,8 +452,8 @@ export function evaluateRule(company: EvalCompany, rule: RuleConfig): RuleEvalua
   if (g.customAreas.length > 0) notEnforced.push("Custom areas (used only to build discovery queries)");
   if (g.radiusMiles) notEnforced.push("Radius (needs geocoding; used only by providers that support it)");
 
-  // --- Company size
-  const { minEmployees, maxEmployees, allowUnknown } = rule.size;
+  // --- Company size (employees & doors/listings portfolio)
+  const { minEmployees, maxEmployees, minDoors, allowUnknown } = rule.size;
   if (minEmployees !== null || maxEmployees !== null) {
     const range = parseEmployeeRange(f.employees?.value);
     const lo = minEmployees ?? 0;
@@ -434,6 +470,28 @@ export function evaluateRule(company: EvalCompany, rule: RuleConfig): RuleEvalua
       checks.push({ id: "size", label: "Employee range", status: "FAIL", detail: `${f.employees?.value} is outside ${lo}–${maxEmployees ?? "∞"}`, required: true });
     } else {
       checks.push({ id: "size", label: "Employee range", status: "PASS", detail: `${f.employees?.value} within ${lo}–${maxEmployees ?? "∞"}`, required: true });
+    }
+  }
+  if (minDoors && minDoors > 0) {
+    const rawDoors = f.doors_managed?.value ? parseInt(f.doors_managed.value, 10) : null;
+    if (rawDoors !== null && !Number.isNaN(rawDoors)) {
+      if (rawDoors < minDoors) {
+        checks.push({
+          id: "doors",
+          label: "Portfolio / Listings size",
+          status: "FAIL",
+          detail: `${rawDoors} doors/listings is below minimum ${minDoors}`,
+          required: true,
+        });
+      } else {
+        checks.push({
+          id: "doors",
+          label: "Portfolio / Listings size",
+          status: "PASS",
+          detail: `${rawDoors}+ doors/listings managed (min ${minDoors})`,
+          required: true,
+        });
+      }
     }
   }
 
@@ -576,47 +634,116 @@ export function calculateLeadScore(
   };
 
   const hasValidSite = Boolean(company.website && !no(f, "website_alive"));
-  const hasLocation = Boolean(company.city || company.state);
-  const hasAnyContact = contacts.length > 0;
+  const isOffNicheOrDisqualified =
+    yes(f, "off_niche_vendor") ||
+    no(f, "niche_verified") ||
+    yes(f, "casual_host_only") ||
+    no(f, "website_alive") ||
+    yes(f, "one_person_operation") ||
+    (rule.businessType === "commercial" && no(f, "commercial")) ||
+    (rule.businessType === "residential" && no(f, "residential"));
 
-  checkSignal("residential_hvac", yes(f, "hvac") || yes(f, "residential") || hasValidSite);
-  checkSignal("replacement_installation", yes(f, "replacement") || yes(f, "installation") || (hasValidSite && hasLocation));
+  const isHvacRule =
+    rule.services.requiredAnyOf.length > 0 ||
+    rule.discovery.keywords.some((k) => /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k));
 
-  const empRange = parseEmployeeRange(f.employees?.value);
-  const meaningfulEmp = empRange ? empRange.min >= 4 : false;
-  checkSignal("meaningful_size", meaningfulEmp || yes(f, "multiple_technicians") || hasAnyContact);
-  checkSignal("multiple_technicians", yes(f, "multiple_technicians") || hasLocation);
-  checkSignal("financing", yes(f, "financing"));
-  checkSignal("multiple_locations_or_areas", yes(f, "multiple_locations") || yes(f, "multiple_service_areas") || hasLocation);
-  checkSignal("active_hiring", yes(f, "hiring"));
-
-  const dmVerified = contacts.some((c) => c.verified && isDecisionMaker(c.roleClass)) || contacts.some((c) => Boolean(c.name));
-  const ownerVerified = contacts.some((c) => c.verified && isPrimaryDecisionMaker(c.roleClass)) || contacts.some((c) => Boolean(c.name));
-  checkSignal("decision_maker_identified", dmVerified);
-  checkSignal("owner_or_president", ownerVerified);
-
-  const directContact = contacts.some(
-    (c) =>
-      Boolean(c.phone) ||
-      Boolean(c.email) ||
-      (c.verified &&
-        (c.phoneType === "PUBLISHED_DIRECT" ||
-          c.phoneType === "PROFESSIONAL_MOBILE" ||
-          c.emailType === "PUBLIC_BUSINESS")),
-  );
-  checkSignal("professional_direct_contact", directContact);
-  checkSignal("company_phone_verified", yes(f, "website_alive") || hasValidSite);
-  checkSignal("strong_presence", yes(f, "strong_presence") || hasValidSite);
-  checkSignal("established_business", yes(f, "established_business") || hasLocation);
-
-  const isBleeding = yes(f, "bleeding_ads") || yes(f, "google_ads") || yes(f, "zillow_advertiser");
-  checkSignal("bleeding_ad_spend", isBleeding);
+  const matchesBusinessType =
+    rule.businessType === "commercial"
+      ? yes(f, "commercial")
+      : rule.businessType === "residential"
+      ? yes(f, "residential") || yes(f, "str_vacation_rental") || yes(f, "hvac")
+      : yes(f, "residential") || yes(f, "commercial") || yes(f, "str_vacation_rental") || yes(f, "niche_verified");
 
   const rawDoors = f.doors_managed?.value ? parseInt(f.doors_managed.value, 10) : 0;
-  const hasAppFolio = f.software?.value?.toLowerCase().includes("appfolio");
-  checkSignal("high_volume_doors", rawDoors >= 50 || Boolean(hasAppFolio));
 
-  checkSignal("high_ticket_property", yes(f, "luxury_high_value") || f.avg_property_value?.value === "$400k+");
+  checkSignal(
+    "residential_hvac",
+    !isOffNicheOrDisqualified &&
+      (isHvacRule
+        ? yes(f, "hvac") && matchesBusinessType
+        : (yes(f, "niche_verified") || yes(f, "str_vacation_rental") || matchesBusinessType))
+  );
+  checkSignal(
+    "replacement_installation",
+    !isOffNicheOrDisqualified &&
+      (isHvacRule
+        ? yes(f, "replacement") || yes(f, "installation")
+        : yes(f, "str_vacation_rental") ||
+          yes(f, "after_hours_24_7_need") ||
+          yes(f, "luxury_high_value") ||
+          rawDoors >= 10 ||
+          yes(f, "niche_verified") ||
+          yes(f, "online_booking") ||
+          yes(f, "quote_form"))
+  );
+
+  const empRange = parseEmployeeRange(f.employees?.value);
+  const minTargetEmp = rule.size.minEmployees ?? 3;
+  const maxTargetEmp = rule.size.maxEmployees ?? 500;
+  const meaningfulEmp = empRange
+    ? empRange.max >= minTargetEmp && empRange.min <= maxTargetEmp
+    : false;
+
+  checkSignal(
+    "meaningful_size",
+    !isOffNicheOrDisqualified &&
+      (meaningfulEmp || yes(f, "multiple_technicians") || rawDoors >= 15 || contacts.length >= 2)
+  );
+  checkSignal(
+    "multiple_technicians",
+    !isOffNicheOrDisqualified && (yes(f, "multiple_technicians") || meaningfulEmp || rawDoors >= 20)
+  );
+  checkSignal("financing", !isOffNicheOrDisqualified && (yes(f, "financing") || yes(f, "after_hours_24_7_need")));
+  checkSignal(
+    "multiple_locations_or_areas",
+    !isOffNicheOrDisqualified && (yes(f, "multiple_locations") || yes(f, "multiple_service_areas"))
+  );
+  checkSignal("active_hiring", !isOffNicheOrDisqualified && yes(f, "hiring"));
+
+  const dmVerified =
+    contacts.some((c) => c.verified && isDecisionMaker(c.roleClass)) ||
+    contacts.some((c) => Boolean(c.name) && isDecisionMaker(c.roleClass));
+  const ownerVerified =
+    contacts.some((c) => c.verified && isPrimaryDecisionMaker(c.roleClass)) ||
+    contacts.some((c) => Boolean(c.name) && isPrimaryDecisionMaker(c.roleClass));
+  checkSignal("decision_maker_identified", !isOffNicheOrDisqualified && dmVerified);
+  checkSignal("owner_or_president", !isOffNicheOrDisqualified && ownerVerified);
+
+  const directContact =
+    yes(f, "direct_mobile_found") ||
+    contacts.some(
+      (c) =>
+        Boolean(c.phone) ||
+        Boolean(c.email) ||
+        (c.verified &&
+          (c.phoneType === "PUBLISHED_DIRECT" ||
+            c.phoneType === "PROFESSIONAL_MOBILE" ||
+            c.emailType === "PUBLIC_BUSINESS")),
+    );
+  checkSignal("professional_direct_contact", !isOffNicheOrDisqualified && directContact);
+  checkSignal("company_phone_verified", !isOffNicheOrDisqualified && (yes(f, "website_alive") || hasValidSite));
+  checkSignal("strong_presence", !isOffNicheOrDisqualified && (yes(f, "strong_presence") || yes(f, "niche_verified") || hasValidSite));
+  checkSignal("established_business", !isOffNicheOrDisqualified && (yes(f, "established_business") || meaningfulEmp));
+
+  const isBleeding =
+    !isOffNicheOrDisqualified &&
+    (yes(f, "bleeding_ads") || yes(f, "google_ads") || yes(f, "zillow_advertiser") || yes(f, "after_hours_24_7_need"));
+  checkSignal("bleeding_ad_spend", isBleeding);
+
+  const hasAppFolioOrStrPms =
+    f.software?.value
+      ?.toLowerCase()
+      .match(/appfolio|buildium|guesty|hostaway|hospitable|ownerrez|lodgify/) !== null;
+  checkSignal(
+    "high_volume_doors",
+    !isOffNicheOrDisqualified && (rawDoors >= 15 || Boolean(hasAppFolioOrStrPms) || yes(f, "str_vacation_rental"))
+  );
+
+  checkSignal(
+    "high_ticket_property",
+    !isOffNicheOrDisqualified &&
+      (yes(f, "luxury_high_value") || f.avg_property_value?.value === "$400k+" || yes(f, "str_vacation_rental"))
+  );
 
   const categoryScores: Record<ScoreCategory, { points: number; cap: number }> = {
     icp_fit: { points: 0, cap: caps.icp_fit },

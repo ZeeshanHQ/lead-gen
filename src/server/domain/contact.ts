@@ -63,13 +63,13 @@ export function classifyTitle(title: string | null | undefined): RoleClass {
   const t = (title ?? "").toLowerCase();
   if (!t) return "other";
   if (/\b(co-?)?owner\b|\bproprietor\b|managing\s+(member|partner)|broker[\s-]owner|principal\b/.test(t)) return "owner";
-  if (/\bpresident\b|\bvice[\s-]+president\b|\bvp\b|\bmanaging\s+director\b|\bexecutive\s+director\b/.test(t)) return "president";
+  if (!/\bvice[\s-]+president\b|\bvp\b/.test(t) && /\bpresident\b|\bmanaging\s+director\b|\bexecutive\s+director\b/.test(t)) return "president";
   if (/\bfounder\b|\bco-?founder\b/.test(t)) return "founder";
   if (/\bceo\b|chief executive|\bchair(man|woman|person)\b/.test(t)) return "president";
   if (/general\s+manager|\bgm\b|managing\s+broker|principal\s+broker|designated\s+broker/.test(t)) return "general_manager";
-  if (/operations?\s+(manager|director)|\bcoo\b|director of operations|property\s+manager/.test(t))
+  if (/operations?\s+(manager|director)|\bcoo\b|director of operations|property\s+manager|hospitality\s+manager|guest\s+experience\s+manager/.test(t))
     return "operations_manager";
-  if (/sales\s+(manager|director)|director of sales|comfort\s+advisor\s+manager|\bbroker\b|\brealtor\b|licensed\s+(?:real\s+estate\s+)?agent|broker\s+associate|team\s+lead(?:er)?/.test(t))
+  if (!/\bvice[\s-]+president\b|\bvp\b/.test(t) && /sales\s+(manager|director)|director of sales|comfort\s+advisor\s+manager|\bbroker\b|\brealtor\b|licensed\s+(?:real\s+estate\s+)?agent|broker\s+associate|team\s+lead(?:er)?|co-?host/.test(t))
     return "sales_manager";
   return "other";
 }

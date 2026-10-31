@@ -64,6 +64,12 @@ export const TRI_FACT_KEYS = [
   "zillow_advertiser",
   "bleeding_ads",
   "luxury_high_value",
+  "niche_verified",
+  "off_niche_vendor",
+  "str_vacation_rental",
+  "casual_host_only",
+  "after_hours_24_7_need",
+  "direct_mobile_found",
 ] as const;
 export type TriFactKey = (typeof TRI_FACT_KEYS)[number];
 
@@ -110,6 +116,12 @@ export const FACT_LABELS: Record<FactKey, string> = {
   zillow_advertiser: "Zillow Premier Agent / Advertiser",
   bleeding_ads: "Bleeding ad spend (Google/Zillow)",
   luxury_high_value: "High-ticket / luxury properties ($400k+)",
+  niche_verified: "Niche relevance verified",
+  off_niche_vendor: "Off-niche vendor / agency",
+  str_vacation_rental: "Airbnb / STR management",
+  casual_host_only: "Casual 1-room / temporary host",
+  after_hours_24_7_need: "24/7 concierge / speed-to-lead need",
+  direct_mobile_found: "Direct / mobile phone found",
   doors_managed: "Doors / units managed",
   avg_property_value: "Average property value",
   property_mgmt_software: "Property management software",
@@ -190,6 +202,11 @@ export const SOFTWARE_KEYS = [
   "buildium",
   "followupboss",
   "kvcore",
+  "guesty",
+  "hostaway",
+  "hospitable",
+  "ownerrez",
+  "lodgify",
   "other",
 ] as const;
 export type SoftwareKey = (typeof SOFTWARE_KEYS)[number];
@@ -201,6 +218,11 @@ export const SOFTWARE_LABELS: Record<SoftwareKey, string> = {
   buildium: "Buildium",
   followupboss: "Follow Up Boss",
   kvcore: "kvCORE",
+  guesty: "Guesty",
+  hostaway: "Hostaway",
+  hospitable: "Hospitable",
+  ownerrez: "OwnerRez",
+  lodgify: "Lodgify",
   other: "Other",
 };
 

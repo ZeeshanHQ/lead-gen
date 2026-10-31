@@ -13,6 +13,7 @@ export interface ContactCandidate {
   title: string;
   email?: string | null;
   phone?: string | null;
+  phoneType?: "COMPANY_MAIN" | "PUBLISHED_DIRECT" | "PROFESSIONAL_MOBILE" | "UNKNOWN";
   linkedinUrl?: string | null;
   confidence: number;
   sourceUrl: string;

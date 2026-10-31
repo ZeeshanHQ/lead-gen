@@ -64,6 +64,10 @@ export function buildColdCallerBattlecard(params: {
     kwList.some((k) => /law|legal|attorney/i.test(k));
 
   const f = params.facts;
+  const isStrAirbnb =
+    f.str_vacation_rental?.value === "YES" ||
+    /airbnb|short-term rental|vacation rental|co-host|str|guesty|hostaway|hospitable|vrbo/i.test(lowerNiche) ||
+    kwList.some((k) => /airbnb|short-term rental|vacation rental|co-host|guesty|hostaway|hospitable|vrbo|concierge/i.test(k));
   const hasReplacement = f.replacement?.value === "YES" || f.installation?.value === "YES";
   const hasFinancing = f.financing?.value === "YES";
   const isHiring = f.hiring?.value === "YES";
@@ -94,14 +98,16 @@ export function buildColdCallerBattlecard(params: {
   }
 
   if (doorsManaged) {
-    bullets.push(`🏢 Portfolio Scale: ~${doorsManaged} Doors/Units Managed`);
+    bullets.push(`🏢 Portfolio Scale: ~${doorsManaged} Listings / Doors Managed`);
   }
 
   if (avgPropertyVal) {
     bullets.push(`🏡 High-Ticket Inventory: Average Property Value ${avgPropertyVal} (High Commission Potential)`);
   }
 
-  if (isRealEstate) {
+  if (isStrAirbnb) {
+    bullets.push(`🌙 24/7 AI Concierge Fit: Multi-listing STR / Vacation Rental operator needing after-hours guest & booking voice automation`);
+  } else if (isRealEstate) {
     bullets.push(`Focus: Verified Real Estate & Property Management Services`);
   } else if (isHvac) {
     if (hasReplacement) bullets.push(`Focus: Residential HVAC Replacement & Installs`);
@@ -124,7 +130,10 @@ export function buildColdCallerBattlecard(params: {
   const repHook = hasStrongPresence ? " and solid local reputation" : "";
 
   let script: string;
-  if (isRealEstate) {
+  if (isStrAirbnb) {
+    const pmsHook = software ? ` across your ${software} listings` : "";
+    script = `${targetGreeting}, noticed ${params.companyName} manages multi-listing vacation rentals and short-term properties in ${location}${repHook}. The reason for my call: STR portfolio owners tell us that late-night 2 AM tourist calls—whether it's a last-minute booking inquiry, a lockbox check-in issue, or an urgent guest complaint—either wake up the owner or go missed, costing direct bookings and 5-star reviews. We deploy a 24/7 AI Voice Concierge & Speed-to-Lead system that answers every guest and booking call instantly${pmsHook}, resolves check-in questions, and captures late-night reservations automatically. Who currently handles your 2 AM guest and booking calls?`;
+  } else if (isRealEstate) {
     const hookPain = isHiring
       ? "with agents busy showing properties in the field, open listing inquiries and rental application requests often sit for hours, losing qualified deals"
       : "after-hours listing inquiries and buyer/tenant requests often wait until the next day, losing high-intent deals to competing brokerages";
@@ -249,8 +258,8 @@ export async function researchCompany(
     pages = options.mockPages;
   } else if (company.website) {
     const crawl = await crawlWebsite(company.website, {
-      maxPages: options.maxPages ?? 1,
-      timeoutMs: options.timeoutMs ?? 2500,
+      maxPages: options.maxPages ?? 4,
+      timeoutMs: options.timeoutMs ?? 2800,
       respectRobotsTxt: true,
     });
     pages = crawl.pages;
@@ -363,7 +372,7 @@ export async function researchCompany(
     throw new Error("No crawled pages available");
   }
 
-  const extracted = extractAllFacts(pages);
+  const extracted = extractAllFacts(pages, activeRule);
 
   const factBatchItems: BatchFactItem[] = [
     {
@@ -475,6 +484,7 @@ export async function researchCompany(
   // Status transition: FAIL -> DISQUALIFIED, else NEEDS_REVIEW
 
   const primaryDm = currentContacts.find((c) => c.verified && isDecisionMaker(c.roleClass as any)) || currentContacts[0];
+  const crawledTextSummary = pages.map((p) => `${p.title || ""} ${p.cleanText || ""}`).join(" ").slice(0, 12000);
   const gateResult = evaluateGate(activeRule?.gate, {
     phone: updates.phoneDisplay || refreshed.phoneDisplay || refreshed.phoneE164,
     website: refreshed.website,
@@ -482,9 +492,15 @@ export async function researchCompany(
     city: updates.city || refreshed.city,
     state: updates.state || refreshed.state,
     contacts: evalCompany.contacts,
+    facts: evalCompany.facts,
+    searchText: `${refreshed.name} ${refreshed.website || ""} ${crawledTextSummary}`,
   });
+  const isHardOffNiche =
+    evalCompany.facts.off_niche_vendor?.value === "YES" ||
+    evalCompany.facts.niche_verified?.value === "NO" ||
+    evalCompany.facts.casual_host_only?.value === "YES";
   const finalStatus =
-    !gateResult.passed || evaluation.verdict === "FAIL"
+    !gateResult.passed || evaluation.verdict === "FAIL" || isHardOffNiche
       ? "DISQUALIFIED"
       : "NEEDS_REVIEW";
   updates.status = finalStatus;

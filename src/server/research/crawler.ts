@@ -47,20 +47,30 @@ const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const HIGH_PRIORITY_PATTERNS = [
+  /about/i,
+  /team/i,
+  /leadership/i,
+  /agent/i,
+  /broker/i,
+  /owner/i,
+  /staff/i,
+  /contact/i,
   /service/i,
+  /property-management/i,
+  /vacation-rental/i,
+  /short-term/i,
+  /concierge/i,
+  /listing/i,
+  /properties/i,
   /hvac/i,
   /air-condition/i,
   /heating/i,
   /cooling/i,
   /replacement/i,
   /installation/i,
-  /about/i,
-  /team/i,
-  /leadership/i,
   /financing/i,
   /maintenance/i,
   /club/i,
-  /contact/i,
   /career/i,
   /job/i,
   /location/i,
@@ -116,6 +126,9 @@ export function isPathAllowed(pathname: string, disallowedPaths: string[]): bool
 
 function calculateUrlScore(urlPath: string): number {
   let score = 0;
+  if (/\/(about|about-us|team|our-team|meet-the-team|leadership|agents|our-agents|brokers|contact|contact-us|owners)\b/i.test(urlPath)) {
+    score += 25;
+  }
   for (const pat of HIGH_PRIORITY_PATTERNS) {
     if (pat.test(urlPath)) score += 10;
   }
@@ -130,7 +143,7 @@ export async function crawlWebsite(
   options: CrawlOptions = {}
 ): Promise<CrawlResult> {
   const start = Date.now();
-  const maxPages = Math.min(Math.max(options.maxPages ?? 1, 1), 20);
+  const maxPages = Math.min(Math.max(options.maxPages ?? 4, 1), 20);
   const timeoutMs = options.timeoutMs ?? 2500;
   const userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
   const respectRobots = options.respectRobotsTxt ?? true;

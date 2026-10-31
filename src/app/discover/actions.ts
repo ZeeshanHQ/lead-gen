@@ -8,42 +8,10 @@ import { createCandidate, type CandidateInput } from "@/server/repo/companies";
 import { getActor } from "@/server/repo/settings";
 import { getActiveContext } from "@/server/repo/markets";
 import { getActiveTeamMember } from "@/server/repo/team";
-import { resolveGate, type LeadGate } from "@/server/domain/gate";
+import { resolveGate, passesLeadRowGate, type LeadGate } from "@/server/domain/gate";
 import { POST_APPROVAL } from "@/server/domain/lifecycle";
 import { audit } from "@/server/repo/audit";
 import type { LeadRow } from "@/server/repo/queue";
-
-function passesLeadRowGate(lead: LeadRow, gate: LeadGate): boolean {
-  if (gate.requirePhone) {
-    const phone = lead.best?.phone || lead.phoneDisplay || "";
-    const digits = phone.replace(/\D/g, "");
-    const national = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
-    if (national.length < 10) return false;
-  }
-  if (gate.requireWebsite) {
-    if (!lead.website || !lead.website.trim()) return false;
-  }
-  if (gate.requireDecisionMaker) {
-    if (!lead.owner?.name && !lead.hasDecisionMaker && !lead.best?.name) return false;
-  }
-  if (gate.requireEmail) {
-    if (!lead.best?.email || !lead.best.email.includes("@")) return false;
-  }
-  if (gate.requireLocation) {
-    if (!lead.city || !lead.state) return false;
-  }
-  if (gate.requireBleedingAds) {
-    const f = (lead as any).facts || {};
-    const hasAds = f.bleeding_ads?.value === "YES" || f.google_ads?.value === "YES" || f.zillow_advertiser?.value === "YES" || f.bleeding_ads === "YES" || f.google_ads === "YES" || f.zillow_advertiser === "YES";
-    if (!hasAds) return false;
-  }
-  if (gate.requireHighValueProperty) {
-    const f = (lead as any).facts || {};
-    const isHigh = f.luxury_high_value?.value === "YES" || f.avg_property_value?.value === "$400k+" || f.luxury_high_value === "YES" || f.avg_property_value === "$400k+";
-    if (!isHigh) return false;
-  }
-  return true;
-}
 
 export async function addCandidateAction(input: CandidateInput, force = false) {
   try {
@@ -163,10 +131,14 @@ export async function runLeadDiscoveryAction(
     cities?: string[];
     states?: string[];
     keywords?: string[];
+    negativeKeywords?: string[];
+    subNiche?: string;
+    businessType?: "residential" | "commercial" | "both";
     minScore?: number;
     gate?: Partial<LeadGate>;
     minEmployees?: number | null;
     maxEmployees?: number | null;
+    minDoors?: number | null;
   } = {}
 ) {
   const startedAtMs = Date.now();
@@ -182,7 +154,7 @@ export async function runLeadDiscoveryAction(
     const canEditRules =
       activeMember.role === "OWNER" || Boolean(activeMember.permissions.editRules);
 
-    const { saveRule } = await import("@/server/repo/rules");
+    const { saveRule, reEvaluateLeadsWithRule } = await import("@/server/repo/rules");
     const { createResearchRun, executeRun } = await import("@/server/research/runner");
     const { loadLeadRows } = await import("@/server/repo/queue");
 
@@ -205,6 +177,18 @@ export async function runLeadDiscoveryAction(
         : market.keywords?.length
         ? market.keywords
         : [market.name];
+    const negativeKeywordsToUse: string[] =
+      options.negativeKeywords !== undefined
+        ? options.negativeKeywords
+        : ruleConfig?.discovery?.negativeKeywords || [];
+    const subNicheToUse: string =
+      options.subNiche !== undefined
+        ? options.subNiche
+        : ruleConfig?.discovery?.subNiche || "";
+    const businessTypeToUse: "residential" | "commercial" | "both" =
+      options.businessType !== undefined
+        ? options.businessType
+        : ruleConfig?.businessType || "both";
     const minScoreToUse: number =
       options.minScore !== undefined ? options.minScore : ruleConfig?.scoring?.minScore ?? 60;
     const minEmployeesToUse: number | null =
@@ -215,6 +199,10 @@ export async function runLeadDiscoveryAction(
       options.maxEmployees !== undefined
         ? options.maxEmployees
         : ruleConfig?.size?.maxEmployees ?? null;
+    const minDoorsToUse: number | null =
+      options.minDoors !== undefined
+        ? options.minDoors
+        : ruleConfig?.size?.minDoors ?? null;
 
     // Update rule config if user has permission
     if (
@@ -223,12 +211,17 @@ export async function runLeadDiscoveryAction(
         (options.states && options.states.length > 0) ||
         options.minScore !== undefined ||
         (options.keywords && options.keywords.length > 0) ||
+        options.negativeKeywords !== undefined ||
+        options.subNiche !== undefined ||
+        options.businessType !== undefined ||
         options.minEmployees !== undefined ||
         options.maxEmployees !== undefined ||
+        options.minDoors !== undefined ||
         options.gate !== undefined)
     ) {
       ruleConfig = {
         ...ruleConfig,
+        businessType: businessTypeToUse,
         geography: {
           ...ruleConfig.geography,
           states: statesToUse,
@@ -237,6 +230,9 @@ export async function runLeadDiscoveryAction(
         discovery: {
           ...ruleConfig.discovery,
           keywords: keywordsToUse,
+          negativeKeywords: negativeKeywordsToUse,
+          subNiche: subNicheToUse,
+          strictNicheMatch: true,
         },
         scoring: {
           ...ruleConfig.scoring,
@@ -246,11 +242,13 @@ export async function runLeadDiscoveryAction(
           ...ruleConfig.size,
           minEmployees: minEmployeesToUse,
           maxEmployees: maxEmployeesToUse,
+          minDoors: minDoorsToUse,
         },
         gate: mergedGate,
       };
       try {
         await saveRule(db, defaultRule.id, { name: defaultRule.name, config: ruleConfig }, actorName);
+        await reEvaluateLeadsWithRule(db, defaultRule.id, actorName);
       } catch {
         // Non-blocking if rule validation has minor defaults difference
       }
@@ -268,15 +266,15 @@ export async function runLeadDiscoveryAction(
       marketId: market.id,
       actor: `${actorName} (${market.name})`,
       maxCandidates: targetCount,
-      concurrency: 10,
-      pagesPerCompany: 1,
+      concurrency: 8,
+      pagesPerCompany: 4,
       providerFilter: undefined,
     });
 
     const counters = await executeRun(db, runId, {
-      timeoutMs: 2500,
-      maxWallClockMs: targetCount <= 25 ? 65000 : targetCount <= 50 ? 120000 : 240000,
-      autoEnrich: false,
+      timeoutMs: 2800,
+      maxWallClockMs: targetCount <= 25 ? 75000 : targetCount <= 50 ? 130000 : 240000,
+      autoEnrich: true,
     });
 
     // If a Caller initiated discovery, pre-assign the qualified leads to them, but leave in NEEDS_REVIEW
@@ -301,7 +299,7 @@ export async function runLeadDiscoveryAction(
     // Count how many leads from this live pass strictly passed the Must-Have Quality Gate
     const liveQualifiedIds = new Set(counters.qualifiedCompanyIds || []);
     const livePassedGateCount = liveQualifiedIds.size > 0
-      ? allMarketRows.filter((r) => liveQualifiedIds.has(r.id) && passesLeadRowGate(r, mergedGate)).length
+      ? allMarketRows.filter((r) => liveQualifiedIds.has(r.id) && passesLeadRowGate(r, mergedGate, ruleConfig)).length
       : 0;
 
     // Real discovery only: never fabricate mock/dump leads when live yield is below target
@@ -362,7 +360,7 @@ export async function runLeadDiscoveryAction(
       : allMarketRows.filter((l) => l.assignedMemberId === activeMember.id);
 
     const postApprovalSet = new Set<string>(POST_APPROVAL as readonly string[]);
-    const qualifiedLeads = scopedRows.filter((l) => passesLeadRowGate(l, mergedGate));
+    const qualifiedLeads = scopedRows.filter((l) => passesLeadRowGate(l, mergedGate, ruleConfig));
     const pendingLeads = qualifiedLeads.filter((l) => !postApprovalSet.has(l.status));
     const crmReadyCount = qualifiedLeads.filter((l) => postApprovalSet.has(l.status)).length;
 
@@ -402,7 +400,8 @@ export async function getLatestReviewLeadsAction() {
     const isOwnerOrManager =
       activeMember.role === "OWNER" || Boolean(activeMember.permissions.manageTeamAndSettings);
     const { loadLeadRows } = await import("@/server/repo/queue");
-    const activeGate = resolveGate((rule.config as any)?.gate);
+    const activeRuleConfig = (rule.config as any) || null;
+    const activeGate = resolveGate(activeRuleConfig?.gate);
 
     const allMarketRows = await loadLeadRows(db, "all", market.id);
     const scopedRows = isOwnerOrManager
@@ -410,7 +409,7 @@ export async function getLatestReviewLeadsAction() {
       : allMarketRows.filter((l) => l.assignedMemberId === activeMember.id);
 
     const postApprovalSet = new Set<string>(POST_APPROVAL as readonly string[]);
-    const qualifiedLeads = scopedRows.filter((l) => passesLeadRowGate(l, activeGate));
+    const qualifiedLeads = scopedRows.filter((l) => passesLeadRowGate(l, activeGate, activeRuleConfig));
     const pendingLeads = qualifiedLeads.filter((l) => !postApprovalSet.has(l.status));
     const crmReadyCount = qualifiedLeads.filter((l) => postApprovalSet.has(l.status)).length;
 
@@ -478,14 +477,15 @@ export async function approveAllReviewLeadsAction(options?: {
 
     const { loadLeadRows } = await import("@/server/repo/queue");
     const { approveCompany } = await import("@/server/repo/approvals");
-    const activeGate = resolveGate((rule.config as any)?.gate);
+    const activeRuleConfig = (rule.config as any) || null;
+    const activeGate = resolveGate(activeRuleConfig?.gate);
 
     let eligibleIds: string[] = [];
     if (options?.leadIds && options.leadIds.length > 0) {
       eligibleIds = options.leadIds;
     } else {
       const reviewRows = await loadLeadRows(db, "review", market.id);
-      eligibleIds = reviewRows.filter((l) => passesLeadRowGate(l, activeGate)).map((l) => l.id);
+      eligibleIds = reviewRows.filter((l) => passesLeadRowGate(l, activeGate, activeRuleConfig)).map((l) => l.id);
     }
 
     const targetMemberId =
@@ -542,6 +542,9 @@ export async function updateRuleTargetingAction(params: {
   cities: string[];
   minScore: number;
   keywords?: string[];
+  negativeKeywords?: string[];
+  subNiche?: string;
+  businessType?: "residential" | "commercial" | "both";
   gate?: Partial<LeadGate>;
   minEmployees?: number | null;
   maxEmployees?: number | null;
@@ -560,6 +563,7 @@ export async function updateRuleTargetingAction(params: {
 
     const newCfg = {
       ...cfg,
+      businessType: params.businessType !== undefined ? params.businessType : cfg.businessType || "both",
       geography: {
         ...cfg.geography,
         states: params.states,
@@ -571,6 +575,15 @@ export async function updateRuleTargetingAction(params: {
           params.keywords && params.keywords.length > 0
             ? params.keywords
             : cfg.discovery?.keywords || [],
+        negativeKeywords:
+          params.negativeKeywords !== undefined
+            ? params.negativeKeywords
+            : cfg.discovery?.negativeKeywords || [],
+        subNiche:
+          params.subNiche !== undefined
+            ? params.subNiche
+            : cfg.discovery?.subNiche || "",
+        strictNicheMatch: true,
       },
       scoring: {
         ...cfg.scoring,

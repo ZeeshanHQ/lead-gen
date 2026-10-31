@@ -58,6 +58,31 @@ const SIGNATURES: TechSignature[] = [
     label: "kvCORE",
   },
   {
+    key: "guesty",
+    patterns: [/guesty\.com/i, /guestybookings/i, /guesty-widget/i, /\bguesty\b/i],
+    label: "Guesty (STR PMS)",
+  },
+  {
+    key: "hostaway",
+    patterns: [/hostaway\.com/i, /holidayfuture\.com/i, /hostaway-widget/i, /\bhostaway\b/i],
+    label: "Hostaway (STR PMS)",
+  },
+  {
+    key: "hospitable",
+    patterns: [/hospitable\.com/i, /smartbnb/i],
+    label: "Hospitable (STR PMS)",
+  },
+  {
+    key: "ownerrez",
+    patterns: [/ownerrez\.com/i, /ownerreservations\.com/i, /\bownerrez\b/i],
+    label: "OwnerRez (STR PMS)",
+  },
+  {
+    key: "lodgify",
+    patterns: [/lodgify\.com/i, /lodgify-widget/i, /\blodgify\b/i],
+    label: "Lodgify (STR PMS)",
+  },
+  {
     key: "other",
     patterns: [
       /scheduleengine\.com/i,
@@ -69,8 +94,15 @@ const SIGNATURES: TechSignature[] = [
       /rentvine\.com/i,
       /doorloop\.com/i,
       /propertyware\.com/i,
+      /streamlinevrs\.com/i,
+      /escapia\.com/i,
+      /cloudbeds\.com/i,
+      /hostfully\.com/i,
+      /uplisting\.io/i,
+      /pricelabs\.co/i,
+      /breezeway\.io/i,
     ],
-    label: "FSM/Chat Tool",
+    label: "FSM/Property/Hospitality Tool",
   },
 ];
 

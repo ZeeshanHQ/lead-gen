@@ -217,13 +217,17 @@ export async function reEvaluateLeadsWithRule(
       city: c.city,
       state: c.state,
       contacts: contactInputs,
+      facts: evalCompany.facts,
+      searchText: `${c.name} ${c.website || ""} ${c.researchSummary || ""}`,
     });
-    const passed = gateResult.passed && evaluation.verdict !== "FAIL";
+    const isHardOffNiche =
+      evalCompany.facts.off_niche_vendor?.value === "YES" ||
+      evalCompany.facts.niche_verified?.value === "NO" ||
+      evalCompany.facts.casual_host_only?.value === "YES";
+    const passed = gateResult.passed && evaluation.verdict !== "FAIL" && !isHardOffNiche;
 
-    // Never wipe out human-approved or gate-passing leads.
-    // Restore any previously mis-disqualified lead that passes the Owner's Must-Have Gate.
     let nextStatus = c.status;
-    if (!gateResult.passed) {
+    if (!passed) {
       if (c.status === "DISCOVERED" || c.status === "RESEARCHED" || c.status === "NEEDS_REVIEW") {
         nextStatus = "DISQUALIFIED";
       }

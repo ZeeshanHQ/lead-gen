@@ -198,6 +198,7 @@ export interface BatchContactInput {
   title?: string | null;
   email?: string | null;
   phone?: string | null;
+  phoneType?: PhoneType | null;
   linkedinUrl?: string | null;
   sourceUrl?: string | null;
 }
@@ -245,6 +246,12 @@ export async function addContactsBatch(
 
     const roleClass = classifyTitle(title);
     const emailType = classifyEmail(email, domain);
+    const resolvedPhoneType: PhoneType =
+      item.phoneType && (PHONE_TYPES as readonly string[]).includes(item.phoneType)
+        ? item.phoneType
+        : phoneDisplay && name
+        ? "PUBLISHED_DIRECT"
+        : "UNKNOWN";
 
     validContacts.push({
       companyId,
@@ -255,7 +262,7 @@ export async function addContactsBatch(
       emailType,
       phoneDisplay,
       phoneE164,
-      phoneType: "UNKNOWN" as PhoneType,
+      phoneType: resolvedPhoneType,
       verified: true,
       confidence: 0.9,
       provenance: "PUBLICLY_VERIFIED" as const,

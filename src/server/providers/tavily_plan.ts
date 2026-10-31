@@ -44,15 +44,38 @@ for (const [st, cities] of Object.entries(STATE_CITIES)) {
   }
 }
 
-const TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> = [
+const DEFAULT_TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> = [
   (kw, city, st) => `${kw} in ${city}, ${st}`,
   (kw, city, st) => `${kw} company official website phone number ${city} ${st}`,
-  (kw, city, st) => `${kw} ${city} ${st} contact us meet our team`,
-  (kw, city, st) => `${kw} local services commercial residential ${city} ${st}`,
-  (kw, city, st) => `${kw} top rated local business ${city} ${st} official website`,
+  (kw, city, st) => `${kw} ${city} ${st} "contact us" OR "meet our team"`,
+  (kw, city, st) => `${kw} ${city} ${st} "about us" OR "leadership" phone`,
+  (kw, city, st) => `${kw} local business ${city} ${st} official website`,
   (kw, city, st) => `${kw} specialists office location ${city} ${st}`,
-  (kw, city, st) => `${kw} in ${city}, ${st} "Premier Agent" OR "featured" official website`,
-  (kw, city, st) => `${kw} property management in ${city}, ${st} "doors" OR "units" official website`,
+];
+
+const STR_AIRBNB_TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> = [
+  (kw, city, st) => `${kw} in ${city}, ${st} "property management" OR "owners"`,
+  (kw, city, st) => `"vacation rental management" ${city} ${st} "properties" OR "homes" contact`,
+  (kw, city, st) => `"short term rental management" ${city} ${st} "full service" OR "concierge" phone`,
+  (kw, city, st) => `${kw} ${city} ${st} "owner services" OR "list your property" official website`,
+  (kw, city, st) => `${kw} ${city} ${st} "24/7" OR "guest support" OR "concierge" contact us`,
+  (kw, city, st) => `vacation home property management company ${city} ${st} "our team" OR "about us"`,
+];
+
+const COMMERCIAL_TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> = [
+  (kw, city, st) => `${kw} in ${city}, ${st} "commercial"`,
+  (kw, city, st) => `${kw} commercial ${city} ${st} "our team" OR "brokers" OR "advisors" phone`,
+  (kw, city, st) => `${kw} ${city} ${st} "commercial" "contact us" official website`,
+  (kw, city, st) => `${kw} commercial services ${city} ${st} office phone number`,
+  (kw, city, st) => `${kw} ${city} ${st} "tenant representation" OR "commercial leasing" OR "commercial property"`,
+];
+
+const RESIDENTIAL_TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> = [
+  (kw, city, st) => `${kw} in ${city}, ${st}`,
+  (kw, city, st) => `${kw} residential ${city} ${st} "meet our team" OR "about us" phone`,
+  (kw, city, st) => `${kw} ${city} ${st} official website contact us`,
+  (kw, city, st) => `${kw} residential services ${city} ${st} phone number`,
+  (kw, city, st) => `${kw} ${city} ${st} "our agents" OR "our team" OR "owner"`,
 ];
 
 /** Ordered, deterministic list of search queries for the owner's targeting. */
@@ -60,6 +83,9 @@ export function buildQueryPlan(input: {
   keywords: string[];
   states: string[];
   cities: string[];
+  businessType?: "residential" | "commercial" | "both";
+  subNiche?: string;
+  negativeKeywords?: string[];
 }): PlannedQuery[] {
   const keywords = input.keywords.map((k) => k.trim()).filter(Boolean).slice(0, 8);
   const kwList = keywords.length > 0 ? keywords : ["local business"];
@@ -99,8 +125,21 @@ export function buildQueryPlan(input: {
     }
   }
 
+  const joinedKw = kwList.join(" ").toLowerCase();
+  const isStrNiche =
+    input.subNiche === "airbnb_str_concierge" ||
+    /\b(airbnb|vrbo|vacation\s*rental|short[- ]term\s*rental|co-?host|serviced\s*apartment)\b/i.test(joinedKw);
+
+  const templates = isStrNiche
+    ? STR_AIRBNB_TEMPLATES
+    : input.businessType === "commercial" || input.subNiche === "commercial_re"
+    ? COMMERCIAL_TEMPLATES
+    : input.businessType === "residential" || input.subNiche === "residential_re"
+    ? RESIDENTIAL_TEMPLATES
+    : DEFAULT_TEMPLATES;
+
   const plan: PlannedQuery[] = [];
-  for (const template of TEMPLATES) {
+  for (const template of templates) {
     for (const kw of kwList) {
       for (const place of places) {
         const stateName = STATE_NAMES[place.state] || place.state;
@@ -132,7 +171,7 @@ function isEditorialHeadline(text: string): boolean {
 }
 
 const GENERIC_NAME =
-  /^(home|homepage|welcome|index|official site|official website|contact us|about us|contact|about|roster|agents|our agents|meet our agents|team members|leadership|leadership team|meet our team|reviews|realtor reviews|real estate|services|locations|staff|meet the team|our team|customer reviews|client reviews|privacy policy|terms of service|realtor|realtors|broker|brokers|listings|featured listings|search|properties|property|idx)$/i;
+  /^(home|homepage|welcome|index|official site|official website|contact us|about us|contact|about|us|roster|agents|our agents|meet our agents|team members|leadership|leadership team|meet our team|reviews|realtor reviews|real estate|services|locations|staff|meet the team|our team|customer reviews|client reviews|privacy policy|terms of service|realtor|realtors|broker|brokers|listings|featured listings|search|properties|property|idx)$/i;
 
 function titleCase(s: string): string {
   return s
@@ -174,8 +213,10 @@ export function companyNameFrom(title: string | undefined, domain: string): stri
     }
   }
 
+  if (GENERIC_NAME.test(candidate)) return fromDomain;
+
   // Strip leading utility phrases
-  candidate = candidate.replace(/^(?:Contact|Meet our Team:?|Meet the Team:?|Meet\s+|Welcome to)\s+/i, "").trim();
+  candidate = candidate.replace(/^(?:Contact\s+Us:?|Contact|Meet our Team:?|Meet the Team:?|Meet\s+|Welcome to)\s+/i, "").trim();
 
   // Strip trailing geo clauses like "in Dallas TX", "near Austin", "serving Houston"
   candidate = candidate.replace(/\b(in|near|for|serving)\s+[A-Z][\w\s,.]*$/i, "").trim();
@@ -195,6 +236,75 @@ export function companyNameFrom(title: string | undefined, domain: string): stri
   }
 
   return candidate;
+}
+
+/**
+ * Strict anti-dump pre-filter for search results:
+ * Blocks web design agencies, SEO/marketing firms, software/SaaS vendors, schools/courses,
+ * casual 1-room sublets, and user-defined negative keywords unless explicitly searched for.
+ */
+export function isOffNicheSearchResult(input: {
+  title?: string;
+  content?: string;
+  domain?: string;
+  url?: string;
+  targetKeyword?: string;
+  negativeKeywords?: string[];
+  businessType?: "residential" | "commercial" | "both";
+}): boolean {
+  const kwLower = (input.targetKeyword || "").toLowerCase();
+  const titleLower = (input.title || "").toLowerCase();
+  const contentLower = (input.content || "").toLowerCase();
+  const domainLower = (input.domain || input.url || "").toLowerCase();
+  const titleAndDomain = `${titleLower} ${domainLower}`;
+  const fullText = `${titleLower} ${domainLower} ${contentLower}`;
+
+  // 1. Check user-specified negative keywords against title and domain
+  if (input.negativeKeywords && input.negativeKeywords.length > 0) {
+    for (const neg of input.negativeKeywords) {
+      const cleanNeg = neg.trim().toLowerCase();
+      if (cleanNeg.length >= 3 && titleAndDomain.includes(cleanNeg)) {
+        return true;
+      }
+    }
+  }
+
+  // 2. Block Web Design, Digital Marketing, SEO, Software & Coaching vendors unless user is targeting them
+  const userWantsMarketingOrTech =
+    /\b(web\s*design|web\s*dev|marketing\s*agency|seo|digital\s*marketing|software|saas|it\s*services|advertising\s*agency)\b/i.test(
+      kwLower
+    );
+
+  if (!userWantsMarketingOrTech) {
+    if (
+      /webdesign|webdev|digitalmarketing|seoagency|marketingagency|mediagroup|designstudio|creativeagency|softwaresolutions|appdev|realtorwebsites|realestateschool/i.test(
+        domainLower
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      /\b(web\s*design(?:\s+agency|\s+company|\s+for|\s+services|\s+studio)?|website\s*design|website\s*development|custom\s*websites?\s*for|digital\s*marketing\s*(?:agency|company|services)|seo\s*(?:agency|company|services|experts|for\s+realtors|for\s+real\s+estate|for\s+contractors)|ppc\s*(?:agency|management)|social\s*media\s*marketing\s*agency|branding\s*agency|lead\s*generation\s*(?:agency|company|for)|marketing\s*(?:agency|solutions|company)\s*for\s*(?:realtors|real\s*estate|hvac|contractors|property\s*managers)|idx\s*website|real\s*estate\s*crm|property\s*management\s*software|vacation\s*rental\s*software|real\s*estate\s*school|licensing\s*course|exam\s*prep|virtual\s*assistant\s*company)\b/i.test(
+        fullText
+      )
+    ) {
+      return true;
+    }
+  }
+
+  // 3. When targeting Airbnb / STR Management, block casual 1-room sublets or cleaning-only gigs
+  if (/\b(airbnb|vrbo|vacation\s*rental|short[- ]term\s*rental|co-?host)\b/i.test(kwLower)) {
+    if (
+      /\b(room\s*for\s*rent|shared\s*room|roommate\s*wanted|sublet\s*my\s*room|how\s*to\s*start\s*an\s*airbnb|airbnb\s*cleaning\s*only)\b/i.test(
+        fullText
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 const PHONE_REGEX = /(?:\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/;
@@ -219,6 +329,8 @@ export async function runPlannedQuery(
     maxResults?: number;
     seenDomains?: Set<string>;
     excludeDomains?: string[];
+    negativeKeywords?: string[];
+    businessType?: "residential" | "commercial" | "both";
     timeoutMs?: number;
   } = {},
 ): Promise<DiscoveredCandidate[]> {
@@ -282,6 +394,18 @@ export async function runPlannedQuery(
     }
     if (JUNK_PATH.test(pathname)) continue;
     if (title && LISTICLE_TITLE.test(title)) continue;
+    if (
+      isOffNicheSearchResult({
+        title,
+        content,
+        domain,
+        targetKeyword: item.keyword,
+        negativeKeywords: opts.negativeKeywords,
+        businessType: opts.businessType,
+      })
+    ) {
+      continue;
+    }
 
     seen.add(domain);
 

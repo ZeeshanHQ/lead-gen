@@ -23,10 +23,13 @@ export interface MarketDefinition {
 
 export function createNicheRuleConfig(opts: {
   keywords: string[];
+  negativeKeywords?: string[];
+  subNiche?: string;
   businessType?: "residential" | "commercial" | "both";
   minScore?: number;
   minEmployees?: number | null;
   maxEmployees?: number | null;
+  minDoors?: number | null;
   requiredAnyOf?: ("replacement" | "installation" | "repair" | "maintenance" | "emergency" | "indoor_air_quality")[];
 }): RuleConfig {
   const base = defaultHvacRuleConfig();
@@ -40,11 +43,21 @@ export function createNicheRuleConfig(opts: {
     size: {
       minEmployees: opts.minEmployees !== undefined ? opts.minEmployees : 3,
       maxEmployees: opts.maxEmployees !== undefined ? opts.maxEmployees : 100,
+      minDoors: opts.minDoors !== undefined ? opts.minDoors : null,
       allowUnknown: true,
     },
     discovery: {
       ...base.discovery,
       keywords: opts.keywords,
+      negativeKeywords: opts.negativeKeywords ?? [
+        "web design",
+        "marketing agency",
+        "seo agency",
+        "software vendor",
+        "real estate school",
+      ],
+      subNiche: opts.subNiche,
+      strictNicheMatch: true,
       serviceIntents: ["replacement", "installation"],
     },
     scoring: {
@@ -195,15 +208,153 @@ export const MEDICAL_MARKET: MarketDefinition = {
     }),
 };
 
+export const STR_AIRBNB_MARKET: MarketDefinition = {
+  key: "airbnb_str",
+  name: "Airbnb & Vacation Rental Management (24/7 AI Concierge)",
+  description:
+    "Professional Short-Term Rental (STR) property management companies, vacation rental portfolios, luxury co-hosts, and serviced apartment operators needing 24/7 AI Concierge, after-hours guest calling, and speed-to-lead booking automation.",
+  category: "airbnb_str",
+  icon: "building",
+  tenantId: "tenant_main",
+  keywords: [
+    "vacation rental management company",
+    "short term rental property management",
+    "airbnb property management company",
+    "luxury vacation home management",
+    "short term rental co-hosting company",
+    "serviced apartments hospitality management",
+  ],
+  serviceKeys: [
+    "str_vacation_rental",
+    "after_hours_24_7_need",
+    "property_management",
+    "guest_concierge",
+    "direct_booking",
+  ],
+  pageHints: [
+    "owners",
+    "property-management",
+    "vacation-rentals",
+    "properties",
+    "rentals",
+    "concierge",
+    "guest-services",
+    "about",
+    "team",
+    "contact",
+  ],
+  defaultRuleName: "Airbnb & STR Property Managers — 24/7 AI Concierge & Speed-to-Lead ICP",
+  defaultRule: () =>
+    createNicheRuleConfig({
+      keywords: [
+        "vacation rental management company",
+        "short term rental property management",
+        "airbnb property management company",
+        "luxury vacation home management",
+        "vacation rental co-host company",
+      ],
+      negativeKeywords: [
+        "web design",
+        "marketing agency",
+        "seo agency",
+        "software",
+        "shared room",
+        "sublet",
+        "dorm",
+      ],
+      subNiche: "airbnb_str_concierge",
+      businessType: "residential",
+      minScore: 60,
+      minEmployees: 2,
+      maxEmployees: 150,
+      minDoors: 5,
+      requiredAnyOf: [],
+    }),
+};
+
 export const NICHE_PRESET_TEMPLATES: Array<{
   key: string;
   name: string;
   category: string;
   description: string;
   keywords: string[];
+  negativeKeywords?: string[];
+  subNiche?: string;
   businessType: "residential" | "commercial" | "both";
   minScore: number;
+  minDoors?: number | null;
 }> = [
+  {
+    key: "airbnb_str",
+    name: "Airbnb & Vacation Rental Managers (24/7 AI Concierge)",
+    category: "airbnb_str",
+    description:
+      "Multi-property Airbnb/VRBO management companies, vacation rental operators & co-hosts who cannot afford to miss 2 AM tourist calls, late check-ins, or guest booking inquiries.",
+    keywords: [
+      "vacation rental management company",
+      "short term rental property management",
+      "airbnb property management company",
+      "luxury vacation home management",
+      "short term rental co-hosting",
+    ],
+    negativeKeywords: ["web design", "marketing agency", "seo", "software", "private room", "sublet"],
+    subNiche: "airbnb_str_concierge",
+    businessType: "residential",
+    minScore: 60,
+    minDoors: 5,
+  },
+  {
+    key: "realestate_commercial",
+    name: "Commercial Real Estate (CRE Brokerages & Leasing)",
+    category: "realestate",
+    description:
+      "Strictly Commercial Real Estate brokerages, tenant/landlord representation firms, industrial/office/retail leasing, and commercial property managers.",
+    keywords: [
+      "commercial real estate brokerage",
+      "commercial property management firm",
+      "CRE investment sales and leasing",
+      "commercial real estate advisors",
+    ],
+    negativeKeywords: ["web design", "marketing agency", "seo", "residential only", "single family"],
+    subNiche: "commercial_re",
+    businessType: "commercial",
+    minScore: 65,
+  },
+  {
+    key: "realestate_residential",
+    name: "Residential Real Estate & High-Volume Realtor Teams",
+    category: "realestate",
+    description:
+      "Strictly Residential Real Estate brokerages, luxury home groups, and top-producing realtor teams needing instant speed-to-lead AI calling.",
+    keywords: [
+      "residential real estate brokerage",
+      "luxury real estate group",
+      "top producing realtor team",
+      "residential real estate agency",
+    ],
+    negativeKeywords: ["web design", "marketing agency", "seo", "commercial warehouse", "real estate school"],
+    subNiche: "residential_re",
+    businessType: "residential",
+    minScore: 60,
+  },
+  {
+    key: "property_management",
+    name: "Property Management Firms (Long-Term & Multifamily Doors)",
+    category: "realestate",
+    description:
+      "Full-service residential & multifamily property management firms managing 50+ doors needing 24/7 tenant maintenance & leasing call triage.",
+    keywords: [
+      "residential property management company",
+      "multifamily property management firm",
+      "full service property managers",
+      "rental property management company",
+    ],
+    negativeKeywords: ["web design", "marketing agency", "seo", "software"],
+    subNiche: "property_management",
+    businessType: "both",
+    minScore: 65,
+    minDoors: 30,
+  },
   {
     key: "hvac",
     name: "US Residential HVAC",
@@ -215,7 +366,7 @@ export const NICHE_PRESET_TEMPLATES: Array<{
   },
   {
     key: "realestate",
-    name: "Real Estate & Property Management",
+    name: "Real Estate & Property Management (Full Spectrum)",
     category: "realestate",
     description: "Real estate brokerages, property management companies, and top-producing realtor teams.",
     keywords: ["real estate brokerage", "real estate agency", "property management company", "luxury realtors"],
@@ -281,6 +432,7 @@ export const NICHE_PRESET_TEMPLATES: Array<{
 export const SEEDED_MARKETS: MarketDefinition[] = [
   HVAC_MARKET,
   REAL_ESTATE_MARKET,
+  STR_AIRBNB_MARKET,
   MEDICAL_MARKET,
 ];
 

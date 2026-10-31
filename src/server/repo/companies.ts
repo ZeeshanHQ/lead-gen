@@ -188,18 +188,16 @@ export async function createCandidate(
       .where(eq(companies.domain, c.domain))
       .limit(1);
     if (existingByDomain) {
-      if (input.providerRef) {
-        await db
-          .insert(companySourceRefs)
-          .values({
-            companyId: existingByDomain.id,
-            provider,
-            providerRef: input.providerRef,
-            url: c.website,
-            raw: { submitted: { name: c.name, website: c.website, phone: c.phoneDisplay, city: c.city, state: c.state } },
-          })
-          .onConflictDoNothing();
-      }
+      await db
+        .insert(companySourceRefs)
+        .values({
+          companyId: existingByDomain.id,
+          provider,
+          providerRef: input.providerRef ?? null,
+          url: c.website,
+          raw: { submitted: { name: c.name, website: c.website, phone: c.phoneDisplay, city: c.city, state: c.state } },
+        })
+        .onConflictDoNothing();
       return { kind: "duplicate", existingId: existingByDomain.id, existingName: existingByDomain.name, reason: "domain" };
     }
   }

@@ -125,6 +125,28 @@ export const EXCLUDED_AGGREGATOR_DOMAINS = [
   "issuewire.com",
   "einpresswire.com",
   "newstracklive.com",
+  "airbnb.com",
+  "vrbo.com",
+  "booking.com",
+  "expedia.com",
+  "tripadvisor.com",
+  "hotels.com",
+  "homeaway.com",
+  "vacasa.com",
+  "evolve.com",
+  "furnishedfinder.com",
+  "designrush.com",
+  "themanifest.com",
+  "sortlist.com",
+  "agencyspotter.com",
+  "g2.com",
+  "capterra.com",
+  "softwareadvice.com",
+  "getapp.com",
+  "dribbble.com",
+  "behance.net",
+  "upwork.com",
+  "fiverr.com",
 ];
 
 export const STATE_NAMES: Record<string, string> = {
@@ -171,6 +193,9 @@ export class TavilyAdapter implements DiscoveryAdapter {
       keywords: query.keywords,
       states: query.states,
       cities: query.cities,
+      businessType: query.rule?.businessType,
+      subNiche: query.rule?.discovery?.subNiche,
+      negativeKeywords: query.rule?.discovery?.negativeKeywords,
     });
     if (plan.length === 0) return [];
 
@@ -196,6 +221,9 @@ export class TavilyAdapter implements DiscoveryAdapter {
       keywords: query.keywords,
       states: query.states,
       cities: query.cities,
+      businessType: query.rule?.businessType,
+      subNiche: query.rule?.discovery?.subNiche,
+      negativeKeywords: query.rule?.discovery?.negativeKeywords,
     });
     if (plan.length === 0) return [];
 
@@ -224,6 +252,8 @@ export class TavilyAdapter implements DiscoveryAdapter {
             maxResults: Math.min(Math.max(query.limit, 12), 20),
             seenDomains,
             excludeDomains: query.excludeDomains,
+            negativeKeywords: query.rule?.discovery?.negativeKeywords,
+            businessType: query.rule?.businessType,
             timeoutMs: 8500,
           })
         )

@@ -46,7 +46,7 @@ export interface LeadRow {
 export type Scope = "review" | "approved" | "all";
 
 export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Promise<LeadRow[]> {
-  const reviewStatuses = ["DISCOVERED", "RESEARCHING", "RESEARCHED", "NEEDS_REVIEW", "DISQUALIFIED"];
+  const reviewStatuses = [...REVIEWABLE];
   const statuses: string[] =
     scope === "review"
       ? reviewStatuses
@@ -114,7 +114,7 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
       state: r.state,
       website: r.website,
       domain: r.domain,
-      status: (r.status === "DISQUALIFIED" ? "NEEDS_REVIEW" : r.status) as LifecycleStatus,
+      status: r.status as LifecycleStatus,
       phoneDisplay: r.phoneDisplay,
       facts: r.facts ?? {},
       icpScore: score?.icpScore ?? null,

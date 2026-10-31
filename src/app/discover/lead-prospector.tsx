@@ -165,6 +165,17 @@ export function LeadProspector({
   const [editMinDoors, setEditMinDoors] = useState<number | null>(
     initialRule?.size?.minDoors ?? null
   );
+  const [editBusinessType, setEditBusinessType] = useState<"both" | "commercial" | "residential">(
+    initialRule?.businessType ?? "both"
+  );
+  const [editSubNiche, setEditSubNiche] = useState<string>(
+    initialRule?.discovery?.subNiche ?? ""
+  );
+  const [editNegativeKeywords, setEditNegativeKeywords] = useState<string>(
+    initialRule?.discovery?.negativeKeywords?.length
+      ? initialRule.discovery.negativeKeywords.join(", ")
+      : "web design, web development, digital marketing agency, seo agency, software vendor, directory"
+  );
   const [savingFilters, setSavingFilters] = useState(false);
 
   // Manual URL accordion toggle
@@ -186,9 +197,15 @@ export function LeadProspector({
       } else if (activeMarket?.keywords?.length) {
         setEditKeywords(activeMarket.keywords.join(", "));
       }
+      if (initialRule.discovery?.negativeKeywords?.length > 0) {
+        setEditNegativeKeywords(initialRule.discovery.negativeKeywords.join(", "));
+      }
+      setEditBusinessType(initialRule.businessType ?? "both");
+      setEditSubNiche(initialRule.discovery?.subNiche ?? "");
       setEditMinScore(initialRule.scoring?.minScore ?? 60);
       setEditMinEmployees(initialRule.size?.minEmployees ?? null);
       setEditMaxEmployees(initialRule.size?.maxEmployees ?? null);
+      setEditMinDoors(initialRule.size?.minDoors ?? null);
       setGate(resolveGate(initialGate ?? initialRule.gate));
     }
     if (initialLeads) {
@@ -260,12 +277,19 @@ export function LeadProspector({
     const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
     const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
     const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
 
     const res = await updateRuleTargetingAction({
       states: statesArr.length > 0 ? statesArr : ["TX"],
       cities: citiesArr,
       minScore: editMinScore,
       keywords: kwsArr,
+      negativeKeywords: negsArr,
+      subNiche: editSubNiche,
+      businessType: editBusinessType,
+      minEmployees: editMinEmployees,
+      maxEmployees: editMaxEmployees,
+      minDoors: editMinDoors,
       gate: nextGate,
     });
 
@@ -276,6 +300,69 @@ export function LeadProspector({
         setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
         setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
       }
+    }
+  };
+
+  const handleApplyIntentPreset = async (preset: {
+    id: string;
+    label: string;
+    keywords: string[];
+    negativeKeywords: string[];
+    businessType: "both" | "commercial" | "residential";
+    subNiche: string;
+    minEmployees: number | null;
+    maxEmployees: number | null;
+    minDoors: number | null;
+    minScore: number;
+    customMustHaves?: string[];
+  }) => {
+    if (!canEditRules) return;
+    const kwStr = preset.keywords.join(", ");
+    const negStr = preset.negativeKeywords.join(", ");
+    const nextGate: LeadGate = {
+      ...gate,
+      customMustHaves: preset.customMustHaves ?? [],
+    };
+    setEditKeywords(kwStr);
+    setEditNegativeKeywords(negStr);
+    setEditBusinessType(preset.businessType);
+    setEditSubNiche(preset.subNiche);
+    setEditMinEmployees(preset.minEmployees);
+    setEditMaxEmployees(preset.maxEmployees);
+    setEditMinDoors(preset.minDoors);
+    setEditMinScore(preset.minScore);
+    setGate(nextGate);
+
+    const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+
+    setSavingFilters(true);
+    const res = await updateRuleTargetingAction({
+      states: statesArr.length > 0 ? statesArr : ["TX"],
+      cities: citiesArr,
+      minScore: preset.minScore,
+      keywords: preset.keywords,
+      negativeKeywords: preset.negativeKeywords,
+      subNiche: preset.subNiche,
+      businessType: preset.businessType,
+      minEmployees: preset.minEmployees,
+      maxEmployees: preset.maxEmployees,
+      minDoors: preset.minDoors,
+      gate: nextGate,
+    });
+    setSavingFilters(false);
+
+    if (res.ok && res.rule) {
+      setActiveRule(res.rule);
+      const refreshed = await getLatestReviewLeadsAction();
+      if (refreshed.ok && refreshed.leads) {
+        setLeads(refreshed.leads as any);
+        setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
+        setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+      }
+      setSuccessBanner(
+        `Applied ICP Preset: "${preset.label}". Strict niche verification, negative exclusions, and quality gates are now active.`
+      );
     }
   };
 
@@ -298,6 +385,7 @@ export function LeadProspector({
     const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
     const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
     const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
     if (!kwsArr.some((k) => k.toLowerCase() === trimmed.toLowerCase())) {
       kwsArr.push(trimmed);
       setEditKeywords(kwsArr.join(", "));
@@ -308,8 +396,20 @@ export function LeadProspector({
       cities: citiesArr,
       minScore: editMinScore,
       keywords: kwsArr,
+      negativeKeywords: negsArr,
+      subNiche: editSubNiche,
+      businessType: editBusinessType,
+      minEmployees: editMinEmployees,
+      maxEmployees: editMaxEmployees,
+      minDoors: editMinDoors,
       gate: nextGate,
     });
+    const refreshed = await getLatestReviewLeadsAction();
+    if (refreshed.ok && refreshed.leads) {
+      setLeads(refreshed.leads as any);
+      setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
+      setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+    }
   };
 
   const handleRemoveCustomGateRule = async (ruleText: string) => {
@@ -320,14 +420,27 @@ export function LeadProspector({
     const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
     const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
     const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
 
     await updateRuleTargetingAction({
       states: statesArr.length > 0 ? statesArr : ["TX"],
       cities: citiesArr,
       minScore: editMinScore,
       keywords: kwsArr,
+      negativeKeywords: negsArr,
+      subNiche: editSubNiche,
+      businessType: editBusinessType,
+      minEmployees: editMinEmployees,
+      maxEmployees: editMaxEmployees,
+      minDoors: editMinDoors,
       gate: nextGate,
     });
+    const refreshed = await getLatestReviewLeadsAction();
+    if (refreshed.ok && refreshed.leads) {
+      setLeads(refreshed.leads as any);
+      setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
+      setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+    }
   };
 
   const handlePresetCount = (count: number) => {
@@ -356,18 +469,23 @@ export function LeadProspector({
     startTransition(async () => {
       try {
         const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+        const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
         const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
         const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
 
         const res = await runLeadDiscoveryAction({
           targetCount: finalCount,
           keywords: kwsArr,
+          negativeKeywords: negsArr,
+          subNiche: editSubNiche,
+          businessType: editBusinessType,
           states: statesArr.length > 0 ? statesArr : ["TX"],
           cities: citiesArr,
           minScore: editMinScore,
           gate,
           minEmployees: editMinEmployees,
           maxEmployees: editMaxEmployees,
+          minDoors: editMinDoors,
         });
 
         if (res.ok) {
@@ -507,12 +625,16 @@ export function LeadProspector({
     const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
     const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
     const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
 
     const res = await updateRuleTargetingAction({
       states: statesArr.length > 0 ? statesArr : ["TX"],
       cities: citiesArr,
       minScore: editMinScore,
       keywords: kwsArr,
+      negativeKeywords: negsArr,
+      subNiche: editSubNiche,
+      businessType: editBusinessType,
       gate,
       minEmployees: editMinEmployees,
       maxEmployees: editMaxEmployees,
@@ -611,7 +733,7 @@ export function LeadProspector({
               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition shadow-sm"
             >
               <SlidersHorizontal className="w-3.5 h-3.5 text-zinc-400" />
-              <span>{isEditingFilters ? "Close Targeting" : "Edit Targeting & Team Size"}</span>
+              <span>{isEditingFilters ? "Close ICP & Targeting" : "Customize ICP, Focus & Team Size"}</span>
             </button>
             <Link
               href="/caller"
@@ -623,6 +745,181 @@ export function LeadProspector({
               </span>
               <ArrowRight className="w-3.5 h-3.5" />
             </Link>
+          </div>
+        </div>
+
+        {/* 1-Click Campaign & ICP Intent Presets (Airbnb 24/7 AI Concierge, Commercial Only, Residential, PM, HVAC) */}
+        <div className="p-4 rounded-xl bg-[#09090b] border border-zinc-800/90 space-y-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+            <div className="text-xs font-bold text-white flex items-center gap-2">
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <span>1-Click ICP &amp; AI Offer Intent Presets (Zero Dump Data &bull; Strict Sub-Niche Control)</span>
+            </div>
+            <span className="text-[11px] text-zinc-400">
+              Select an exact campaign profile or customize every ICP parameter below
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[
+              {
+                id: "airbnb_str",
+                label: "🌙 Airbnb / STR Managers (24/7 AI Concierge & Night Calls)",
+                badge: "24/7 AI Calling",
+                subNiche: "airbnb_str",
+                businessType: "residential" as const,
+                minEmployees: 2,
+                maxEmployees: 60,
+                minDoors: 10,
+                minScore: 60,
+                keywords: [
+                  "vacation rental management company",
+                  "airbnb property management company",
+                  "short term rental property management",
+                  "luxury vacation rental management",
+                  "serviced apartment operator",
+                  "airbnb co-hosting company",
+                  "guesty property management",
+                ],
+                negativeKeywords: [
+                  "single room",
+                  "roommate",
+                  "sublet",
+                  "student housing",
+                  "web design",
+                  "web development",
+                  "digital marketing agency",
+                  "seo agency",
+                  "software vendor",
+                ],
+                customMustHaves: ["Short-Term / Vacation Rental"],
+              },
+              {
+                id: "commercial_re",
+                label: "🏢 Commercial Real Estate Only (CRE Brokerage & Leasing)",
+                badge: "Strict Commercial",
+                subNiche: "commercial_real_estate",
+                businessType: "commercial" as const,
+                minEmployees: 4,
+                maxEmployees: 100,
+                minDoors: null,
+                minScore: 65,
+                keywords: [
+                  "commercial real estate brokerage",
+                  "commercial property management company",
+                  "retail office industrial leasing brokerage",
+                  "tenant representation brokerage",
+                  "commercial real estate investment sales",
+                ],
+                negativeKeywords: [
+                  "single family residential",
+                  "apartment roommate",
+                  "web design",
+                  "web development",
+                  "marketing agency",
+                  "seo agency",
+                ],
+                customMustHaves: ["Commercial"],
+              },
+              {
+                id: "residential_re",
+                label: "🏡 Residential Real Estate Teams (Speed-to-Lead AI)",
+                badge: "Strict Residential",
+                subNiche: "residential_real_estate",
+                businessType: "residential" as const,
+                minEmployees: 3,
+                maxEmployees: 80,
+                minDoors: null,
+                minScore: 60,
+                keywords: [
+                  "residential real estate brokerage",
+                  "real estate team",
+                  "luxury home realty brokerage",
+                  "buyer seller real estate brokerage",
+                  "local real estate group",
+                ],
+                negativeKeywords: [
+                  "commercial warehouse only",
+                  "real estate school",
+                  "web design",
+                  "web development",
+                  "marketing agency",
+                  "seo agency",
+                ],
+                customMustHaves: [],
+              },
+              {
+                id: "property_mgmt",
+                label: "🔑 Property Management (50+ Doors / AppFolio & Buildium)",
+                badge: "50+ Doors",
+                subNiche: "property_management",
+                businessType: "both" as const,
+                minEmployees: 4,
+                maxEmployees: 80,
+                minDoors: 50,
+                minScore: 65,
+                keywords: [
+                  "residential property management company",
+                  "turnkey rental property management",
+                  "multifamily property management company",
+                  "HOA and residential property management",
+                  "appfolio property management",
+                ],
+                negativeKeywords: [
+                  "self storage",
+                  "web design",
+                  "web development",
+                  "marketing agency",
+                  "seo agency",
+                ],
+                customMustHaves: [],
+              },
+              {
+                id: "hvac_home",
+                label: "❄️ Residential HVAC Contractors (Install & Quote Follow-Up)",
+                badge: "5–60 Staff",
+                subNiche: "hvac",
+                businessType: "residential" as const,
+                minEmployees: 5,
+                maxEmployees: 60,
+                minDoors: null,
+                minScore: 60,
+                keywords: [
+                  "residential HVAC contractor",
+                  "AC replacement and installation company",
+                  "heating and air conditioning company",
+                  "ductless mini split installer",
+                ],
+                negativeKeywords: [
+                  "supply house",
+                  "parts distributor",
+                  "web design",
+                  "web development",
+                  "marketing agency",
+                  "seo agency",
+                ],
+                customMustHaves: [],
+              },
+            ].map((preset) => {
+              const isSelected = editSubNiche === preset.subNiche && preset.subNiche !== "";
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  disabled={isPending || savingFilters}
+                  onClick={() => handleApplyIntentPreset(preset)}
+                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                    isSelected
+                      ? "bg-amber-500/15 text-amber-300 border-amber-500/50 shadow-sm"
+                      : "bg-zinc-900/90 text-zinc-300 border-zinc-800 hover:border-zinc-600 hover:text-white"
+                  }`}
+                >
+                  <span>{preset.label}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-bold">
+                    {preset.badge}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -764,6 +1061,61 @@ export function LeadProspector({
               </span>
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="space-y-1.5">
+                <label className="text-zinc-300 font-medium block">
+                  Business Focus Polarity (Strict Commercial vs Residential Filter)
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { val: "both", label: "Both (All)" },
+                      { val: "commercial", label: "🏢 Commercial Only" },
+                      { val: "residential", label: "🏡 Residential Only" },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.val}
+                      type="button"
+                      onClick={() => setEditBusinessType(opt.val)}
+                      className={`px-3 py-2 rounded-xl text-xs font-semibold border transition ${
+                        editBusinessType === opt.val
+                          ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+                          : "bg-[#121215] text-zinc-400 border-zinc-800 hover:text-zinc-200"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-zinc-300 font-medium block">
+                  Sub-Vertical / Campaign Intent Mode
+                </label>
+                <select
+                  value={editSubNiche}
+                  onChange={(e) => setEditSubNiche(e.target.value)}
+                  className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 focus:outline-none focus:border-zinc-500"
+                >
+                  <option value="">Standard Niche Discovery (All Verified Operators)</option>
+                  <option value="airbnb_str">
+                    🌙 Airbnb / Short-Term Rental &amp; Vacation Rental Managers (24/7 AI Concierge)
+                  </option>
+                  <option value="commercial_real_estate">
+                    🏢 Commercial Real Estate Brokerage &amp; CRE Leasing Only
+                  </option>
+                  <option value="residential_real_estate">
+                    🏡 Residential Real Estate Teams &amp; Brokerages Only
+                  </option>
+                  <option value="property_management">
+                    🔑 Full-Service Property Management (Long-Term &amp; Multifamily)
+                  </option>
+                </select>
+              </div>
+            </div>
+
             <div className="space-y-1.5 text-xs">
               <label className="text-zinc-300 font-medium block">
                 Target Search Keywords for {activeNicheName} (Comma-separated)
@@ -773,6 +1125,22 @@ export function LeadProspector({
                 value={editKeywords}
                 onChange={(e) => setEditKeywords(e.target.value)}
                 placeholder={`e.g. ${activeNicheName} company, property management, commercial brokerage`}
+                className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
+              />
+            </div>
+
+            <div className="space-y-1.5 text-xs">
+              <label className="text-zinc-300 font-medium flex items-center justify-between">
+                <span>Negative Keywords / Anti-Dump Exclusions (Strictly Blocked)</span>
+                <span className="text-zinc-500 font-normal">
+                  Web dev, marketing agencies &amp; directories are always blocked automatically
+                </span>
+              </label>
+              <input
+                type="text"
+                value={editNegativeKeywords}
+                onChange={(e) => setEditNegativeKeywords(e.target.value)}
+                placeholder="e.g. web design, marketing agency, seo, single room, sublet, student housing"
                 className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
               />
             </div>
@@ -937,8 +1305,16 @@ export function LeadProspector({
               <Building className="w-3.5 h-3.5 text-zinc-400" />
             </div>
             <div className="min-w-0">
-              <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Active Vertical</div>
-              <div className="text-zinc-200 font-medium truncate">{activeNicheName}</div>
+              <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Focus &amp; Vertical</div>
+              <div className="text-zinc-200 font-medium truncate">
+                {editSubNiche === "airbnb_str"
+                  ? "Airbnb / STR (24/7 AI)"
+                  : editBusinessType === "commercial"
+                  ? `${activeNicheName} (Commercial)`
+                  : editBusinessType === "residential"
+                  ? `${activeNicheName} (Residential)`
+                  : activeNicheName}
+              </div>
             </div>
           </div>
 
@@ -1349,9 +1725,42 @@ export function LeadProspector({
                     {/* Verified Signals (Dynamic & Niche-Agnostic) */}
                     <div className="flex flex-wrap gap-1.5 text-[10px]">
                       {phone && (
-                        <span className="px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-medium inline-flex items-center gap-1">
-                          <Check className="w-2.5 h-2.5" />
-                          <span>Phone Verified</span>
+                        (lead as any).hasDirectContact || lead.facts?.direct_mobile_found?.value === "YES" ? (
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold inline-flex items-center gap-1">
+                            <Check className="w-2.5 h-2.5" />
+                            <span>📱 Direct / Personal Phone</span>
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-medium inline-flex items-center gap-1">
+                            <Check className="w-2.5 h-2.5" />
+                            <span>Phone Verified</span>
+                          </span>
+                        )
+                      )}
+                      {lead.facts?.str_vacation_rental?.value === "YES" && (
+                        <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/40 font-semibold inline-flex items-center gap-1">
+                          <span>🌙 Airbnb / STR Portfolio</span>
+                        </span>
+                      )}
+                      {lead.facts?.commercial?.value === "YES" && lead.facts?.residential?.value !== "YES" && (
+                        <span className="px-2 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-800/60 font-semibold inline-flex items-center gap-1">
+                          <span>🏢 Commercial Focus</span>
+                        </span>
+                      )}
+                      {lead.facts?.residential?.value === "YES" && lead.facts?.commercial?.value !== "YES" && (
+                        <span className="px-2 py-0.5 rounded bg-teal-950/60 text-teal-300 border border-teal-800/60 font-semibold inline-flex items-center gap-1">
+                          <span>🏡 Residential Focus</span>
+                        </span>
+                      )}
+                      {lead.facts?.doors_managed?.value && lead.facts.doors_managed.value !== "UNKNOWN" && (
+                        <span className="px-2 py-0.5 rounded bg-zinc-900 text-zinc-200 border border-zinc-700 font-semibold inline-flex items-center gap-1">
+                          <span>🏢 ~{lead.facts.doors_managed.value} Doors/Listings</span>
+                        </span>
+                      )}
+                      {lead.facts?.employees?.value && lead.facts.employees.value !== "UNKNOWN" && (
+                        <span className="px-2 py-0.5 rounded bg-zinc-900 text-zinc-200 border border-zinc-700 font-medium inline-flex items-center gap-1">
+                          <Users className="w-2.5 h-2.5 text-cyan-400" />
+                          <span>{lead.facts.employees.value} Staff</span>
                         </span>
                       )}
                       {lead.website && (

@@ -30,7 +30,7 @@ export function extractBusinessSignals(pages: CrawledPage[]): FactCandidate[] {
 
     // 2. Online Booking
     if (!discovered.has("online_booking")) {
-      const bookingPat = /\b(?:schedule|book)\s+(?:an?\s+appointment\s+)?online\b/i;
+      const bookingPat = /\b(?:schedule|book)\s+(?:an?\s+appointment\s+|your\s+stay\s+|direct\s+)?online\b|\b(?:book\s+direct|instant\s+book|check\s+availability)\b/i;
       const snippet = extractSnippet(text, bookingPat);
       if (snippet) {
         facts.push({
@@ -311,13 +311,13 @@ export function extractBusinessSignals(pages: CrawledPage[]): FactCandidate[] {
       }
     }
 
-    // 14. Property Management: Units / Doors Managed (Scale & Affordability)
+    // 14. Property Management & STR: Units / Doors / Listings Managed (Scale & Affordability)
     if (!discovered.has("doors_managed")) {
-      const doorsPat = /\b(?:managing|manage|over|portfolio\s+of|more\s+than)\s+(\d{2,4})\s+(?:doors|units|properties|homes|rentals)\b/i;
+      const doorsPat = /\b(?:managing|manage|over|portfolio\s+of|more\s+than|collection\s+of)\s+(\d{1,4})\+?\s+(?:doors|units|properties|homes|vacation\s+rentals|short[- ]term\s+rentals|airbnb\s+listings|listings|luxury\s+homes|villas|cabins|rentals)\b/i;
       const match = doorsPat.exec(text);
       if (match && match[1]) {
         const count = parseInt(match[1], 10);
-        if (count >= 15 && count <= 5000) {
+        if (count >= 5 && count <= 5000) {
           facts.push({
             key: "doors_managed",
             value: `${count}`,
@@ -328,11 +328,11 @@ export function extractBusinessSignals(pages: CrawledPage[]): FactCandidate[] {
           discovered.add("doors_managed");
         }
       } else {
-        const doorsPlusPat = /\b(\d{2,4})\+\s*(?:doors|units|properties|rentals)\b/i;
+        const doorsPlusPat = /\b(\d{1,4})\+\s*(?:doors|units|properties|vacation\s+rentals|short[- ]term\s+rentals|listings|luxury\s+homes|rentals)\b/i;
         const plusMatch = doorsPlusPat.exec(text);
         if (plusMatch && plusMatch[1]) {
           const count = parseInt(plusMatch[1], 10);
-          if (count >= 20 && count <= 5000) {
+          if (count >= 5 && count <= 5000) {
             facts.push({
               key: "doors_managed",
               value: `${count}+`,

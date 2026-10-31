@@ -116,13 +116,12 @@ const TRANSITIONS: Record<LifecycleStatus, readonly LifecycleStatus[]> = {
   CLOSED: [],
   LOST: ["NURTURE", "APPROVED"],
   NURTURE: ["CALLING", "LOST", "APPROVED", "CONNECTED", "MEETING_BOOKED", "QUALIFIED"],
-  REJECTED: ["NEEDS_REVIEW", "RESEARCHING", "APPROVED"],
+  REJECTED: ["NEEDS_REVIEW", "RESEARCHING"],
 };
 
 export function canTransition(from: LifecycleStatus, to: LifecycleStatus): boolean {
   if (from === to) return true;
-  if (to === "APPROVED" || to === "REJECTED" || to === "NEEDS_REVIEW") return true;
-  return TRANSITIONS[from]?.includes(to) ?? true;
+  return TRANSITIONS[from]?.includes(to) ?? false;
 }
 
 export function isLifecycleStatus(v: string): v is LifecycleStatus {

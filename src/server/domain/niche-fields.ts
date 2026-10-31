@@ -64,6 +64,71 @@ export const NICHE_SMART_FIELDS: Record<string, NicheSmartField[]> = {
       ],
     },
   ],
+  airbnb_str: [
+    {
+      key: "strModel",
+      label: "STR / Hospitality Model",
+      shortLabel: "STR Model",
+      options: [
+        "Full-Service STR Management",
+        "Luxury Vacation Rental Portfolio",
+        "Airbnb / VRBO Co-Hosting",
+        "Boutique Aparthotel / Serviced Stays",
+        "Corporate Housing Operator",
+        "Verify on Call",
+      ],
+    },
+    {
+      key: "doorsManaged",
+      label: "Listings / Properties Managed",
+      shortLabel: "Listings",
+      options: [
+        "50+ Active Listings",
+        "20-49 Active Listings",
+        "10-19 Active Listings",
+        "5-9 Boutique Properties",
+        "Ask on Call",
+      ],
+    },
+    {
+      key: "afterHoursCoverage",
+      label: "24/7 Guest & Booking Coverage",
+      shortLabel: "24/7 Concierge",
+      options: [
+        "Needs 24/7 AI Guest Concierge",
+        "Misses 2 AM Check-In / Issue Calls",
+        "In-House Staff (Overwhelmed)",
+        "Answering Service (Slow Triage)",
+        "Ask on Call",
+      ],
+    },
+    {
+      key: "software",
+      label: "PMS / Channel Manager",
+      shortLabel: "STR PMS",
+      options: [
+        "Guesty",
+        "Hostaway",
+        "Hospitable",
+        "OwnerRez",
+        "Lodgify",
+        "Streamline / Escapia",
+        "Track / Cloudbeds",
+        "Ask on Call",
+      ],
+    },
+    {
+      key: "directBooking",
+      label: "Direct Booking & Speed-to-Lead",
+      shortLabel: "Direct Booking",
+      options: [
+        "Direct Booking Engine Live",
+        "OTA Dependent (Airbnb/VRBO)",
+        "Owner Acquisition Funnel Active",
+        "Ask on Call",
+      ],
+    },
+  ],
   real_estate: [
     {
       key: "propertyFocus",
@@ -312,7 +377,17 @@ export function getSmartFieldsForNiche(
   const name = (nicheName || "").toLowerCase();
 
   let base: NicheSmartField[];
-  if (cat === "hvac" || name.includes("hvac") || name.includes("air conditioning") || name.includes("heating")) {
+  if (
+    cat === "airbnb_str" ||
+    name.includes("airbnb") ||
+    name.includes("vacation rental") ||
+    name.includes("short-term") ||
+    name.includes("short term") ||
+    name.includes("concierge") ||
+    name.includes("co-host")
+  ) {
+    base = NICHE_SMART_FIELDS.airbnb_str!;
+  } else if (cat === "hvac" || name.includes("hvac") || name.includes("air conditioning") || name.includes("heating")) {
     base = NICHE_SMART_FIELDS.hvac!;
   } else if (
     cat === "real_estate" ||
@@ -373,6 +448,34 @@ export function resolveSmartFieldValue(
       return field.options[0] || "Confirmed";
     }
     return "Verify on Call";
+  }
+
+  if (field.key === "strModel") {
+    if (summary.includes("co-host")) return "Airbnb / VRBO Co-Hosting";
+    if (summary.includes("serviced") || summary.includes("aparthotel") || summary.includes("boutique")) {
+      return "Boutique Aparthotel / Serviced Stays";
+    }
+    if (summary.includes("luxury") || lead.facts?.["luxury_high_value"] === "YES") {
+      return "Luxury Vacation Rental Portfolio";
+    }
+    if (lead.facts?.["str_vacation_rental"] === "YES" || summary.includes("vacation rental") || summary.includes("airbnb")) {
+      return "Full-Service STR Management";
+    }
+    return "Verify on Call";
+  }
+
+  if (field.key === "afterHoursCoverage") {
+    if (lead.facts?.["after_hours_24_7_need"] === "YES" || lead.facts?.["str_vacation_rental"] === "YES") {
+      return "Needs 24/7 AI Guest Concierge";
+    }
+    return "Ask on Call";
+  }
+
+  if (field.key === "directBooking") {
+    if (lead.onlineBookingObserved || summary.includes("book direct") || summary.includes("instant book")) {
+      return "Direct Booking Engine Live";
+    }
+    return "Ask on Call";
   }
 
   if (field.key === "propertyFocus") {

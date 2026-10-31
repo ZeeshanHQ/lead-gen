@@ -178,10 +178,10 @@ export async function executeRun(
   const limits = (run.limits as Record<string, any>) || {};
   const maxCandidates = limits.maxCandidates || 25;
   const concurrency = Math.min(Math.max(limits.concurrency || 8, 1), 10);
-  const pagesPerCompany = Math.min(limits.pagesPerCompany || 3, 6);
+  const pagesPerCompany = Math.min(limits.pagesPerCompany || 4, 6);
   const stopOnError = !!limits.stopOnError;
   const timeoutMs = runOpts?.timeoutMs ?? limits.timeoutMs ?? (run.mode === "test" ? 1000 : 2800);
-  const maxWallClockMs = runOpts?.maxWallClockMs ?? 15_000;
+  const maxWallClockMs = runOpts?.maxWallClockMs ?? (run.mode === "test" ? 6_000 : 25_000);
   const deadline = Date.now() + maxWallClockMs;
   const runActor = run.actor || "Research Runner";
 
@@ -334,7 +334,11 @@ export async function executeRun(
 
   // Step 3: Run jobs with concurrency pool bounded to remaining wall clock time
   const remainingMs = Math.max(0, deadline - Date.now());
-  const jobDeadline = Date.now() + Math.max(remainingMs, 50_000);
+  const jobDeadline =
+    run.mode === "test"
+      ? Date.now() + Math.min(Math.max(remainingMs, 2_000), 6_000)
+      : Date.now() + Math.max(remainingMs, 50_000);
+  const minScoreTarget = ruleConfig?.scoring?.minScore ?? 50;
   let activeIndex = 0;
   let encounteredError: string | null = null;
 
@@ -368,7 +372,10 @@ export async function executeRun(
         counters.factsRecorded += result.factsRecorded;
         counters.contactsDiscovered += result.contactsDiscovered;
 
-        if (result.status === "APPROVED" || result.status === "NEEDS_REVIEW") {
+        if (
+          (result.status === "APPROVED" || result.status === "NEEDS_REVIEW") &&
+          result.icpScore >= minScoreTarget
+        ) {
           counters.approvedCount = (counters.approvedCount || 0) + 1;
           counters.qualifiedCompanyIds?.push(companyId);
         }
@@ -420,6 +427,7 @@ export async function executeRun(
     (counters.approvedCount || 0) < maxCandidates &&
     Date.now() + 15_000 < jobDeadline &&
     !runOpts?.mockPages &&
+    run.mode !== "test" &&
     run.mode !== "stale" &&
     run.mode !== "rejected" &&
     run.mode !== "retry"
@@ -522,7 +530,10 @@ export async function executeRun(
           counters.factsRecorded += result.factsRecorded;
           counters.contactsDiscovered += result.contactsDiscovered;
 
-          if (result.status === "APPROVED" || result.status === "NEEDS_REVIEW") {
+          if (
+            (result.status === "APPROVED" || result.status === "NEEDS_REVIEW") &&
+            result.icpScore >= minScoreTarget
+          ) {
             counters.approvedCount = (counters.approvedCount || 0) + 1;
             counters.qualifiedCompanyIds?.push(companyId);
           }

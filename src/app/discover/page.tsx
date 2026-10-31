@@ -5,37 +5,12 @@ import { getActiveContext } from "@/server/repo/markets";
 import { getActiveTeamMember } from "@/server/repo/team";
 import { canMemberAccessPath, getDefaultRouteForMember } from "@/server/domain/team";
 import { loadLeadRows, type LeadRow } from "@/server/repo/queue";
-import { resolveGate, type LeadGate } from "@/server/domain/gate";
+import { resolveGate, passesLeadRowGate, type LeadGate } from "@/server/domain/gate";
 import { POST_APPROVAL } from "@/server/domain/lifecycle";
 import { LeadProspector } from "./lead-prospector";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
-
-function passesLeadRowGate(lead: LeadRow, gate: LeadGate): boolean {
-  if (!lead || !gate) return true;
-  if (gate.requirePhone) {
-    const phone = String(lead.best?.phone || lead.phoneDisplay || "");
-    const digits = phone.replace(/\D/g, "");
-    const national = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
-    if (national.length < 10) return false;
-  }
-  if (gate.requireWebsite) {
-    const web = String(lead.website || "").trim();
-    if (!web) return false;
-  }
-  if (gate.requireDecisionMaker) {
-    if (!lead.owner?.name && !lead.hasDecisionMaker) return false;
-  }
-  if (gate.requireEmail) {
-    const em = String(lead.best?.email || "");
-    if (!em || !em.includes("@")) return false;
-  }
-  if (gate.requireLocation) {
-    if (!lead.city || !lead.state) return false;
-  }
-  return true;
-}
 
 export default async function DiscoverPage() {
   let db;
@@ -81,7 +56,8 @@ export default async function DiscoverPage() {
     }
   }
 
-  const activeGate = resolveGate((ctx?.rule?.config as any)?.gate);
+  const activeRuleConfig = (ctx?.rule?.config as any) || null;
+  const activeGate = resolveGate(activeRuleConfig?.gate);
   const isOwnerOrManager =
     activeMember.role === "OWNER" || Boolean(activeMember.permissions?.manageTeamAndSettings);
 
@@ -103,8 +79,8 @@ export default async function DiscoverPage() {
   const approved = visibleRows.filter((l) => postApprovalSet.has(l.status));
 
   // The Discover Prospector presents leads in staging waiting for human review & approval
-  const pendingLeads = review.filter((l) => passesLeadRowGate(l, activeGate));
-  const crmReadyCount = approved.filter((l) => passesLeadRowGate(l, activeGate)).length;
+  const pendingLeads = review.filter((l) => passesLeadRowGate(l, activeGate, activeRuleConfig));
+  const crmReadyCount = approved.filter((l) => passesLeadRowGate(l, activeGate, activeRuleConfig)).length;
 
   const resolvedMarket = ctx?.market || {
     id: "default_market",
