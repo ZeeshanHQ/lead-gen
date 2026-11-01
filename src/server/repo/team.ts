@@ -81,12 +81,23 @@ export async function listTeamMembers(db: Db): Promise<TeamMember[]> {
   }
   return raw.map((m, idx) => {
     const isPrimaryOwner = m.id === "member_owner" || m.role === "OWNER" || idx === 0;
+    const roleDefaults = getPermissionsForRole(isPrimaryOwner ? "OWNER" : m.role);
+    const mergedPermissions: TeamPermissions = isPrimaryOwner
+      ? roleDefaults
+      : {
+          ...roleDefaults,
+          ...(m.permissions || {}),
+          salesAnalytics:
+            m.permissions?.salesAnalytics !== undefined
+              ? Boolean(m.permissions.salesAnalytics)
+              : m.role !== "VIEWER",
+        };
     return {
       ...m,
       role: isPrimaryOwner ? "OWNER" : m.role,
       status: isPrimaryOwner ? "ACTIVE" : m.status,
       nicheScope: isPrimaryOwner ? "ALL" : m.nicheScope,
-      permissions: isPrimaryOwner ? getPermissionsForRole("OWNER") : m.permissions,
+      permissions: mergedPermissions,
       title:
         m.title === "Founder & Master Admin"
           ? "Owner"

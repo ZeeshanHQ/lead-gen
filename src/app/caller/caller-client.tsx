@@ -792,56 +792,82 @@ export function CallerClient({
     e.preventDefault();
     if (!selectedLead || !outcome) return;
 
-    startTransition(async () => {
-      const fleetNum = confirmedFleet.trim() ? parseInt(confirmedFleet.trim(), 10) : null;
-      const combinedNotes = followUpDate
-        ? `[Next Follow-up Scheduled: ${followUpDate}] ${notes.trim()}`
-        : notes.trim();
+    const targetLead = selectedLead;
+    const chosenOutcome = outcome;
+    const chosenFollowUp = followUpDate || null;
+    const chosenSoft = confirmedSoftware.trim() || null;
+    const fleetNum = confirmedFleet.trim() ? parseInt(confirmedFleet.trim(), 10) : null;
+    const rawNoteText = notes.trim();
+    const combinedNotes = chosenFollowUp
+      ? `[Next Follow-up Scheduled: ${chosenFollowUp}] ${rawNoteText}`
+      : rawNoteText;
 
+    const outcomeLabel = CALL_STATUS_DEFS[chosenOutcome]?.noteLabel || chosenOutcome;
+    const timeStr = new Date().toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const optimisticNoteLine = `[${timeStr} • ${actor.trim() || activeActorName} (${outcomeLabel})]: ${
+      rawNoteText || `Call outcome recorded: ${outcomeLabel}`
+    }`;
+    const cleanExisting = stripFollowUpTagFromNotes(targetLead.notes);
+    const optimisticNotes = `${
+      chosenFollowUp ? `[Next Follow-up Scheduled: ${chosenFollowUp}]\n` : ""
+    }${optimisticNoteLine}${cleanExisting ? `\n${cleanExisting}` : ""}`;
+    const optimisticStatus: LifecycleStatus =
+      chosenOutcome === "MEETING_BOOKED"
+        ? "MEETING_BOOKED"
+        : chosenOutcome === "CONNECTED"
+        ? "CONNECTED"
+        : chosenOutcome === "NOT_INTERESTED" || chosenOutcome === "WRONG_NUMBER"
+        ? "LOST"
+        : "CALLING";
+
+    // Instant optimistic update + close modal immediately
+    setQueue((prev) =>
+      prev.map((item) =>
+        item.companyId === targetLead.companyId
+          ? {
+              ...item,
+              status: optimisticStatus,
+              software: chosenSoft || item.software,
+              nextFollowUp: chosenFollowUp || item.nextFollowUp,
+              notes: optimisticNotes,
+            }
+          : item
+      )
+    );
+    setSelectedLead(null);
+    setFeedbackMessage(null);
+    showToast(`Call logged for ${targetLead.name} (${outcomeLabel}).`);
+
+    startTransition(async () => {
       const res = await logCallFeedbackAction({
-        companyId: selectedLead.companyId,
+        companyId: targetLead.companyId,
         actor: actor.trim() || activeActorName,
-        callOutcome: outcome,
-        softwareConfirmed: confirmedSoftware.trim() || null,
+        callOutcome: chosenOutcome,
+        softwareConfirmed: chosenSoft,
         fleetSizeConfirmed: fleetNum && !isNaN(fleetNum) ? fleetNum : null,
         callerNotes: combinedNotes,
-        followUpDate: followUpDate || null,
+        followUpDate: chosenFollowUp,
       });
 
       if (res.success && res.nextStatus) {
-        const cleanExisting = stripFollowUpTagFromNotes(selectedLead.notes);
-        const updatedNotes =
-          res.updatedNotes ||
-          (cleanExisting
-            ? `${cleanExisting}\n[Call ${new Date().toISOString().slice(0, 10)}] ${combinedNotes}`
-            : `[Call ${new Date().toISOString().slice(0, 10)}] ${combinedNotes}`);
-
         setQueue((prev) =>
           prev.map((item) =>
-            item.companyId === selectedLead.companyId
+            item.companyId === targetLead.companyId
               ? {
                   ...item,
                   status: res.nextStatus!,
-                  software: confirmedSoftware.trim() || item.software,
-                  nextFollowUp: res.nextFollowUp || followUpDate || item.nextFollowUp,
-                  notes: updatedNotes,
+                  software: chosenSoft || item.software,
+                  nextFollowUp: res.nextFollowUp || chosenFollowUp || item.nextFollowUp,
+                  notes: res.updatedNotes || optimisticNotes,
                 }
               : item
           )
         );
-        setFeedbackMessage({
-          type: "success",
-          text: "Call outcome and notes saved successfully.",
-        });
-        setTimeout(() => {
-          setSelectedLead(null);
-          setFeedbackMessage(null);
-        }, 700);
-      } else {
-        setFeedbackMessage({
-          type: "error",
-          text: res.error || "Could not save call.",
-        });
       }
     });
   };
@@ -2862,16 +2888,21 @@ export function CallerClient({
         </div>
       )}
 
-      {/* Call Outcome & Follow-Up Modal */}
+      {/* Call Outcome & Follow-Up Modal (Fully Responsive & Scrollable) */}
       {selectedLead && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="w-full max-w-lg bg-[#121215] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden flex flex-col">
-            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedLead(null);
+          }}
+        >
+          <div className="w-full max-w-xl bg-[#121215] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[88vh]">
+            <div className="px-4 sm:px-6 py-3.5 border-b border-zinc-800 flex items-center justify-between gap-2 shrink-0 bg-[#121215]">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-white truncate">
                   Log Call &amp; Follow-Up: {selectedLead.name}
                 </h3>
-                <p className="text-xs text-zinc-400 mt-0.5">
+                <p className="text-xs text-zinc-400 mt-0.5 truncate">
                   {selectedLead.bestContact.name || "Owner/Manager"} &bull;{" "}
                   {selectedLead.bestContact.phone || selectedLead.phone || "No phone"}
                 </p>
@@ -2879,7 +2910,7 @@ export function CallerClient({
               <button
                 type="button"
                 onClick={() => setSelectedLead(null)}
-                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2887,7 +2918,7 @@ export function CallerClient({
 
             {feedbackMessage && (
               <div
-                className={`px-6 py-2.5 text-xs flex items-center gap-2 border-b ${
+                className={`px-4 sm:px-6 py-2.5 text-xs flex items-center gap-2 border-b shrink-0 ${
                   feedbackMessage.type === "success"
                     ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
                     : "bg-rose-500/10 text-rose-300 border-rose-500/30"
@@ -2898,112 +2929,127 @@ export function CallerClient({
               </div>
             )}
 
-            <form onSubmit={handleLogCallSubmit} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-2">
-                  Call Outcome *
-                </label>
-                <CallOutcomePicker
-                  value={outcome}
-                  onChange={(k) => setOutcome(k)}
-                  disabled={isPending}
-                />
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-semibold text-zinc-300">
-                    Schedule Next Follow-Up (Optional)
+            <form
+              onSubmit={handleLogCallSubmit}
+              className="flex flex-col flex-1 min-h-0 overflow-hidden"
+            >
+              <div className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-2">
+                    Call Outcome *
                   </label>
-                  <div className="flex items-center gap-1.5">
-                    {[
-                      { label: "Tomorrow", preset: "TOMORROW" as const },
-                      { label: "+2 Days", preset: "TWO_DAYS" as const },
-                      { label: "Next Week", preset: "NEXT_WEEK" as const },
-                    ].map((p) => (
-                      <button
-                        key={p.preset}
-                        type="button"
-                        onClick={() => setFollowUpDate(buildPresetFollowUpIso(p.preset))}
-                        className="rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-amber-300 transition"
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
+                  <CallOutcomePicker
+                    value={outcome}
+                    onChange={(k) => setOutcome(k)}
+                    disabled={isPending}
+                  />
                 </div>
-                <input
-                  type="datetime-local"
-                  value={followUpDate}
-                  onChange={(e) => setFollowUpDate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:outline-none focus:border-zinc-600"
-                />
-              </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                  Call Notes (Optional summary)
-                </label>
-                <textarea
-                  rows={3}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Summary of conversation (leave blank to auto-record standard outcome note)..."
-                  className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
-                />
-              </div>
-
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="text-xs text-zinc-400 hover:text-white flex items-center gap-1"
-                >
-                  {showAdvanced ? (
-                    <ChevronUp className="w-3.5 h-3.5" />
-                  ) : (
-                    <ChevronDown className="w-3.5 h-3.5" />
-                  )}
-                  <span>
-                    {showAdvanced
-                      ? "Hide extra fields"
-                      : "Add current CRM/software or team size"}
-                  </span>
-                </button>
-
-                {showAdvanced && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2.5 p-3 rounded-lg bg-[#09090b] border border-zinc-800">
-                    <div>
-                      <label className="block text-[11px] font-medium text-zinc-300 mb-1">
-                        Software / Tools Used
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. HubSpot, Salesforce, Follow Up Boss"
-                        value={confirmedSoftware}
-                        onChange={(e) => setConfirmedSoftware(e.target.value)}
-                        className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-medium text-zinc-300 mb-1">
-                        Team Size / Agents
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="500"
-                        placeholder="e.g. 15"
-                        value={confirmedFleet}
-                        onChange={(e) => setConfirmedFleet(e.target.value)}
-                        className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-white"
-                      />
+                <div>
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+                    <label className="block text-xs font-semibold text-zinc-300">
+                      Schedule Next Follow-Up (Optional)
+                    </label>
+                    <div className="flex flex-wrap items-center gap-1">
+                      {[
+                        { label: "Later Today", preset: "LATER_TODAY" as const },
+                        { label: "Tomorrow", preset: "TOMORROW" as const },
+                        { label: "+2 Days", preset: "TWO_DAYS" as const },
+                        { label: "Next Week", preset: "NEXT_WEEK" as const },
+                      ].map((p) => (
+                        <button
+                          key={p.preset}
+                          type="button"
+                          onClick={() => setFollowUpDate(buildPresetFollowUpIso(p.preset))}
+                          className="rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-amber-300 transition"
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                      {followUpDate && (
+                        <button
+                          type="button"
+                          onClick={() => setFollowUpDate("")}
+                          className="rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-400 hover:text-white transition"
+                        >
+                          Clear
+                        </button>
+                      )}
                     </div>
                   </div>
-                )}
+                  <input
+                    type="datetime-local"
+                    value={followUpDate}
+                    onChange={(e) => setFollowUpDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                    Call Notes (Optional summary)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Summary of conversation (leave blank to auto-record standard outcome note)..."
+                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvanced(!showAdvanced)}
+                    className="text-xs text-zinc-400 hover:text-white flex items-center gap-1"
+                  >
+                    {showAdvanced ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {showAdvanced
+                        ? "Hide extra fields"
+                        : "Add current CRM/software or team size"}
+                    </span>
+                  </button>
+
+                  {showAdvanced && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2.5 p-3 rounded-lg bg-[#09090b] border border-zinc-800">
+                      <div>
+                        <label className="block text-[11px] font-medium text-zinc-300 mb-1">
+                          Software / Tools Used
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. HubSpot, Salesforce, Follow Up Boss"
+                          value={confirmedSoftware}
+                          onChange={(e) => setConfirmedSoftware(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-zinc-300 mb-1">
+                          Team Size / Agents
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="500"
+                          placeholder="e.g. 15"
+                          value={confirmedFleet}
+                          onChange={(e) => setConfirmedFleet(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-white"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div className="pt-3 border-t border-zinc-800 flex items-center justify-end gap-2">
+              <div className="px-4 sm:px-6 py-3.5 border-t border-zinc-800 bg-[#0c0c0f] flex items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   disabled={isPending}
@@ -3014,10 +3060,11 @@ export function CallerClient({
                 </button>
                 <button
                   type="submit"
-                  disabled={isPending}
-                  className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black font-bold text-xs transition"
+                  disabled={isPending || !outcome}
+                  title={!outcome ? "Pick what happened on the call first" : undefined}
+                  className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black font-bold text-xs transition disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
                 >
-                  {isPending ? "Saving..." : "Save Call Outcome"}
+                  {isPending ? "Saving..." : outcome ? "Save Call Outcome" : "Pick an outcome to save"}
                 </button>
               </div>
             </form>

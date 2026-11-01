@@ -7,6 +7,7 @@ export interface TeamPermissions {
   approveLeads: boolean;
   callerWorkbench: boolean;
   editContacts: boolean;
+  salesAnalytics?: boolean;
   editRules: boolean;
   exportAndSync: boolean;
   manageNiches: boolean;
@@ -163,6 +164,13 @@ export const PERMISSION_DEFINITIONS: Array<{
     category: "Leads & Calling",
   },
   {
+    key: "salesAnalytics",
+    label: "Sales Funnel & Analytics (/analytics)",
+    shortLabel: "Sales Funnel",
+    description: "View personal Sales Funnel, dial pick rates, conversion bottlenecks, and peak calling hours.",
+    category: "Leads & Calling",
+  },
+  {
     key: "discoverLeads",
     label: "Find & Extract Leads (/discover)",
     shortLabel: "Find Leads",
@@ -218,6 +226,7 @@ export const ROLE_PRESETS: Record<TeamRole, RolePresetMeta> = {
       approveLeads: true,
       callerWorkbench: true,
       editContacts: true,
+      salesAnalytics: true,
       editRules: true,
       exportAndSync: true,
       manageNiches: true,
@@ -235,6 +244,7 @@ export const ROLE_PRESETS: Record<TeamRole, RolePresetMeta> = {
       approveLeads: true,
       callerWorkbench: true,
       editContacts: true,
+      salesAnalytics: true,
       editRules: true,
       exportAndSync: false,
       manageNiches: true,
@@ -252,6 +262,7 @@ export const ROLE_PRESETS: Record<TeamRole, RolePresetMeta> = {
       approveLeads: true,
       callerWorkbench: true,
       editContacts: true,
+      salesAnalytics: true,
       editRules: false,
       exportAndSync: false,
       manageNiches: false,
@@ -263,12 +274,13 @@ export const ROLE_PRESETS: Record<TeamRole, RolePresetMeta> = {
     label: "Sales Caller",
     shortLabel: "Caller",
     badgeColor: "bg-indigo-500/10 text-indigo-300 border-indigo-500/25",
-    description: "Focused CRM workspace: dial assigned leads, edit CRM records, schedule follow-ups, and log calls.",
+    description: "Focused CRM workspace: dial assigned leads, edit CRM records, schedule follow-ups, log calls, and track personal sales funnel.",
     defaultPermissions: {
       discoverLeads: true,
       approveLeads: false,
       callerWorkbench: true,
       editContacts: true,
+      salesAnalytics: true,
       editRules: false,
       exportAndSync: false,
       manageNiches: false,
@@ -286,6 +298,7 @@ export const ROLE_PRESETS: Record<TeamRole, RolePresetMeta> = {
       approveLeads: false,
       callerWorkbench: true,
       editContacts: false,
+      salesAnalytics: false,
       editRules: false,
       exportAndSync: false,
       manageNiches: false,
@@ -340,13 +353,18 @@ export function canMemberAccessPath(member: TeamMember | null | undefined, pathn
 }
 
 /**
- * Sales Funnel & Analytics is a management view (every caller's numbers, team comparison,
- * bottlenecks). It is limited to the Owner and team managers. Sales Callers and Viewers can
- * never open it, even if the generic "Overview Dashboard" permission was switched on for them.
+ * Checks whether a team member can access `/analytics` (Sales Funnel).
+ * - Owner always has full team-wide access.
+ * - Any team member with `permissions.salesAnalytics` enabled can view `/analytics`
+ *   (Callers see only their own personal leads, calls, and conversion metrics;
+ *    Managers/Admins with `manageTeamAndSettings` see the full team view).
  */
 export function canViewSalesAnalytics(member: TeamMember | null | undefined): boolean {
   if (!member || member.id === "guest") return false;
   if (member.role === "OWNER") return true;
-  if (member.role === "CALLER" || member.role === "VIEWER") return false;
-  return Boolean(member.permissions.manageTeamAndSettings);
+  if (member.permissions?.salesAnalytics !== undefined) {
+    return Boolean(member.permissions.salesAnalytics);
+  }
+  if (member.role === "VIEWER") return false;
+  return Boolean(member.permissions?.callerWorkbench || member.permissions?.manageTeamAndSettings);
 }

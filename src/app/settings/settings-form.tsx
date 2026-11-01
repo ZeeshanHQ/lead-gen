@@ -1244,20 +1244,24 @@ export function SettingsForm({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {[
                   {
-                    name: "Custom Dialer Platform",
-                    url: "https://dialer.yourdomain.com/call?phone={phone}&name={name}&company={company}&niche={niche}",
+                    name: "AstraVenta Voice (voice.astraventa.com)",
+                    url: "https://voice.astraventa.com/dial?phone={phone}&leadId={id}&company={company}&name={name}&city={city}&state={state}&niche={niche}",
+                    webhook: "https://voice.astraventa.com/api/leads/import",
                   },
                   {
-                    name: "GoHighLevel Dialer",
-                    url: "tel:{phone}",
+                    name: "Custom Dialer Platform",
+                    url: "https://dialer.yourdomain.com/call?phone={phone}&name={name}&company={company}&niche={niche}",
+                    webhook: "",
                   },
                   {
                     name: "VICIdial / Power Dialer",
                     url: "https://dialer.yourdomain.com/agc/api.php?phone_number={raw_phone}&vendor_lead_code={id}",
+                    webhook: "",
                   },
                   {
                     name: "Desktop / SIP Softphone",
                     url: "tel:{phone}",
+                    webhook: "",
                   },
                 ].map((preset) => (
                   <button
@@ -1266,10 +1270,13 @@ export function SettingsForm({
                     onClick={() => {
                       setDialerPlatformName(preset.name);
                       setDialerLaunchUrl(preset.url);
+                      if (preset.webhook && !dialerWebhookUrl) {
+                        setDialerWebhookUrl(preset.webhook);
+                      }
                     }}
                     className={`rounded-lg border p-2.5 text-left text-xs transition ${
                       dialerPlatformName === preset.name
-                        ? "border-slate-500 bg-slate-800 text-white font-medium"
+                        ? "border-emerald-500/60 bg-emerald-500/10 text-white font-semibold"
                         : "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
                     }`}
                   >

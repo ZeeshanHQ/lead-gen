@@ -78,6 +78,7 @@ interface SalesFunnelClientProps {
   marketName: string;
   tenantName: string;
   isOwner: boolean;
+  activeMemberId?: string;
   activeMemberName?: string;
 }
 
@@ -308,9 +309,12 @@ export function SalesFunnelClient({
   marketName,
   tenantName,
   isOwner,
+  activeMemberId,
   activeMemberName,
 }: SalesFunnelClientProps) {
-  const [selectedCallerId, setSelectedCallerId] = useState<string>("ALL");
+  const [selectedCallerId, setSelectedCallerId] = useState<string>(() =>
+    isOwner ? "ALL" : activeMemberId || "ALL"
+  );
   const [timeframe, setTimeframe] = useState<Timeframe>("ALL");
   const [activeTab, setActiveTab] = useState<AnalyticsTab>("OVERVIEW");
   const [viewMode, setViewMode] = useState<FunnelViewMode>("BOTH");
@@ -367,14 +371,15 @@ export function SalesFunnelClient({
   }, [funnelLeads, auditInputs, funnelMembers, nowMs]);
 
   // 5. Pure Funnel Computation
+  const effectiveScope = isOwner ? selectedCallerId : activeMemberId || "ALL";
   const funnelResult: FunnelResult = useMemo(() => {
     const filters: FunnelFilters = {
-      scope: selectedCallerId,
+      scope: effectiveScope,
       timeframe,
       nowMs,
     };
     return computeFunnel(funnelLeads, rawEvents, funnelMembers, filters);
-  }, [funnelLeads, rawEvents, funnelMembers, selectedCallerId, timeframe, nowMs]);
+  }, [funnelLeads, rawEvents, funnelMembers, effectiveScope, timeframe, nowMs]);
 
   // Lead Penetration Rate: dialed leads / total pool
   const poolPenetrationRate =
@@ -489,37 +494,47 @@ export function SalesFunnelClient({
               <span className="text-xs text-zinc-400">{tenantName}</span>
             </div>
             <h1 className="text-2xl font-black text-white tracking-tight mt-1">
-              Sales Pipeline &amp; Conversion Funnel
+              {isOwner
+                ? "Sales Pipeline & Conversion Funnel"
+                : `My Sales Funnel & Performance (${activeMemberName || "Caller"})`}
             </h1>
             <p className="text-xs text-zinc-400 mt-0.5">
-              Single-source telemetry derived directly from logged call outcomes. Track bottlenecks,
-              golden calling hours, and close-rate velocity.
+              {isOwner
+                ? "Single-source telemetry derived directly from logged call outcomes. Track bottlenecks, golden calling hours, and close-rate velocity."
+                : "Your live personal calling scorecard, pickup rate, decision-maker conversations, follow-up discipline, and conversion bottlenecks."}
             </p>
           </div>
 
           {/* Timeframe & Scope Filters */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* Caller Selector */}
-            <div className="flex items-center gap-1.5 bg-[#09090c] border border-zinc-800 rounded-lg px-2.5 py-1.5">
-              <Users className="w-3.5 h-3.5 text-zinc-400" />
-              <select
-                value={selectedCallerId}
-                onChange={(e) => setSelectedCallerId(e.target.value)}
-                className="bg-transparent text-xs text-zinc-200 font-semibold focus:outline-none cursor-pointer"
-              >
-                <option value="ALL" className="bg-[#101014] text-zinc-200">
-                  All Callers ({teamCallers.length})
-                </option>
-                <option value="UNASSIGNED" className="bg-[#101014] text-zinc-200">
-                  Unassigned Leads
-                </option>
-                {teamCallers.map((c) => (
-                  <option key={c.id} value={c.id} className="bg-[#101014] text-zinc-200">
-                    {c.name}
+            {/* Caller Selector (Owner/Manager) or Scoped Badge (Caller) */}
+            {isOwner ? (
+              <div className="flex items-center gap-1.5 bg-[#09090c] border border-zinc-800 rounded-lg px-2.5 py-1.5">
+                <Users className="w-3.5 h-3.5 text-zinc-400" />
+                <select
+                  value={selectedCallerId}
+                  onChange={(e) => setSelectedCallerId(e.target.value)}
+                  className="bg-transparent text-xs text-zinc-200 font-semibold focus:outline-none cursor-pointer"
+                >
+                  <option value="ALL" className="bg-[#101014] text-zinc-200">
+                    All Callers ({teamCallers.length})
                   </option>
-                ))}
-              </select>
-            </div>
+                  <option value="UNASSIGNED" className="bg-[#101014] text-zinc-200">
+                    Unassigned Leads
+                  </option>
+                  {teamCallers.map((c) => (
+                    <option key={c.id} value={c.id} className="bg-[#101014] text-zinc-200">
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="inline-flex items-center gap-1.5 bg-emerald-950/30 border border-emerald-500/30 rounded-lg px-3 py-1.5 text-xs font-bold text-emerald-300">
+                <Users className="w-3.5 h-3.5 text-emerald-400" />
+                <span>My Assigned Queue ({activeMemberName || "Caller"})</span>
+              </div>
+            )}
 
             {/* Timeframe Selector */}
             <div className="flex items-center rounded-lg bg-[#09090c] border border-zinc-800 p-0.5">
@@ -787,7 +802,11 @@ export function SalesFunnelClient({
           {[
             { id: "OVERVIEW", label: "Conversion Funnel & Gauges", icon: Target },
             { id: "HOURLY", label: "Peak Calling Hours (PKT Synced)", icon: Clock },
-            { id: "CALLERS", label: "Caller Performance Leaderboard", icon: Users },
+            {
+              id: "CALLERS",
+              label: isOwner ? "Caller Performance Leaderboard" : "My Performance Scorecard",
+              icon: Users,
+            },
             { id: "ICP_QUALITY", label: "Lead Quality Tier Correlation", icon: Award },
             { id: "TRENDS", label: "Daily Conversion Trend", icon: TrendingUp },
           ].map((t) => {

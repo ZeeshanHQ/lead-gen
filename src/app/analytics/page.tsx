@@ -28,7 +28,7 @@ export default async function AnalyticsPage() {
 
   const [marketLeads, allWorkspaceLeads, rawAuditLogs] = await Promise.all([
     loadLeadRows(db, "approved", market.id),
-    isOwnerOrManager ? loadLeadRows(db, "approved") : Promise.resolve([]),
+    loadLeadRows(db, "approved"),
     db
       .select({
         id: auditLogs.id,
@@ -43,16 +43,27 @@ export default async function AnalyticsPage() {
       .limit(3000),
   ]);
 
-  const leadsToUse =
-    isOwnerOrManager && marketLeads.length === 0 && allWorkspaceLeads.length > 0
-      ? allWorkspaceLeads
-      : marketLeads;
+  let leadsToUse: LeadRow[];
+  if (isOwnerOrManager) {
+    leadsToUse =
+      marketLeads.length === 0 && allWorkspaceLeads.length > 0
+        ? allWorkspaceLeads
+        : marketLeads;
+  } else {
+    const myMarketLeads = marketLeads.filter((l) => l.assignedMemberId === activeMember.id);
+    const myWorkspaceLeads = allWorkspaceLeads.filter((l) => l.assignedMemberId === activeMember.id);
+    leadsToUse = myMarketLeads.length > 0 ? myMarketLeads : myWorkspaceLeads;
+  }
 
-  const teamCallers = allMembers.filter(
-    (m) => m.status === "ACTIVE" && m.role !== "VIEWER"
-  );
+  const teamCallers = isOwnerOrManager
+    ? allMembers.filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+    : [activeMember];
 
-  const callEvents: CallAuditEntry[] = rawAuditLogs.map((log) => {
+  const myLeadIdSet = new Set(leadsToUse.map((l) => l.id));
+  const activeNameLower = activeMember.name.trim().toLowerCase();
+  const activeEmailLower = activeMember.email.trim().toLowerCase();
+
+  const allCallEvents: CallAuditEntry[] = rawAuditLogs.map((log) => {
     const details = (log.details as Record<string, unknown>) || {};
     return {
       id: log.id,
@@ -65,6 +76,19 @@ export default async function AnalyticsPage() {
     };
   });
 
+  const callEvents = isOwnerOrManager
+    ? allCallEvents
+    : allCallEvents.filter((evt) => {
+        const actorLower = (evt.actor || "").trim().toLowerCase();
+        if (actorLower && (actorLower === activeNameLower || actorLower === activeEmailLower || actorLower.includes(activeNameLower))) {
+          return true;
+        }
+        if (evt.companyId && myLeadIdSet.has(evt.companyId)) {
+          return true;
+        }
+        return false;
+      });
+
   return (
     <SalesFunnelClient
       leads={leadsToUse}
@@ -73,6 +97,7 @@ export default async function AnalyticsPage() {
       marketName={market.name}
       tenantName={tenant.name}
       isOwner={isOwnerOrManager}
+      activeMemberId={activeMember.id}
       activeMemberName={activeMember.name}
     />
   );

@@ -74,18 +74,22 @@ export function CallOutcomePicker({
   disabled?: boolean;
 }) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       {OUTCOME_GROUPS.map((group) => (
         <div key={group.id}>
-          <div className="mb-1.5 flex items-baseline justify-between">
+          <div className="mb-1 flex flex-wrap items-baseline justify-between gap-1">
             <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
               {group.title}
             </span>
-            <span className="text-[10px] text-zinc-600">{group.hint}</span>
+            <span className="text-[10px] text-zinc-500">{group.hint}</span>
           </div>
           <div
             className={`grid gap-2 ${
-              group.keys.length >= 3 ? "grid-cols-3" : group.keys.length === 2 ? "grid-cols-2" : "grid-cols-1"
+              group.keys.length >= 3
+                ? "grid-cols-1 sm:grid-cols-3"
+                : group.keys.length === 2
+                ? "grid-cols-1 sm:grid-cols-2"
+                : "grid-cols-1"
             }`}
           >
             {group.keys.map((key) => {
@@ -98,17 +102,17 @@ export function CallOutcomePicker({
                   disabled={disabled}
                   onClick={() => onChange(key)}
                   title={`${def.meaning} ${def.whenToUse}`}
-                  className={`flex flex-col items-start gap-0.5 rounded-lg border p-2.5 text-left text-xs transition disabled:opacity-50 disabled:cursor-not-allowed ${
+                  className={`flex flex-col items-start gap-0.5 rounded-lg border p-2 text-left text-xs transition disabled:opacity-50 disabled:cursor-not-allowed ${
                     active
-                      ? `${def.selected} text-white font-bold`
-                      : "border-zinc-800 bg-[#09090b] text-zinc-400 hover:border-zinc-600 hover:text-zinc-100"
+                      ? `${def.selected} text-white font-bold shadow-sm`
+                      : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-600 hover:text-zinc-100"
                   }`}
                 >
                   <span className="flex items-center gap-1.5">
-                    <span className={`h-2 w-2 rounded-full ${def.dot}`} />
-                    <span>{def.label}</span>
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${def.dot}`} />
+                    <span className="truncate">{def.label}</span>
                   </span>
-                  <span className="text-[10px] font-normal leading-tight text-zinc-500">
+                  <span className="text-[10px] font-normal leading-tight text-zinc-500 line-clamp-2">
                     {def.whenToUse}
                   </span>
                 </button>

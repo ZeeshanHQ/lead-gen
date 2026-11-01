@@ -725,30 +725,62 @@ export function CrmLeadSheet({
     e.preventDefault();
     if (!selectedLead || !outcome) return;
 
-    startTransition(async () => {
-      const combinedNotes = followUpDate
-        ? `[Next Follow-up Scheduled: ${followUpDate}] ${notes.trim()}`
-        : notes.trim();
+    const targetLead = selectedLead;
+    const chosenOutcome = outcome;
+    const chosenFollowUp = followUpDate || null;
+    const rawNoteText = notes.trim();
+    const combinedNotes = chosenFollowUp
+      ? `[Next Follow-up Scheduled: ${chosenFollowUp}] ${rawNoteText}`
+      : rawNoteText;
 
+    const outcomeLabel = CALL_STATUS_DEFS[chosenOutcome]?.noteLabel || chosenOutcome;
+    const timeStr = new Date().toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const optimisticNoteLine = `[${timeStr} • ${actor.trim() || activeActorName} (${outcomeLabel})]: ${
+      rawNoteText || `Call outcome recorded: ${outcomeLabel}`
+    }`;
+    const existingClean = stripFollowUpTagFromNotes(targetLead.notes);
+    const optimisticNotes = `${
+      chosenFollowUp ? `[Next Follow-up Scheduled: ${chosenFollowUp}]\n` : ""
+    }${optimisticNoteLine}${existingClean ? `\n${existingClean}` : ""}`;
+    const optimisticStatus: LifecycleStatus =
+      chosenOutcome === "MEETING_BOOKED"
+        ? "MEETING_BOOKED"
+        : chosenOutcome === "CONNECTED"
+        ? "CONNECTED"
+        : chosenOutcome === "NOT_INTERESTED" || chosenOutcome === "WRONG_NUMBER"
+        ? "LOST"
+        : "CALLING";
+
+    // Instant optimistic UI update + close modal immediately for zero caller lag
+    applyLeadPatch(targetLead.id, {
+      status: optimisticStatus,
+      nextFollowUp: chosenFollowUp || targetLead.nextFollowUp,
+      notes: optimisticNotes,
+    });
+    setSelectedLead(null);
+    setSyncFeedback(`Call logged for ${targetLead.name} (${outcomeLabel}).`);
+    setTimeout(() => setSyncFeedback(null), 3000);
+
+    startTransition(async () => {
       const res = await logCallFeedbackAction({
-        companyId: selectedLead.id,
+        companyId: targetLead.id,
         actor: actor.trim() || activeActorName,
-        callOutcome: outcome,
+        callOutcome: chosenOutcome,
         callerNotes: combinedNotes,
-        followUpDate: followUpDate || null,
+        followUpDate: chosenFollowUp,
       });
 
       if (res.success && res.nextStatus) {
-        applyLeadPatch(selectedLead.id, {
+        applyLeadPatch(targetLead.id, {
           status: res.nextStatus,
-          nextFollowUp: res.nextFollowUp || followUpDate || selectedLead.nextFollowUp,
-          notes: res.updatedNotes || selectedLead.notes,
+          nextFollowUp: res.nextFollowUp || chosenFollowUp || targetLead.nextFollowUp,
+          notes: res.updatedNotes || optimisticNotes,
         });
-        setSyncFeedback(`Call logged successfully for ${selectedLead.name}.`);
-        setTimeout(() => setSyncFeedback(null), 3000);
-        setSelectedLead(null);
-      } else {
-        alert(res.error || "Could not save call");
       }
     });
   };
@@ -2368,14 +2400,21 @@ export function CrmLeadSheet({
         </div>
       )}
 
-      {/* Quick Call & Outcome Modal */}
+      {/* Quick Call & Outcome Modal (Fully Responsive & Scrollable) */}
       {selectedLead && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="w-full max-w-lg bg-[#121215] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden flex flex-col">
-            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white">Log Call: {selectedLead.name}</h3>
-                <p className="text-xs text-zinc-400 mt-0.5">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedLead(null);
+          }}
+        >
+          <div className="w-full max-w-xl bg-[#121215] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[88vh]">
+            <div className="px-4 sm:px-6 py-3.5 border-b border-zinc-800 flex items-center justify-between gap-2 shrink-0 bg-[#121215]">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-white truncate">
+                  Log Call: {selectedLead.name}
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5 truncate">
                   {selectedLead.bestContact?.name || "Owner/Manager"} &bull;{" "}
                   {selectedLead.bestContact?.phone || selectedLead.phoneDisplay || "No Phone"}
                 </p>
@@ -2383,51 +2422,84 @@ export function CrmLeadSheet({
               <button
                 type="button"
                 onClick={() => setSelectedLead(null)}
-                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveCall} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-2">
-                  What happened on this call? *
-                </label>
-                <CallOutcomePicker value={outcome} onChange={setOutcome} />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                  Next Follow-Up (Optional)
-                </label>
-                <input
-                  type="datetime-local"
-                  value={followUpDate}
-                  onChange={(e) => setFollowUpDate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:outline-none focus:border-zinc-600"
-                />
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-semibold text-zinc-300">
-                    Call Notes (Optional summary)
+            <form
+              onSubmit={handleSaveCall}
+              className="flex flex-col flex-1 min-h-0 overflow-hidden"
+            >
+              <div className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-2">
+                    What happened on this call? *
                   </label>
-                  <span className="text-[10px] text-zinc-500">
-                    Leave blank to auto-record standard outcome note
-                  </span>
+                  <CallOutcomePicker value={outcome} onChange={setOutcome} />
                 </div>
-                <textarea
-                  rows={3}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Write a quick summary of the call or objections (leave empty for auto note)..."
-                  className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
-                />
+
+                <div>
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+                    <label className="block text-xs font-semibold text-zinc-300">
+                      Next Follow-Up (Optional)
+                    </label>
+                    <div className="flex flex-wrap items-center gap-1">
+                      {[
+                        { label: "Later Today", preset: "LATER_TODAY" as const },
+                        { label: "Tomorrow", preset: "TOMORROW" as const },
+                        { label: "+2 Days", preset: "TWO_DAYS" as const },
+                        { label: "Next Week", preset: "NEXT_WEEK" as const },
+                      ].map((p) => (
+                        <button
+                          key={p.preset}
+                          type="button"
+                          onClick={() => setFollowUpDate(buildPresetFollowUpIso(p.preset))}
+                          className="rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-amber-300 transition"
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                      {followUpDate && (
+                        <button
+                          type="button"
+                          onClick={() => setFollowUpDate("")}
+                          className="rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-400 hover:text-white transition"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <input
+                    type="datetime-local"
+                    value={followUpDate}
+                    onChange={(e) => setFollowUpDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
+                    <label className="block text-xs font-semibold text-zinc-300">
+                      Call Notes (Optional summary)
+                    </label>
+                    <span className="text-[10px] text-zinc-500">
+                      Leave blank to auto-record standard outcome note
+                    </span>
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Write a quick summary of the call or objections (leave empty for auto note)..."
+                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
               </div>
 
-              <div className="pt-3 border-t border-zinc-800 flex items-center justify-end gap-2">
+              <div className="px-4 sm:px-6 py-3.5 border-t border-zinc-800 bg-[#0c0c0f] flex items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   disabled={isPending}
@@ -2440,9 +2512,9 @@ export function CrmLeadSheet({
                   type="submit"
                   disabled={isPending || !outcome}
                   title={!outcome ? "Pick what happened on the call first" : undefined}
-                  className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black font-bold text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black font-bold text-xs transition disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
                 >
-                  {isPending ? "Saving..." : outcome ? "Save Call" : "Pick an outcome to save"}
+                  {isPending ? "Saving..." : outcome ? "Save Call Outcome" : "Pick an outcome to save"}
                 </button>
               </div>
             </form>
@@ -2621,6 +2693,19 @@ export function CrmLeadSheet({
                           <div>
                             <div className="font-semibold text-zinc-200 text-[11px]">Edit Contact Info &amp; Notes</div>
                             <div className="text-[10px] text-zinc-500">Allow editing decision maker, phone &amp; notes</div>
+                          </div>
+                        </label>
+
+                        <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-[#121215] border border-zinc-800/60 cursor-pointer hover:border-zinc-700 transition">
+                          <input
+                            type="checkbox"
+                            checked={perms.salesAnalytics !== false}
+                            onChange={() => togglePerm("salesAnalytics")}
+                            className="mt-0.5 rounded border-zinc-700 text-emerald-500 focus:ring-0 cursor-pointer"
+                          />
+                          <div>
+                            <div className="font-semibold text-zinc-200 text-[11px]">Sales Funnel &amp; Analytics (/analytics)</div>
+                            <div className="text-[10px] text-zinc-500">Show caller their personal sales funnel, pick rate &amp; stats</div>
                           </div>
                         </label>
 

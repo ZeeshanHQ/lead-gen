@@ -8,6 +8,7 @@ import {
   computeLiveCrmTelemetry,
 } from "@/server/domain/call-outcomes";
 import { zoneForState, convertHourBetweenZones, wallClock } from "@/server/domain/call-time";
+import { canViewSalesAnalytics, getPermissionsForRole, type TeamMember } from "@/server/domain/team";
 import {
   buildCallEvents,
   computeFunnel,
@@ -280,5 +281,31 @@ describe("live CRM inline notes, smart fields, and telemetry sync", () => {
     expect(funnel.dial.total).toBe(2);
     expect(funnel.dial.human).toBe(1);
     expect(funnel.dial.owner).toBe(1);
+  });
+
+  it("allows callers to access Sales Funnel (/analytics) when salesAnalytics permission is enabled, and blocks when disabled", () => {
+    const callerMember: TeamMember = {
+      id: "caller_1",
+      name: "Hamda",
+      email: "hamda@astraventa.com",
+      title: "Sales Caller",
+      role: "CALLER",
+      status: "ACTIVE",
+      avatarColor: "bg-indigo-500/15",
+      nicheScope: "ALL",
+      allowedNicheIds: [],
+      tenantIds: ["tenant_main"],
+      permissions: getPermissionsForRole("CALLER"),
+      invitedAt: new Date().toISOString(),
+    };
+
+    expect(callerMember.permissions.salesAnalytics).toBe(true);
+    expect(canViewSalesAnalytics(callerMember)).toBe(true);
+
+    const disabledCaller: TeamMember = {
+      ...callerMember,
+      permissions: { ...callerMember.permissions, salesAnalytics: false },
+    };
+    expect(canViewSalesAnalytics(disabledCaller)).toBe(false);
   });
 });
