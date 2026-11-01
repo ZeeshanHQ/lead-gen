@@ -34,8 +34,23 @@ const STATE_CITIES: Record<string, string[]> = {
   NJ: ["Newark", "Jersey City", "Paterson", "Edison", "Trenton"],
   MI: ["Detroit", "Grand Rapids", "Ann Arbor", "Lansing", "Troy"],
   NV: ["Las Vegas", "Henderson", "Reno", "North Las Vegas"],
-  UT: ["Salt Lake City", "Provo", "Ogden", "St. George"],
+  UT: ["Salt Lake City", "Provo", "Ogden", "St. George", "Park City", "Moab"],
+  SC: ["Charleston", "Columbia", "Greenville", "Myrtle Beach", "Hilton Head Island"],
 };
+
+const EXTRA_STATE_CITIES: Record<string, string[]> = {
+  TX: ["Frisco", "McKinney", "Irving", "Galveston", "Fredericksburg", "New Braunfels", "Corpus Christi", "Katy", "Sugar Land", "The Woodlands"],
+  FL: ["Destin", "Kissimmee", "Sarasota", "Clearwater", "West Palm Beach", "Boca Raton", "Key West", "Fort Myers", "Panama City Beach"],
+  GA: ["Sandy Springs", "Athens", "Blue Ridge"],
+  NC: ["Asheville", "Boone", "Outer Banks"],
+  AZ: ["Sedona", "Tempe", "Peoria", "Flagstaff"],
+  CA: ["Palm Springs", "Santa Barbara", "Newport Beach", "Anaheim"],
+  CO: ["Breckenridge", "Vail", "Aspen", "Steamboat Springs"],
+  TN: ["Gatlinburg", "Pigeon Forge", "Sevierville", "Brentwood"],
+};
+for (const [st, extra] of Object.entries(EXTRA_STATE_CITIES)) {
+  STATE_CITIES[st] = Array.from(new Set([...(STATE_CITIES[st] || []), ...extra]));
+}
 
 const CITY_TO_STATE: Record<string, string> = {};
 for (const [st, cities] of Object.entries(STATE_CITIES)) {
@@ -60,6 +75,23 @@ const STR_AIRBNB_TEMPLATES: Array<(kw: string, city: string, stateName: string) 
   (kw, city, st) => `${kw} ${city} ${st} "owner services" OR "list your property" official website`,
   (kw, city, st) => `${kw} ${city} ${st} "24/7" OR "guest support" OR "concierge" contact us`,
   (kw, city, st) => `vacation home property management company ${city} ${st} "our team" OR "about us"`,
+];
+
+const ACTIVE_AIRBNB_HOST_TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> = [
+  (kw, city, st) => `${kw} in ${city}, ${st} "book direct" OR "properties" phone`,
+  (kw, city, st) => `"vacation rentals" ${city} ${st} "book direct" OR "reservations" contact`,
+  (kw, city, st) => `${kw} ${city} ${st} "our properties" OR "featured rentals" OR "homes" phone`,
+  (kw, city, st) => `"short term rentals" ${city} ${st} "guest" OR "concierge" OR "check-in" contact`,
+  (kw, city, st) => `luxury vacation home rentals ${city} ${st} "contact us" phone number`,
+  (kw, city, st) => `${kw} ${city} ${st} "airbnb" OR "vrbo" OR "vacation rental" official website`,
+];
+
+const CORPORATE_MTR_TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> = [
+  (kw, city, st) => `${kw} in ${city}, ${st} "furnished" OR "corporate housing" phone`,
+  (kw, city, st) => `"corporate housing" ${city} ${st} "contact us" OR "inquire" phone`,
+  (kw, city, st) => `"furnished apartments" ${city} ${st} "extended stay" OR "relocation" contact`,
+  (kw, city, st) => `${kw} ${city} ${st} "monthly rentals" OR "executive housing" OR "30+ days" phone`,
+  (kw, city, st) => `corporate housing management company ${city} ${st} official website`,
 ];
 
 const COMMERCIAL_TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> = [
@@ -126,15 +158,27 @@ export function buildQueryPlan(input: {
   }
 
   const joinedKw = kwList.join(" ").toLowerCase();
+  const isActiveHostNiche =
+    input.subNiche === "airbnb_active_hosts" ||
+    /\b(book\s*direct|superhost|cabin\s*and\s*villa|beach\s*house\s*vacation)\b/i.test(joinedKw);
+  const isCorporateMtrNiche =
+    input.subNiche === "corporate_housing_mtr" ||
+    /\b(corporate\s*housing|mid\s*term\s*rental|furnished\s*corporate|travel\s*nurse)\b/i.test(joinedKw);
   const isStrNiche =
     input.subNiche === "airbnb_str_concierge" ||
+    input.subNiche === "airbnb_str_vrm" ||
+    input.subNiche === "str_cohost_hospitality" ||
     /\b(airbnb|vrbo|vacation\s*rental|short[- ]term\s*rental|co-?host|serviced\s*apartment)\b/i.test(joinedKw);
 
-  const templates = isStrNiche
+  const templates = isActiveHostNiche
+    ? ACTIVE_AIRBNB_HOST_TEMPLATES
+    : isCorporateMtrNiche
+    ? CORPORATE_MTR_TEMPLATES
+    : isStrNiche
     ? STR_AIRBNB_TEMPLATES
-    : input.businessType === "commercial" || input.subNiche === "commercial_re"
+    : input.businessType === "commercial" || input.subNiche === "commercial_re" || input.subNiche === "commercial_real_estate"
     ? COMMERCIAL_TEMPLATES
-    : input.businessType === "residential" || input.subNiche === "residential_re"
+    : input.businessType === "residential" || input.subNiche === "residential_re" || input.subNiche === "residential_real_estate"
     ? RESIDENTIAL_TEMPLATES
     : DEFAULT_TEMPLATES;
 
@@ -269,15 +313,15 @@ export function isOffNicheSearchResult(input: {
     }
   }
 
-  // 2. Block Web Design, Digital Marketing, SEO, Software & Coaching vendors unless user is targeting them
+  // 2. Block Web Design, Digital Marketing, SEO, Software, Logistics, Freight, Moving & Staffing vendors unless targeted
   const userWantsMarketingOrTech =
-    /\b(web\s*design|web\s*dev|marketing\s*agency|seo|digital\s*marketing|software|saas|it\s*services|advertising\s*agency)\b/i.test(
+    /\b(web\s*design|web\s*dev|marketing\s*agency|seo|digital\s*marketing|software|saas|it\s*services|advertising\s*agency|logistics|freight|trucking|moving)\b/i.test(
       kwLower
     );
 
   if (!userWantsMarketingOrTech) {
     if (
-      /webdesign|webdev|digitalmarketing|seoagency|marketingagency|mediagroup|designstudio|creativeagency|softwaresolutions|appdev|realtorwebsites|realestateschool/i.test(
+      /webdesign|webdev|digitalmarketing|seoagency|marketingagency|mediagroup|designstudio|creativeagency|softwaresolutions|appdev|itservices|realtorwebsites|realestateschool|logistics|freight|trucking|drayage|supplychain|movers|vanlines|autotransport|courier|warehousing|fulfillment|staffing/i.test(
         domainLower
       )
     ) {
@@ -285,10 +329,26 @@ export function isOffNicheSearchResult(input: {
     }
 
     if (
-      /\b(web\s*design(?:\s+agency|\s+company|\s+for|\s+services|\s+studio)?|website\s*design|website\s*development|custom\s*websites?\s*for|digital\s*marketing\s*(?:agency|company|services)|seo\s*(?:agency|company|services|experts|for\s+realtors|for\s+real\s+estate|for\s+contractors)|ppc\s*(?:agency|management)|social\s*media\s*marketing\s*agency|branding\s*agency|lead\s*generation\s*(?:agency|company|for)|marketing\s*(?:agency|solutions|company)\s*for\s*(?:realtors|real\s*estate|hvac|contractors|property\s*managers)|idx\s*website|real\s*estate\s*crm|property\s*management\s*software|vacation\s*rental\s*software|real\s*estate\s*school|licensing\s*course|exam\s*prep|virtual\s*assistant\s*company)\b/i.test(
+      /\b(web\s*design(?:\s+agency|\s+company|\s+for|\s+services|\s+studio)?|website\s*design|website\s*development|custom\s*websites?\s*for|digital\s*marketing\s*(?:agency|company|services)|seo\s*(?:agency|company|services|experts|for\s+realtors|for\s+real\s+estate|for\s+contractors)|ppc\s*(?:agency|management)|social\s*media\s*marketing\s*agency|branding\s*agency|lead\s*generation\s*(?:agency|company|for)|marketing\s*(?:agency|solutions|company)\s*for\s*(?:realtors|real\s*estate|hvac|contractors|property\s*managers)|idx\s*website|real\s*estate\s*crm|property\s*management\s*software|vacation\s*rental\s*software|real\s*estate\s*school|licensing\s*course|exam\s*prep|virtual\s*assistant\s*company|logistics\s*(?:company|services|solutions|group|management)|freight\s*(?:broker|brokerage|forwarding|forwarder|services|company|shipping|transport)|trucking\s*(?:company|services|dispatch)|drayage|3pl\b|third[- ]party\s*logistics|supply\s*chain\s*(?:management|solutions|company)|cargo\s*(?:shipping|transport)|warehouse\s*(?:distribution|logistics|fulfillment)|courier\s*(?:service|company)|moving\s*(?:company|services|and\s*storage)|local\s*movers|long\s*distance\s*movers|van\s*lines|auto\s*transport|fleet\s*management|staffing\s*(?:agency|firm|company)|recruiting\s*(?:agency|firm)|accounting\s*firm|cpa\s*firm)\b/i.test(
         fullText
       )
     ) {
+      return true;
+    }
+  }
+
+  // 3. When targeting Real Estate / STR / Property Management, reject search results that have zero real estate / housing / rental terms
+  const isRealEstateOrStrTarget =
+    /\b(real\s*estate|realtor|realty|broker|property\s*management|vacation\s*rental|short[- ]term\s*rental|airbnb|vrbo|co-?host|corporate\s*housing|furnished|multifamily|leasing|cabin|villa|beach\s*house)\b/i.test(
+      kwLower
+    );
+
+  if (isRealEstateOrStrTarget && fullText.length > 60) {
+    const hasAnyRealEstateSignal =
+      /\b(real\s*estate|realtors?|realty|broker|brokerage|property|properties|rental|rentals|airbnb|vrbo|host|co-?host|housing|furnished|apartment|apartments|multifamily|condo|townhome|villa|villas|cabin|cabins|chalet|beach\s*house|resort|hospitality|stay|stays|lodging|leasing|tenant|landlord|home|homes|house|houses|cre\b|idx|mls|concierge)\b/i.test(
+        fullText
+      );
+    if (!hasAnyRealEstateSignal) {
       return true;
     }
   }

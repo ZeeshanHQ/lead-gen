@@ -162,6 +162,13 @@ export const STATE_NAMES: Record<string, string> = {
   PA: "Pennsylvania",
   TN: "Tennessee",
   VA: "Virginia",
+  NY: "New York",
+  WA: "Washington",
+  NJ: "New Jersey",
+  MI: "Michigan",
+  NV: "Nevada",
+  UT: "Utah",
+  SC: "South Carolina",
 };
 
 export function getTavilyApiKey(config?: Record<string, unknown>): string {
@@ -234,8 +241,8 @@ export class TavilyAdapter implements DiscoveryAdapter {
     );
 
     const offset = Math.abs(query.queryOffset ?? 0) % plan.length;
-    const batchSize = 5;
-    const maxBatches = Math.min(Math.max(Math.ceil(query.limit / 15), 2), 4);
+    const batchSize = 6;
+    const maxBatches = Math.min(Math.max(Math.ceil(query.limit / 8), 4), 10);
 
     for (let batch = 0; batch < maxBatches; batch++) {
       if (candidates.length >= query.limit) break;
@@ -249,7 +256,7 @@ export class TavilyAdapter implements DiscoveryAdapter {
       const results = await Promise.allSettled(
         chunk.map((q) =>
           runPlannedQuery(q, apiKey, {
-            maxResults: Math.min(Math.max(query.limit, 12), 20),
+            maxResults: Math.min(Math.max(query.limit, 15), 20),
             seenDomains,
             excludeDomains: query.excludeDomains,
             negativeKeywords: query.rule?.discovery?.negativeKeywords,

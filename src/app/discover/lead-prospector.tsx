@@ -198,6 +198,9 @@ export function LeadProspector({
     target: 25,
   });
   const [selectedPresetGroup, setSelectedPresetGroup] = useState<string>("all");
+  const [selectedPresetId, setSelectedPresetId] = useState<string>("");
+  const presetSaveSeqRef = useRef<number>(0);
+  const lastSyncedMarketIdRef = useRef<string | undefined>(activeMarket?.id);
   const timerIntervalRef = useRef<any>(null);
   const pollIntervalRef = useRef<any>(null);
 
@@ -212,11 +215,17 @@ export function LeadProspector({
   // Manual URL accordion toggle
   const [showManualIntake, setShowManualIntake] = useState(false);
 
-  // Sync when server-provided market or leads update, without ever flashing empty
+  // Sync only when activeMarket.id actually changes (switching workspaces/niches)
+  // so background revalidatePath calls never overwrite user's clicked preset or filter edits
   useEffect(() => {
-    if (activeMarket) {
-      setNicheInfo(activeMarket);
+    if (!activeMarket?.id || activeMarket.id === lastSyncedMarketIdRef.current) {
+      return;
     }
+    lastSyncedMarketIdRef.current = activeMarket.id;
+    setNicheInfo(activeMarket);
+    setSelectedPresetGroup("all");
+    setSelectedPresetId("");
+
     if (initialRule) {
       setActiveRule(initialRule);
       const savedStates = initialRule.geography?.states || ["TX"];
@@ -244,7 +253,7 @@ export function LeadProspector({
       setTotalReviewCount(initialTotalCount ?? initialLeads.length);
       setCrmReadyCount(initialCrmReadyCount ?? initialLeads.length);
     }
-  }, [activeMarket?.id, initialRule, initialGate, initialLeads, initialTotalCount, initialCrmReadyCount]);
+  }, [activeMarket, initialRule, initialGate, initialLeads, initialTotalCount, initialCrmReadyCount]);
 
   const handleSwitchNicheInline = (marketId: string) => {
     if (!marketId || marketId === nicheInfo?.id) return;
@@ -347,13 +356,15 @@ export function LeadProspector({
     minScore: number;
     customMustHaves?: string[];
   }) => {
-    if (!canEditRules) return;
     const kwStr = preset.keywords.join(", ");
     const negStr = preset.negativeKeywords.join(", ");
     const nextGate: LeadGate = {
       ...gate,
       customMustHaves: preset.customMustHaves ?? [],
     };
+
+    // 1. Instantaneous UI state update (0ms lag, never blocks clicking another preset)
+    setSelectedPresetId(preset.id);
     setEditKeywords(kwStr);
     setEditNegativeKeywords(negStr);
     setEditBusinessType(preset.businessType);
@@ -363,37 +374,59 @@ export function LeadProspector({
     setEditMinDoors(preset.minDoors);
     setEditMinScore(preset.minScore);
     setGate(nextGate);
+    setSuccessBanner(
+      `Applied ICP Preset: "${preset.label}". Strict niche verification, negative exclusions, and quality gates are now active.`
+    );
+
+    if (!canEditRules) return;
 
     const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
     const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+    const reqSeq = ++presetSaveSeqRef.current;
 
-    setSavingFilters(true);
-    const res = await updateRuleTargetingAction({
-      states: statesArr.length > 0 ? statesArr : ["TX"],
-      cities: citiesArr,
-      minScore: preset.minScore,
-      keywords: preset.keywords,
-      negativeKeywords: preset.negativeKeywords,
-      subNiche: preset.subNiche,
-      businessType: preset.businessType,
-      minEmployees: preset.minEmployees,
-      maxEmployees: preset.maxEmployees,
-      minDoors: preset.minDoors,
-      gate: nextGate,
-    });
-    setSavingFilters(false);
+    // 2. Non-blocking background persistence with sequence guard against rapid clicking
+    try {
+      const res = await updateRuleTargetingAction({
+        states: statesArr.length > 0 ? statesArr : ["TX"],
+        cities: citiesArr,
+        minScore: preset.minScore,
+        keywords: preset.keywords,
+        negativeKeywords: preset.negativeKeywords,
+        subNiche: preset.subNiche,
+        businessType: preset.businessType,
+        minEmployees: preset.minEmployees,
+        maxEmployees: preset.maxEmployees,
+        minDoors: preset.minDoors,
+        gate: nextGate,
+      });
 
-    if (res.ok && res.rule) {
-      setActiveRule(res.rule);
-      const refreshed = await getLatestReviewLeadsAction();
-      if (refreshed.ok && refreshed.leads) {
-        setLeads(refreshed.leads as any);
-        setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
-        setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+      if (reqSeq !== presetSaveSeqRef.current) return;
+
+      if (res.ok && res.rule) {
+        setActiveRule(res.rule);
+        const refreshed = await getLatestReviewLeadsAction();
+        if (reqSeq === presetSaveSeqRef.current && refreshed.ok && refreshed.leads) {
+          setLeads(refreshed.leads as any);
+          setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
+          setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+        }
       }
-      setSuccessBanner(
-        `Applied ICP Preset: "${preset.label}". Strict niche verification, negative exclusions, and quality gates are now active.`
+    } catch {
+      // Non-blocking
+    }
+  };
+
+  const handleSelectSubNicheTab = (group: string, marketPresets: IntentPreset[]) => {
+    setSelectedPresetGroup(group);
+    if (group === "all") return;
+    const matching = marketPresets.filter((p) => p.filterGroup === group);
+    if (matching.length > 0) {
+      const alreadyActiveInGroup = matching.some(
+        (p) => p.id === selectedPresetId || (editSubNiche && p.subNiche === editSubNiche)
       );
+      if (!alreadyActiveInGroup) {
+        handleApplyIntentPreset(matching[0]!);
+      }
     }
   };
 
@@ -920,8 +953,8 @@ export function LeadProspector({
                   </span>
                   <button
                     type="button"
-                    onClick={() => setSelectedPresetGroup("all")}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                    onClick={() => handleSelectSubNicheTab("all", activeMarketPresets)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
                       selectedPresetGroup === "all"
                         ? "bg-zinc-800 text-white font-bold"
                         : "text-zinc-400 hover:text-zinc-200"
@@ -932,8 +965,8 @@ export function LeadProspector({
                   {activeMarketPresets.some((p) => p.filterGroup === "str_concierge") && (
                     <button
                       type="button"
-                      onClick={() => setSelectedPresetGroup("str_concierge")}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                      onClick={() => handleSelectSubNicheTab("str_concierge", activeMarketPresets)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
                         selectedPresetGroup === "str_concierge"
                           ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
                           : "text-zinc-400 hover:text-zinc-200"
@@ -945,8 +978,8 @@ export function LeadProspector({
                   {activeMarketPresets.some((p) => p.filterGroup === "corporate_mtr") && (
                     <button
                       type="button"
-                      onClick={() => setSelectedPresetGroup("corporate_mtr")}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                      onClick={() => handleSelectSubNicheTab("corporate_mtr", activeMarketPresets)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
                         selectedPresetGroup === "corporate_mtr"
                           ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
                           : "text-zinc-400 hover:text-zinc-200"
@@ -958,8 +991,8 @@ export function LeadProspector({
                   {activeMarketPresets.some((p) => p.filterGroup === "property_mgmt") && (
                     <button
                       type="button"
-                      onClick={() => setSelectedPresetGroup("property_mgmt")}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                      onClick={() => handleSelectSubNicheTab("property_mgmt", activeMarketPresets)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
                         selectedPresetGroup === "property_mgmt"
                           ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
                           : "text-zinc-400 hover:text-zinc-200"
@@ -971,8 +1004,8 @@ export function LeadProspector({
                   {activeMarketPresets.some((p) => p.filterGroup === "commercial") && (
                     <button
                       type="button"
-                      onClick={() => setSelectedPresetGroup("commercial")}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                      onClick={() => handleSelectSubNicheTab("commercial", activeMarketPresets)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
                         selectedPresetGroup === "commercial"
                           ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
                           : "text-zinc-400 hover:text-zinc-200"
@@ -984,8 +1017,8 @@ export function LeadProspector({
                   {activeMarketPresets.some((p) => p.filterGroup === "residential") && (
                     <button
                       type="button"
-                      onClick={() => setSelectedPresetGroup("residential")}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                      onClick={() => handleSelectSubNicheTab("residential", activeMarketPresets)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
                         selectedPresetGroup === "residential"
                           ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
                           : "text-zinc-400 hover:text-zinc-200"
@@ -999,23 +1032,28 @@ export function LeadProspector({
 
               <div className="flex flex-wrap gap-2">
                 {visiblePresets.map((preset) => {
-                  const isSelected =
-                    editSubNiche === preset.subNiche && preset.subNiche !== "";
+                  const isSelected = selectedPresetId
+                    ? selectedPresetId === preset.id
+                    : editSubNiche === preset.subNiche && preset.subNiche !== "";
                   return (
                     <button
                       key={preset.id}
                       type="button"
-                      disabled={isPending || savingFilters || isRunningDiscovery}
+                      disabled={isRunningDiscovery}
                       onClick={() => handleApplyIntentPreset(preset)}
-                      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
                         isSelected
-                          ? "bg-amber-500/15 text-amber-300 border-amber-500/50 shadow-sm"
+                          ? "bg-amber-500/20 text-amber-300 border-amber-500/60 shadow-sm ring-1 ring-amber-500/30"
                           : "bg-zinc-900/90 text-zinc-300 border-zinc-800 hover:border-zinc-600 hover:text-white"
                       }`}
                       title={preset.description}
                     >
                       <span>{preset.label}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-bold">
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                          isSelected ? "bg-amber-500/25 text-amber-200" : "bg-zinc-800 text-zinc-300"
+                        }`}
+                      >
                         {preset.badge}
                       </span>
                     </button>
@@ -1410,8 +1448,16 @@ export function LeadProspector({
             <div className="min-w-0">
               <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Focus &amp; Vertical</div>
               <div className="text-zinc-200 font-medium truncate">
-                {editSubNiche === "airbnb_str"
-                  ? "Airbnb / STR (24/7 AI)"
+                {editSubNiche === "airbnb_active_hosts"
+                  ? "Active Airbnb & Direct Hosts"
+                  : editSubNiche === "airbnb_str_vrm" || editSubNiche === "airbnb_str"
+                  ? "Vacation Rental Mgmt (24/7 AI)"
+                  : editSubNiche === "corporate_housing_mtr"
+                  ? "Corporate & Mid-Term (MTR)"
+                  : editSubNiche === "str_cohost_hospitality"
+                  ? "Boutique STR Co-Hosting"
+                  : editSubNiche === "property_management"
+                  ? "50+ Doors Property Mgmt"
                   : editBusinessType === "commercial"
                   ? `${activeNicheName} (Commercial)`
                   : editBusinessType === "residential"

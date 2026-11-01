@@ -8,6 +8,10 @@ import {
   getRunTelemetry,
   clearRunTelemetry,
 } from "@/server/research/telemetry";
+import { defaultGate, passesLeadRowGate } from "@/server/domain/gate";
+import { isOffNicheSearchResult } from "@/server/providers/tavily_plan";
+import { extractServices } from "@/server/research/extractors/services";
+import { defaultHvacRuleConfig } from "@/server/domain/rules";
 
 describe("Dynamic Niche Presets & Zero-Dump Filtering", () => {
   it("filters presets strictly for Real Estate & STR markets", () => {
@@ -37,6 +41,10 @@ describe("Dynamic Niche Presets & Zero-Dump Filtering", () => {
     expect(vrm?.negativeKeywords).toContain("casual host");
     expect(vrm?.negativeKeywords).toContain("spare room");
 
+    const activeHosts = presets.find((p) => p.id === "airbnb_active_hosts_direct");
+    expect(activeHosts).toBeDefined();
+    expect(activeHosts?.subNiche).toBe("airbnb_active_hosts");
+
     const mtr = presets.find((p) => p.id === "corporate_midterm_housing");
     expect(mtr).toBeDefined();
     expect(mtr?.subNiche).toBe("corporate_housing_mtr");
@@ -47,6 +55,95 @@ describe("Dynamic Niche Presets & Zero-Dump Filtering", () => {
     const commercial = presets.find((p) => p.id === "commercial_re_cre");
     expect(commercial).toBeDefined();
     expect(commercial?.businessType).toBe("commercial");
+  });
+
+  it("blocks logistics, freight, moving, and web dev companies with 0% randomness", () => {
+    const gate = {
+      ...defaultGate(),
+      customMustHaves: ["Short-Term / Vacation Rental", "15+ Doors Managed"],
+    };
+    const reRuleConfig = {
+      businessType: "residential" as const,
+      discovery: {
+        keywords: ["vacation rental management company", "airbnb property management company"],
+        negativeKeywords: ["web design", "logistics", "freight"],
+      },
+    };
+
+    // 1. Search-stage pre-filter blocks logistics and web dev
+    expect(
+      isOffNicheSearchResult({
+        title: "Apex Commercial Logistics Management & Freight Services",
+        domain: "apexlogistics.com",
+        content: "Real time commercial supply chain and freight management solutions.",
+        targetKeyword: "vacation rental management company",
+      })
+    ).toBe(true);
+
+    expect(
+      isOffNicheSearchResult({
+        title: "BlueSky Web Development & SEO Agency for Realtors",
+        domain: "blueskywebdev.com",
+        content: "We build custom websites for real estate agents.",
+        targetKeyword: "real estate brokerage",
+      })
+    ).toBe(true);
+
+    // 2. Crawl service extractor marks logistics with generic words ("real", "commercial", "management") as niche_verified = NO
+    const baseRule = defaultHvacRuleConfig();
+    baseRule.discovery.keywords = ["commercial real estate brokerage", "vacation rental management"];
+    const logisticsFacts = extractServices(
+      [
+        {
+          url: "https://apexlogistics.com",
+          path: "/",
+          status: 200,
+          title: "Apex Commercial Logistics & Supply Chain Management",
+          metaDescription: "Real time freight forwarding and trucking management in Texas",
+          cleanText:
+            "Apex Commercial Logistics provides real time freight management, drayage, and warehouse distribution services across Texas.",
+          html: "",
+          links: [],
+          fetchedAt: new Date().toISOString(),
+        },
+      ],
+      baseRule
+    );
+    const nicheFact = logisticsFacts.find((f) => f.key === "niche_verified");
+    expect(nicheFact?.value).toBe("NO");
+
+    // 3. Lead row gate blocks off-niche leads and passes genuine Vacation Rental leads
+    expect(
+      passesLeadRowGate(
+        {
+          name: "Apex Commercial Logistics",
+          website: "https://apexlogistics.com",
+          phoneDisplay: "(512) 555-2345",
+          researchSummary: "Commercial freight and logistics management",
+          facts: { niche_verified: { value: "YES" } },
+        },
+        gate,
+        reRuleConfig
+      )
+    ).toBe(false);
+
+    expect(
+      passesLeadRowGate(
+        {
+          name: "Lone Star Luxury Vacation Rentals",
+          website: "https://lonestarvacationrentals.com",
+          phoneDisplay: "(512) 555-6789",
+          researchSummary: "Full-service Airbnb and vacation rental property management in Austin, TX",
+          facts: {
+            niche_verified: { value: "YES" },
+            str_vacation_rental: { value: "YES" },
+            residential: { value: "YES" },
+          },
+        },
+        gate,
+        reRuleConfig
+      )
+    ).toBe(true);
   });
 
   it("filters presets strictly for HVAC market without real estate leaks", () => {

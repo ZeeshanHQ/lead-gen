@@ -179,11 +179,11 @@ export async function executeRun(
 
   const limits = (run.limits as Record<string, any>) || {};
   const maxCandidates = limits.maxCandidates || 25;
-  const concurrency = Math.min(Math.max(limits.concurrency || 8, 1), 10);
+  const concurrency = Math.min(Math.max(limits.concurrency || 10, 1), 12);
   const pagesPerCompany = Math.min(limits.pagesPerCompany || 4, 6);
   const stopOnError = !!limits.stopOnError;
   const timeoutMs = runOpts?.timeoutMs ?? limits.timeoutMs ?? (run.mode === "test" ? 1000 : 2800);
-  const maxWallClockMs = runOpts?.maxWallClockMs ?? (run.mode === "test" ? 6_000 : 25_000);
+  const maxWallClockMs = runOpts?.maxWallClockMs ?? (run.mode === "test" ? 6_000 : 180_000);
   const deadline = Date.now() + maxWallClockMs;
   const runActor = run.actor || "Research Runner";
 
@@ -380,8 +380,8 @@ export async function executeRun(
   const jobDeadline =
     run.mode === "test"
       ? Date.now() + Math.min(Math.max(remainingMs, 2_000), 6_000)
-      : Date.now() + Math.max(remainingMs, 50_000);
-  const minScoreTarget = ruleConfig?.scoring?.minScore ?? 50;
+      : Date.now() + Math.max(remainingMs, 90_000);
+  const minScoreTarget = Math.min(ruleConfig?.scoring?.minScore ?? 60, 65);
   let activeIndex = 0;
   let encounteredError: string | null = null;
 
@@ -487,9 +487,12 @@ export async function executeRun(
 
   // Step 4: Dynamic replenishment loop — if qualified leads < target, pull next batches until target reached
   let replenishRound = 1;
+  let consecutiveEmptyRounds = 0;
+  const maxReplenishRounds = 8;
   while (
+    replenishRound <= maxReplenishRounds &&
     (counters.approvedCount || 0) < maxCandidates &&
-    Date.now() + 15_000 < jobDeadline &&
+    Date.now() + 8_000 < jobDeadline &&
     !runOpts?.mockPages &&
     run.mode !== "test" &&
     run.mode !== "stale" &&
@@ -497,12 +500,12 @@ export async function executeRun(
     run.mode !== "retry"
   ) {
     const needed = maxCandidates - (counters.approvedCount || 0);
-    const replenishLimit = Math.min(Math.max(Math.ceil(needed * 2.8), 25), 120);
-    const roundQueryOffset = baseQueryOffset + replenishRound * 4;
+    const replenishLimit = Math.min(Math.max(Math.ceil(needed * 3.2), 30), 150);
+    const roundQueryOffset = baseQueryOffset + replenishRound * 6;
     recordRunTelemetry(runId, {
       stage: "REPLENISH",
       level: "info",
-      message: `Dynamic Replenishment Round ${replenishRound}: Currently have ${counters.approvedCount || 0}/${maxCandidates} qualified leads. Fetching next pool of up to ${replenishLimit} candidates...`,
+      message: `Dynamic Replenishment Round ${replenishRound}/${maxReplenishRounds}: Currently have ${counters.approvedCount || 0}/${maxCandidates} qualified leads. Fetching next pool of up to ${replenishLimit} candidates...`,
     });
     replenishRound++;
 
@@ -527,7 +530,12 @@ export async function executeRun(
       limits.providerFilter
     );
 
-    if (replenishDiscovered.length === 0) break;
+    if (replenishDiscovered.length === 0) {
+      consecutiveEmptyRounds++;
+      if (consecutiveEmptyRounds >= 2) break;
+      continue;
+    }
+    consecutiveEmptyRounds = 0;
     counters.totalCandidates += replenishDiscovered.length;
 
     const replenishIntake = await createCandidatesBatch(
@@ -551,7 +559,11 @@ export async function executeRun(
     counters.excludedCount += replenishIntake.excludedCount;
 
     const roundCompanyIds = Array.from(new Set([...replenishIntake.createdIds, ...replenishIntake.duplicateIds]));
-    if (roundCompanyIds.length === 0) break;
+    if (roundCompanyIds.length === 0) {
+      consecutiveEmptyRounds++;
+      if (consecutiveEmptyRounds >= 2) break;
+      continue;
+    }
 
     const roundJobIds: string[] = [];
     const insertedRound = await db

@@ -286,9 +286,16 @@ export async function startLeadDiscoveryAction(
         options.minDoors !== undefined ||
         options.gate !== undefined)
     ) {
+      const isHvacKw = keywordsToUse.some((k) =>
+        /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k)
+      );
       ruleConfig = {
         ...ruleConfig,
         businessType: businessTypeToUse,
+        services: {
+          ...ruleConfig.services,
+          requiredAnyOf: isHvacKw ? ruleConfig.services?.requiredAnyOf || ["replacement", "installation"] : [],
+        },
         geography: {
           ...ruleConfig.geography,
           states: statesToUse,
@@ -333,7 +340,7 @@ export async function startLeadDiscoveryAction(
       marketId: market.id,
       actor: `${actorName} (${market.name})`,
       maxCandidates: targetCount,
-      concurrency: 8,
+      concurrency: 10,
       pagesPerCompany: 4,
       providerFilter: undefined,
     });
@@ -352,7 +359,7 @@ export async function startLeadDiscoveryAction(
       try {
         const counters = await executeRun(db, runId, {
           timeoutMs: 2800,
-          maxWallClockMs: targetCount <= 25 ? 75000 : targetCount <= 50 ? 130000 : 240000,
+          maxWallClockMs: targetCount <= 25 ? 110000 : targetCount <= 50 ? 180000 : 260000,
           autoEnrich: true,
         });
 
@@ -538,9 +545,16 @@ export async function runLeadDiscoveryAction(
         options.minDoors !== undefined ||
         options.gate !== undefined)
     ) {
+      const isHvacKw = keywordsToUse.some((k) =>
+        /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k)
+      );
       ruleConfig = {
         ...ruleConfig,
         businessType: businessTypeToUse,
+        services: {
+          ...ruleConfig.services,
+          requiredAnyOf: isHvacKw ? ruleConfig.services?.requiredAnyOf || ["replacement", "installation"] : [],
+        },
         geography: {
           ...ruleConfig.geography,
           states: statesToUse,
@@ -880,9 +894,21 @@ export async function updateRuleTargetingAction(params: {
     const cfg = defaultRule.config as any;
     const mergedGate = resolveGate(params.gate ?? cfg?.gate);
 
+    const finalKeywords =
+      params.keywords && params.keywords.length > 0
+        ? params.keywords
+        : cfg.discovery?.keywords || [];
+    const isHvacKw = finalKeywords.some((k: string) =>
+      /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k)
+    );
+
     const newCfg = {
       ...cfg,
       businessType: params.businessType !== undefined ? params.businessType : cfg.businessType || "both",
+      services: {
+        ...cfg.services,
+        requiredAnyOf: isHvacKw ? cfg.services?.requiredAnyOf || ["replacement", "installation"] : [],
+      },
       geography: {
         ...cfg.geography,
         states: params.states,
@@ -890,10 +916,7 @@ export async function updateRuleTargetingAction(params: {
       },
       discovery: {
         ...cfg.discovery,
-        keywords:
-          params.keywords && params.keywords.length > 0
-            ? params.keywords
-            : cfg.discovery?.keywords || [],
+        keywords: finalKeywords,
         negativeKeywords:
           params.negativeKeywords !== undefined
             ? params.negativeKeywords

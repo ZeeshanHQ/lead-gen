@@ -191,10 +191,40 @@ export function matchesCustomMustHave(
     );
   }
 
-  if (/\b(airbnb|str|short[- ]term\s*rental|vacation\s*rental|co-?host)\b/.test(req)) {
+  if (/\b(airbnb|str|short[- ]term|vacation\s*rental|co-?host)\b/.test(req)) {
     return (
       facts.str_vacation_rental === "YES" ||
-      /\b(airbnb|vrbo|vacation\s*rental|short[- ]term\s*rental|co-?host|holiday\s*rental|serviced\s*apartment|guest\s*support|guesty|hostaway|hospitable|ownerrez|lodgify)\b/i.test(corpus)
+      /\b(airbnb|vrbo|vacation\s*rental|short[- ]term\s*rental|co-?host|holiday\s*rental|serviced\s*apartment|guest\s*support|guesty|hostaway|hospitable|ownerrez|lodgify|cabin|villa|beach\s*house|book\s*direct|vacation\s*home|stays?)\b/i.test(corpus)
+    );
+  }
+
+  if (/\b(corporate|mid[- ]term|mtr|furnished|executive\s*stay)\b/.test(req)) {
+    return (
+      facts.str_vacation_rental === "YES" ||
+      /\b(corporate\s*housing|mid[- ]term|furnished|serviced\s*apartment|executive\s*(?:housing|stay|rental)|relocation\s*housing|extended\s*stay|apartment|property\s*management|rentals?)\b/i.test(corpus)
+    );
+  }
+
+  if (/\bproperty\s*management\b/.test(req)) {
+    return (
+      facts.niche_verified === "YES" ||
+      /\b(property\s*manag|vacation\s*rental|short[- ]term\s*rental|rental\s*manag|multifamily|tenant|leasing|landlord|appfolio|buildium|rent\s*manager|propertyware|guesty|hostaway|properties|rentals?)\b/i.test(corpus)
+    );
+  }
+
+  const doorsMatch = req.match(/(\d+)\+?\s*doors?(?:\s*managed)?/i);
+  if (doorsMatch) {
+    const reqDoors = Number(doorsMatch[1]);
+    if (facts.doors_managed && facts.doors_managed !== "UNKNOWN") {
+      const actualDoors = Number(String(facts.doors_managed).replace(/\D/g, ""));
+      if (Number.isFinite(actualDoors) && actualDoors > 0) {
+        return actualDoors >= reqDoors;
+      }
+    }
+    return (
+      facts.str_vacation_rental === "YES" ||
+      facts.niche_verified === "YES" ||
+      /\b(property\s*manag|vacation\s*rental|short[- ]term\s*rental|airbnb|vrbo|co-?host|multifamily|apartments?|portfolio|listings|homes|properties|units|doors)\b/i.test(corpus)
     );
   }
 
@@ -203,16 +233,16 @@ export function matchesCustomMustHave(
       facts.after_hours_24_7_need === "YES" ||
       facts.str_vacation_rental === "YES" ||
       facts.emergency === "YES" ||
-      /\b(24\/7|concierge|after[- ]hours|guest\s*support|emergency|check-?in|booking|inquiry|inquiries)\b/i.test(corpus)
+      /\b(24\/7|concierge|after[- ]hours|guest\s*support|emergency|check-?in|booking|inquiry|inquiries|property\s*manag|vacation\s*rental)\b/i.test(corpus)
     );
   }
 
   if (req === "commercial" || req === "commercial only") {
-    return facts.commercial === "YES" && facts.residential !== "YES" || (facts.commercial === "YES" && req === "commercial");
+    return (facts.commercial === "YES" && facts.residential !== "YES") || (facts.commercial === "YES" && req === "commercial") || /\b(commercial\s*real\s*estate|commercial\s*property|tenant\s*representation|commercial\s*leasing|cre|industrial|office\s*leasing|retail\s*leasing)\b/i.test(corpus);
   }
 
   if (req === "residential" || req === "residential only") {
-    return facts.residential === "YES" && facts.commercial !== "YES" || (facts.residential === "YES" && req === "residential");
+    return (facts.residential === "YES" && facts.commercial !== "YES") || (facts.residential === "YES" && req === "residential") || /\b(residential|home\s*buyers|home\s*sellers|luxury\s*homes|single[- ]family|realtor|realty|vacation\s*rental)\b/i.test(corpus);
   }
 
   // Check if all significant words in req appear in corpus
@@ -221,15 +251,31 @@ export function matchesCustomMustHave(
   return tokens.every((tok) => corpus.includes(tok));
 }
 
+export const OFF_NICHE_VENDOR_LEAD_RE =
+  /\b(web\s*(?:design|development|developer|agency|studio)|website\s*(?:design|development)|digital\s*marketing\s*(?:agency|company|firm|services)|seo\s*(?:agency|company|services|experts)|marketing\s*agency|lead\s*generation\s*agency|advertising\s*agency|branding\s*(?:agency|studio)|ppc\s*(?:agency|management)|software\s*(?:development|company|vendor|solutions)|app\s*development\s*company|custom\s*software|it\s*(?:managed\s*services|support\s*company|consulting)|staffing\s*(?:agency|firm|company)|recruiting\s*(?:agency|firm)|logistics\s*(?:company|services|solutions|group|inc|llc|corp|management)?|freight\s*(?:broker|brokerage|forwarding|forwarder|services|company|shipping|transport)|trucking\s*(?:company|services|dispatch)|drayage|3pl\b|third[- ]party\s*logistics|supply\s*chain\s*(?:management|solutions|company)|cargo\s*(?:shipping|transport|services)|warehouse\s*(?:distribution|logistics|fulfillment)|order\s*fulfillment\s*center|courier\s*(?:service|company|delivery)|moving\s*(?:company|services|and\s*storage)|local\s*movers|long\s*distance\s*movers|relocation\s*movers|van\s*lines|auto\s*transport|car\s*shipping|fleet\s*management|real\s*estate\s*school|pre-?license\s*course|exam\s*prep|accounting\s*firm|cpa\s*firm|bookkeeping\s*service)\b/i;
+
+export const OFF_NICHE_DOMAIN_RE =
+  /(?:webdesign|webdev|digitalmarketing|seoagency|marketingagency|mediagroup|designstudio|creativeagency|softwaresolutions|appdev|itservices|logistics|freight|trucking|drayage|supplychain|movers|vanlines|autotransport|courier|warehousing|fulfillment|staffing|realestateschool)/i;
+
+const REAL_ESTATE_POSITIVE_ANCHOR_RE =
+  /\b(real\s*estate|realtors?|realty|broker|brokerage|property\s*manag|properties|vacation\s*rentals?|short[- ]term\s*rentals?|airbnb|vrbo|co-?host|corporate\s*housing|furnished|apartments?|multifamily|condos?|townhomes?|villas?|cabins?|chalets?|beach\s*houses?|resorts?|hospitality|stays?|lodging|leasing|tenant|landlord|home\s*sales|homes?\s*for\s*sale|residential\s*sales|commercial\s*real\s*estate|cre\b|guesty|hostaway|hospitable|ownerrez|appfolio|buildium|rent\s*manager|propertyware|idx|mls)\b/i;
+
+const HVAC_POSITIVE_ANCHOR_RE =
+  /\b(hvac|air\s*conditioning|heating|cooling|furnace|heat\s*pump|duct|mechanical|plumbing|comfort|ac\s*repair|ac\s*service|refrigeration)\b/i;
+
 export function evaluateGate(gateIn: Partial<LeadGate> | null | undefined, input: GateInput): GateResult {
   const gate = resolveGate(gateIn);
   const missing: GateField[] = [];
   const extraReasons: string[] = [];
   const f = normalizeFactRecord(input.facts);
 
-  // Hard anti-dump checks when facts are present
-  if (f.off_niche_vendor === "YES") {
-    extraReasons.push("off-niche B2B vendor / agency (web dev, marketing, or software)");
+  // Hard anti-dump checks when facts or searchText/website are present
+  if (
+    f.off_niche_vendor === "YES" ||
+    OFF_NICHE_DOMAIN_RE.test(input.website || "") ||
+    (input.searchText && OFF_NICHE_VENDOR_LEAD_RE.test(input.searchText))
+  ) {
+    extraReasons.push("off-niche B2B/industrial company (web dev, marketing, logistics, or software)");
   }
   if (f.niche_verified === "NO") {
     extraReasons.push("website does not match target ICP niche");
@@ -303,9 +349,6 @@ export function evaluateGate(gateIn: Partial<LeadGate> | null | undefined, input
   };
 }
 
-const OFF_NICHE_VENDOR_LEAD_RE =
-  /\b(web\s*(design|development|developer|agency|studio)|digital\s*marketing\s*(agency|company)|seo\s*(agency|company|services)|marketing\s*agency|lead\s*generation\s*agency|advertising\s*agency|branding\s*agency|ppc\s*agency|software\s*development\s*company|app\s*development\s*company|custom\s*software|it\s*managed\s*services|staffing\s*agency)\b/i;
-
 export function passesLeadRowGate(
   lead: {
     name?: string | null;
@@ -327,7 +370,7 @@ export function passesLeadRowGate(
     businessType?: "residential" | "commercial" | "both";
     size?: { minEmployees?: number | null; maxEmployees?: number | null; minDoors?: number | null };
     scoring?: { minScore?: number };
-    discovery?: { negativeKeywords?: string[] };
+    discovery?: { keywords?: string[]; negativeKeywords?: string[] };
   } | null
 ): boolean {
   if (!lead || !gate) return true;
@@ -350,9 +393,39 @@ export function passesLeadRowGate(
     return false;
   }
 
-  const nameAndSite = `${lead.name || ""} ${lead.website || ""}`;
-  if (OFF_NICHE_VENDOR_LEAD_RE.test(nameAndSite)) {
+  const factEvidenceCorpus = Object.entries(f)
+    .map(([k, v]) => {
+      if (!v) return "";
+      if (typeof v === "object") {
+        return `${k} ${v.value ?? ""} ${v.evidence ?? v.evidenceSnippet ?? ""}`;
+      }
+      return `${k} ${String(v)}`;
+    })
+    .join(" ");
+
+  const fullLeadCorpus = `${lead.name || ""} ${lead.website || ""} ${lead.researchSummary || ""} ${factEvidenceCorpus}`;
+  const nameSiteSummary = `${lead.name || ""} ${lead.website || ""} ${lead.researchSummary || ""}`;
+
+  if (OFF_NICHE_VENDOR_LEAD_RE.test(nameSiteSummary) || OFF_NICHE_DOMAIN_RE.test(lead.website || "")) {
     return false;
+  }
+
+  // Enforce positive industry anchor when ruleConfig has target keywords
+  const targetKeywords = ruleConfig?.discovery?.keywords || [];
+  if (targetKeywords.length > 0) {
+    const joinedKw = targetKeywords.join(" ").toLowerCase();
+    const isRealEstateOrStrTarget =
+      /\b(real\s*estate|realtor|realty|broker|property\s*management|vacation\s*rental|short[- ]term\s*rental|airbnb|vrbo|co-?host|corporate\s*housing|furnished|multifamily|leasing|cabin|villa|beach\s*house)\b/i.test(
+        joinedKw
+      );
+    const isHvacTarget = /\b(hvac|air\s*conditioning|heating|cooling|furnace|heat\s*pump)\b/i.test(joinedKw);
+
+    if (isRealEstateOrStrTarget && !REAL_ESTATE_POSITIVE_ANCHOR_RE.test(fullLeadCorpus)) {
+      return false;
+    }
+    if (isHvacTarget && !HVAC_POSITIVE_ANCHOR_RE.test(fullLeadCorpus)) {
+      return false;
+    }
   }
 
   if (gate.requirePhone) {

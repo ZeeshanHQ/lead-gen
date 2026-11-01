@@ -111,9 +111,9 @@ const SERVICE_RULES: ServiceRule[] = [
   {
     key: "str_vacation_rental",
     patterns: [
-      /\b(?:vacation\s+rental|short[- ]term\s+rental|airbnb|vrbo)\s+(?:property\s+)?(?:management|managers?|company|co-?hosting|concierge|services?|portfolio)\b/i,
-      /\b(?:full[- ]service\s+(?:airbnb|vacation\s+rental|short[- ]term\s+rental)|co-?hosting\s+services?|vacation\s+home\s+management|serviced\s+apartments?|aparthotel|corporate\s+housing\s+management)\b/i,
-      /\b(?:maximize\s+your\s+(?:rental|airbnb|vacation\s+home)\s+(?:income|revenue)|dynamic\s+pricing|guest\s+screening|turnover\s+cleaning|24\/7\s+guest\s+(?:support|communication|concierge))\b/i,
+      /\b(?:vacation\s+rental|short[- ]term\s+rental|airbnb|vrbo)\s+(?:property\s+)?(?:management|managers?|company|co-?hosting|concierge|services?|portfolio|homes?|properties|listings?)\b/i,
+      /\b(?:full[- ]service\s+(?:airbnb|vacation\s+rental|short[- ]term\s+rental)|co-?hosting\s+services?|vacation\s+home\s+(?:management|rentals?)|serviced\s+apartments?|aparthotel|corporate\s+housing(?:\s+management|\s+provider)?|furnished\s+(?:corporate\s+)?(?:apartments?|housing|rentals?)|mid[- ]term\s+rentals?)\b/i,
+      /\b(?:maximize\s+your\s+(?:rental|airbnb|vacation\s+home)\s+(?:income|revenue)|dynamic\s+pricing|guest\s+screening|turnover\s+cleaning|24\/7\s+guest\s+(?:support|communication|concierge)|book\s+direct\s+(?:and\s+save|vacation\s+rentals?)|luxury\s+(?:cabin|villa|beach\s+house)\s+rentals?|airbnb\s+superhost)\b/i,
     ],
     confidence: 0.95,
   },
@@ -121,8 +121,8 @@ const SERVICE_RULES: ServiceRule[] = [
     key: "after_hours_24_7_need",
     patterns: [
       /\b(?:24\/7|24\s+hours?|round[- ]the[- ]clock|after[- ]hours)\s+(?:guest\s+support|concierge|guest\s+communication|check-?in|maintenance|emergency|booking|service|support)\b/i,
-      /\b(?:guest\s+concierge|instant\s+booking|book\s+direct|late\s+check-?in|keyless\s+entry|smart\s+lock|guest\s+inquiries|emergency\s+dispatch)\b/i,
-      /\b(?:vacation\s+rental\s+management|short[- ]term\s+rental\s+management|airbnb\s+management|property\s+management)\b/i,
+      /\b(?:guest\s+concierge|instant\s+booking|book\s+direct|late\s+check-?in|self\s+check-?in|keyless\s+entry|smart\s+lock|guest\s+inquiries|reservation\s+inquiries|emergency\s+dispatch)\b/i,
+      /\b(?:vacation\s+rental\s+management|short[- ]term\s+rental\s+management|airbnb\s+management|property\s+management|corporate\s+housing|vacation\s+rentals?)\b/i,
     ],
     confidence: 0.92,
   },
@@ -133,8 +133,8 @@ const SERVICE_RULES: ServiceRule[] = [
       /\bair\s+conditioning\s+contractor\b/i,
       /\bheating\s+contractor\b/i,
       // Core target industry match for non-HVAC niches so ICP fit scoring rewards verified niche websites
-      /\b(?:real\s+estate\s+(?:brokerage|agency|group|team|firm|advisors?)|property\s+management|realtors?|commercial\s+real\s+estate)\b/i,
-      /\b(?:vacation\s+rental\s+management|short[- ]term\s+rental|airbnb\s+(?:management|co-?host)|serviced\s+apartments?)\b/i,
+      /\b(?:real\s+estate\s+(?:brokerage|agency|group|team|firm|advisors?|company)|property\s+management|realtors?|commercial\s+real\s+estate)\b/i,
+      /\b(?:vacation\s+rental(?:\s+management|\s+company|\s+homes?)?|short[- ]term\s+rental|airbnb\s+(?:management|co-?host|superhost|rentals?)|serviced\s+apartments?|corporate\s+housing|furnished\s+apartments?)\b/i,
       /\b(?:medical\s+(?:clinic|center|practice)|healthcare\s+clinic|dental\s+(?:clinic|practice|office)|medspa)\b/i,
       /\b(?:solar\s+(?:company|installer|contractor)|roofing\s+(?:company|contractor)|plumbing\s+(?:company|contractor)|law\s+firm)\b/i,
     ],
@@ -143,7 +143,10 @@ const SERVICE_RULES: ServiceRule[] = [
 ];
 
 const OFF_NICHE_VENDOR_HEADLINE_REGEX =
-  /\b(web\s*design\s*(?:agency|company|studio|services|for)|website\s*development\s*(?:agency|company|services)|custom\s*websites?\s*for\s*(?:realtors|real\s*estate|contractors|hvac)|digital\s*marketing\s*(?:agency|company|firm)|seo\s*(?:agency|company|services|for\s+realtors|for\s+real\s+estate|for\s+contractors)|ppc\s*management\s*agency|social\s*media\s*marketing\s*agency|branding\s*(?:agency|studio)|lead\s*generation\s*(?:agency|company)|marketing\s*(?:agency|solutions)\s*for\s*(?:realtors|real\s*estate|property\s*managers|contractors)|software\s*development\s*company|real\s*estate\s*school|pre-?license\s*course|exam\s*prep|idx\s*website\s*provider|virtual\s*assistant\s*(?:agency|services))\b/i;
+  /\b(web\s*design\s*(?:agency|company|studio|services|for)|website\s*(?:design|development)\s*(?:agency|company|services)?|custom\s*websites?\s*for\s*(?:realtors|real\s*estate|contractors|hvac)|digital\s*marketing\s*(?:agency|company|firm|services)|seo\s*(?:agency|company|services|for\s+realtors|for\s+real\s+estate|for\s+contractors)|ppc\s*management\s*agency|social\s*media\s*marketing\s*agency|branding\s*(?:agency|studio)|lead\s*generation\s*(?:agency|company)|marketing\s*(?:agency|solutions)\s*for\s*(?:realtors|real\s*estate|property\s*managers|contractors)|software\s*(?:development\s*company|vendor|solutions)|it\s*(?:managed\s*services|support\s*company|consulting)|logistics\s*(?:company|services|solutions|group|management|inc|llc)|freight\s*(?:broker|brokerage|forwarding|forwarder|services|company|shipping|transport)|trucking\s*(?:company|services|dispatch)|drayage|3pl\b|third[- ]party\s*logistics|supply\s*chain\s*(?:management|solutions|company)|cargo\s*(?:shipping|transport|services)|warehouse\s*(?:distribution|logistics|fulfillment)|courier\s*(?:service|company|delivery)|moving\s*(?:company|services|and\s*storage)|local\s*movers|long\s*distance\s*movers|van\s*lines|auto\s*transport|fleet\s*management|staffing\s*(?:agency|firm|company)|recruiting\s*(?:agency|firm)|accounting\s*firm|cpa\s*firm|real\s*estate\s*school|pre-?license\s*course|exam\s*prep|idx\s*website\s*provider|virtual\s*assistant\s*(?:agency|services))\b/i;
+
+const OFF_NICHE_VENDOR_BODY_REGEX =
+  /\b(we\s+(?:design|build|develop)\s+websites\s+for|our\s+(?:web\s+design|digital\s+marketing|seo)\s+agency|full[- ]service\s+(?:digital\s+marketing|web\s+design|logistics|freight\s+brokerage|moving|staffing)\s+(?:agency|company|provider)|freight\s+forwarding\s+and\s+logistics|supply\s+chain\s+and\s+logistics|truckload\s+and\s+ltl\s+freight|drayage\s+and\s+transloading)\b/i;
 
 const CASUAL_HOST_REGEX =
   /\b(renting\s+my\s+(?:spare\s+)?room|shared\s+room\s+for\s+rent|roommate\s+wanted|sublet\s+my\s+(?:room|apartment)|temporary\s+sublet\s+1\s+room)\b/i;
@@ -188,33 +191,27 @@ export function extractServices(pages: CrawledPage[], ruleConfig?: RuleConfig): 
       joinedKeywords
     );
 
-  // 1. Detect Off-Niche B2B Vendors (Web Dev, SEO/Marketing Agencies, Software Vendors, Schools)
+  // 1. Detect Off-Niche B2B / Industrial Vendors (Web Dev, SEO/Marketing, Logistics, Freight, Moving, Software, Schools)
   const vendorHeadlineHit = extractSnippet(combinedTitleAndMeta, OFF_NICHE_VENDOR_HEADLINE_REGEX);
   const vendorBodyHit =
-    !vendorHeadlineHit &&
-    /\b(we\s+(?:design|build|develop)\s+websites\s+for|our\s+(?:web\s+design|digital\s+marketing|seo)\s+agency|full[- ]service\s+(?:digital\s+marketing|web\s+design)\s+agency)\b/i.test(
-      combinedText
-    )
-      ? extractSnippet(
-          combinedText,
-          /\b(we\s+(?:design|build|develop)\s+websites\s+for|our\s+(?:web\s+design|digital\s+marketing|seo)\s+agency|full[- ]service\s+(?:digital\s+marketing|web\s+design)\s+agency)\b/i
-        )
+    !vendorHeadlineHit && OFF_NICHE_VENDOR_BODY_REGEX.test(combinedText)
+      ? extractSnippet(combinedText, OFF_NICHE_VENDOR_BODY_REGEX)
       : null;
 
   if (!userWantsMarketingOrTech && (vendorHeadlineHit || vendorBodyHit)) {
-    const snippet = vendorHeadlineHit || vendorBodyHit || "Off-niche B2B marketing/web vendor";
+    const snippet = vendorHeadlineHit || vendorBodyHit || "Off-niche B2B/industrial vendor";
     discovered.set("off_niche_vendor", {
       key: "off_niche_vendor",
       value: "YES",
       confidence: 0.96,
-      evidenceSnippet: `Off-niche B2B vendor detected: "${snippet}"`,
+      evidenceSnippet: `Off-niche company detected: "${snippet}"`,
       sourceUrl: primaryUrl,
     });
     discovered.set("niche_verified", {
       key: "niche_verified",
       value: "NO",
       confidence: 0.96,
-      evidenceSnippet: `Disqualified B2B vendor/agency rather than target prospect: "${snippet}"`,
+      evidenceSnippet: `Disqualified off-niche company rather than target prospect: "${snippet}"`,
       sourceUrl: primaryUrl,
     });
   }
@@ -251,8 +248,6 @@ export function extractServices(pages: CrawledPage[], ruleConfig?: RuleConfig): 
   }
 
   // 4. Enforce Commercial vs Residential Polarity when website has clear focus
-  // If a site has Commercial = YES and zero Residential signals (or says "commercial only"), mark Residential = NO.
-  // If a site has Residential = YES and zero Commercial signals (or says "residential only"), mark Commercial = NO.
   if (combinedText.length > 150) {
     const hasResidential = discovered.has("residential") || discovered.has("str_vacation_rental");
     const hasCommercial = discovered.has("commercial");
@@ -276,21 +271,121 @@ export function extractServices(pages: CrawledPage[], ruleConfig?: RuleConfig): 
     }
   }
 
-  // 5. Verify Niche Relevance (niche_verified = YES / NO)
-  if (!discovered.has("niche_verified") && combinedText.length > 100) {
+  // 5. Verify Strict Niche Relevance (niche_verified = YES / NO)
+  // Never allow generic single words like "real", "management", "commercial", "short", "term", "home"
+  // to falsely verify an off-niche logistics, moving, or web agency website.
+  if (!discovered.has("niche_verified") && (combinedText.length > 40 || combinedTitleAndMeta.length > 20)) {
     const fullLower = `${combinedTitleAndMeta} ${combinedText}`.toLowerCase();
     let matchedKeyword: string | null = null;
 
+    const DOMAIN_ANCHOR_PHRASES = [
+      "real estate",
+      "realtor",
+      "realtors",
+      "realty",
+      "brokerage",
+      "property management",
+      "property manager",
+      "vacation rental",
+      "vacation rentals",
+      "short-term rental",
+      "short term rental",
+      "airbnb",
+      "vrbo",
+      "co-host",
+      "co-hosting",
+      "cohosting",
+      "corporate housing",
+      "furnished apartment",
+      "furnished apartments",
+      "serviced apartment",
+      "serviced apartments",
+      "multifamily",
+      "tenant representation",
+      "landlord representation",
+      "commercial leasing",
+      "cabin rental",
+      "villa rental",
+      "beach house rental",
+      "vacation home",
+      "book direct",
+      "guesty",
+      "hostaway",
+      "hospitable",
+      "ownerrez",
+      "appfolio",
+      "buildium",
+      "hvac",
+      "air conditioning",
+      "heating and cooling",
+      "furnace",
+      "heat pump",
+      "dental clinic",
+      "dentist",
+      "medical clinic",
+      "medspa",
+      "solar installer",
+      "roofing contractor",
+      "plumbing contractor",
+      "law firm",
+    ];
+
     if (targetKeywords.length > 0) {
-      const stopWords = new Set(["company", "services", "service", "firm", "agency", "group", "local", "top", "best", "near", "office", "center", "practice"]);
+      // First check if any target keyword or unambiguous domain anchor phrase appears in fullLower
       for (const kw of targetKeywords) {
-        const tokens = kw
-          .toLowerCase()
-          .split(/[^a-z0-9]+/)
-          .filter((t) => t.length >= 3 && !stopWords.has(t));
-        if (tokens.length > 0 && tokens.some((t) => fullLower.includes(t))) {
+        const kwClean = kw.trim().toLowerCase();
+        if (kwClean.length >= 4 && fullLower.includes(kwClean)) {
           matchedKeyword = kw;
           break;
+        }
+      }
+
+      if (!matchedKeyword) {
+        for (const phrase of DOMAIN_ANCHOR_PHRASES) {
+          if (joinedKeywords.includes(phrase) && fullLower.includes(phrase)) {
+            matchedKeyword = phrase;
+            break;
+          }
+        }
+      }
+
+      // Check Real Estate / STR specific anchor match when targetKeywords are Real Estate / STR
+      const isRealEstateOrStrTarget =
+        /\b(real\s*estate|realtor|realty|broker|property\s*management|vacation\s*rental|short[- ]term\s*rental|airbnb|vrbo|co-?host|corporate\s*housing|furnished|multifamily|leasing|cabin|villa|beach\s*house)\b/i.test(
+          joinedKeywords
+        );
+
+      if (!matchedKeyword && isRealEstateOrStrTarget) {
+        const reMatch = fullLower.match(
+          /\b(real\s+estate|realtors?|realty|brokerage|property\s+manag(?:ement|er|ers)|vacation\s+rentals?|short[- ]term\s+rentals?|airbnb|vrbo|co-?host(?:ing)?|corporate\s+housing|furnished\s+(?:apartments?|housing|rentals?)|serviced\s+apartments?|multifamily\s+(?:housing|properties|management)|tenant\s+representation|commercial\s+leasing|vacation\s+homes?|cabin\s+rentals?|villa\s+rentals?|beach\s+house\s+rentals?|guesty|hostaway|hospitable|ownerrez|appfolio|buildium)\b/i
+        );
+        if (reMatch) {
+          matchedKeyword = reMatch[0];
+        }
+      }
+
+      // Fallback to strict non-generic tokens only if not a generic word
+      if (!matchedKeyword && !isRealEstateOrStrTarget) {
+        const stopWords = new Set([
+          "company", "companies", "services", "service", "firm", "firms", "agency", "group",
+          "local", "top", "best", "near", "office", "center", "practice", "real", "estate",
+          "management", "manager", "managers", "commercial", "residential", "short", "term",
+          "long", "mid", "full", "luxury", "team", "teams", "corporate", "executive",
+          "turnkey", "boutique", "private", "family", "home", "homes", "house", "houses",
+          "care", "system", "systems", "provider", "providers", "operator", "operators",
+          "solutions", "advisors", "specialists", "partners", "properties", "property",
+          "book", "direct", "active", "stay", "stays", "day", "days", "doors", "units",
+          "sales", "investment", "retail", "industrial", "leasing", "rental", "rentals",
+        ]);
+        for (const kw of targetKeywords) {
+          const tokens = kw
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter((t) => t.length >= 4 && !stopWords.has(t));
+          if (tokens.length > 0 && tokens.some((t) => fullLower.includes(t))) {
+            matchedKeyword = kw;
+            break;
+          }
         }
       }
     }
@@ -298,25 +393,23 @@ export function extractServices(pages: CrawledPage[], ruleConfig?: RuleConfig): 
     if (
       matchedKeyword ||
       discovered.has("hvac") ||
-      discovered.has("str_vacation_rental") ||
-      discovered.has("replacement") ||
-      discovered.has("installation")
+      discovered.has("str_vacation_rental")
     ) {
       discovered.set("niche_verified", {
         key: "niche_verified",
         value: "YES",
-        confidence: 0.94,
+        confidence: 0.95,
         evidenceSnippet: matchedKeyword
-          ? `Verified match for target ICP keyword "${matchedKeyword}"`
+          ? `Verified match for target ICP anchor "${matchedKeyword}"`
           : "Verified core niche service signals on website",
         sourceUrl: primaryUrl,
       });
-    } else if (targetKeywords.length > 0 && combinedText.length > 350) {
+    } else if (targetKeywords.length > 0) {
       discovered.set("niche_verified", {
         key: "niche_verified",
         value: "NO",
-        confidence: 0.90,
-        evidenceSnippet: `No target ICP keywords (${targetKeywords.slice(0, 3).join(", ")}) found on website`,
+        confidence: 0.92,
+        evidenceSnippet: `No target ICP anchors (${targetKeywords.slice(0, 3).join(", ")}) found on website`,
         sourceUrl: primaryUrl,
       });
     }

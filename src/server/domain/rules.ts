@@ -644,7 +644,7 @@ export function calculateLeadScore(
     (rule.businessType === "residential" && no(f, "residential"));
 
   const isHvacRule =
-    rule.services.requiredAnyOf.length > 0 ||
+    rule.discovery.keywords.length === 0 ||
     rule.discovery.keywords.some((k) => /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k));
 
   const matchesBusinessType =
@@ -687,11 +687,19 @@ export function calculateLeadScore(
   checkSignal(
     "meaningful_size",
     !isOffNicheOrDisqualified &&
-      (meaningfulEmp || yes(f, "multiple_technicians") || rawDoors >= 15 || contacts.length >= 2)
+      (meaningfulEmp ||
+        yes(f, "multiple_technicians") ||
+        rawDoors >= 10 ||
+        contacts.length >= 1 ||
+        (!isHvacRule && (yes(f, "niche_verified") || yes(f, "str_vacation_rental"))))
   );
   checkSignal(
     "multiple_technicians",
-    !isOffNicheOrDisqualified && (yes(f, "multiple_technicians") || meaningfulEmp || rawDoors >= 20)
+    !isOffNicheOrDisqualified &&
+      (yes(f, "multiple_technicians") ||
+        meaningfulEmp ||
+        rawDoors >= 10 ||
+        (!isHvacRule && (yes(f, "niche_verified") || yes(f, "str_vacation_rental"))))
   );
   checkSignal("financing", !isOffNicheOrDisqualified && (yes(f, "financing") || yes(f, "after_hours_24_7_need")));
   checkSignal(
@@ -723,7 +731,13 @@ export function calculateLeadScore(
   checkSignal("professional_direct_contact", !isOffNicheOrDisqualified && directContact);
   checkSignal("company_phone_verified", !isOffNicheOrDisqualified && (yes(f, "website_alive") || hasValidSite));
   checkSignal("strong_presence", !isOffNicheOrDisqualified && (yes(f, "strong_presence") || yes(f, "niche_verified") || hasValidSite));
-  checkSignal("established_business", !isOffNicheOrDisqualified && (yes(f, "established_business") || meaningfulEmp));
+  checkSignal(
+    "established_business",
+    !isOffNicheOrDisqualified &&
+      (yes(f, "established_business") ||
+        meaningfulEmp ||
+        (!isHvacRule && hasValidSite && (yes(f, "niche_verified") || yes(f, "str_vacation_rental"))))
+  );
 
   const isBleeding =
     !isOffNicheOrDisqualified &&

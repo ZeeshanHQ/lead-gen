@@ -10,7 +10,7 @@ import {
   defaultHvacRuleConfig,
 } from "../domain/rules";
 import { type FactMap } from "../domain/facts";
-import { evaluateGate } from "../domain/gate";
+import { evaluateGate, passesLeadRowGate, resolveGate } from "../domain/gate";
 import { getContactsForCompanies, toContactInput } from "./contacts";
 import { audit } from "./audit";
 
@@ -187,10 +187,26 @@ export async function reEvaluateLeadsWithRule(
   }
 
   const ids = candidateRows.map((r) => r.id);
-  const contactMap = await getContactsForCompanies(db, ids);
+  const [contactMap, existingScoreRows] = await Promise.all([
+    getContactsForCompanies(db, ids),
+    db.select().from(leadScores).where(inArray(leadScores.companyId, ids)),
+  ]);
+
+  const existingScoreByCompanyId = new Map<string, (typeof existingScoreRows)[number]>();
+  for (const sr of existingScoreRows) {
+    if (!existingScoreByCompanyId.has(sr.companyId)) {
+      existingScoreByCompanyId.set(sr.companyId, sr);
+    }
+  }
 
   let qualifiedCount = 0;
   let disqualifiedCount = 0;
+  const resolvedGate = resolveGate(ruleConfig.gate);
+
+  const toDisqualifyIds: string[] = [];
+  const toNeedsReviewIds: string[] = [];
+  const scoreInserts: Array<typeof leadScores.$inferInsert> = [];
+  const scoreUpdates: Array<{ id: string; data: Partial<typeof leadScores.$inferInsert> }> = [];
 
   for (const c of candidateRows) {
     const rawContacts = contactMap.get(c.id) ?? [];
@@ -220,15 +236,41 @@ export async function reEvaluateLeadsWithRule(
       facts: evalCompany.facts,
       searchText: `${c.name} ${c.website || ""} ${c.researchSummary || ""}`,
     });
+
+    const primaryContact = contactInputs[0];
+    const rowGatePassed = passesLeadRowGate(
+      {
+        name: c.name,
+        website: c.website,
+        city: c.city,
+        state: c.state,
+        status: c.status === "DISQUALIFIED" ? "NEEDS_REVIEW" : c.status,
+        phoneDisplay: c.phoneDisplay || c.phoneE164,
+        icpScore: scoreBreakdown.icpScore,
+        hasDecisionMaker: contactInputs.some((ci) => Boolean(ci.name)),
+        hasDirectContact: contactInputs.some(
+          (ci) => ci.phoneType === "PROFESSIONAL_MOBILE" || ci.phoneType === "PUBLISHED_DIRECT"
+        ),
+        owner: primaryContact ? { name: primaryContact.name, title: primaryContact.title, verified: primaryContact.verified } : null,
+        best: primaryContact
+          ? { name: primaryContact.name, phone: primaryContact.phone, email: primaryContact.email }
+          : { name: null, phone: c.phoneDisplay || c.phoneE164, email: null },
+        facts: evalCompany.facts,
+        researchSummary: c.researchSummary,
+      },
+      resolvedGate,
+      ruleConfig
+    );
+
     const isHardOffNiche =
       evalCompany.facts.off_niche_vendor?.value === "YES" ||
       evalCompany.facts.niche_verified?.value === "NO" ||
       evalCompany.facts.casual_host_only?.value === "YES";
-    const passed = gateResult.passed && evaluation.verdict !== "FAIL" && !isHardOffNiche;
+    const passed = gateResult.passed && rowGatePassed && evaluation.verdict !== "FAIL" && !isHardOffNiche;
 
     let nextStatus = c.status;
     if (!passed) {
-      if (c.status === "DISCOVERED" || c.status === "RESEARCHED" || c.status === "NEEDS_REVIEW") {
+      if (c.status === "DISCOVERED" || c.status === "RESEARCHED" || c.status === "NEEDS_REVIEW" || c.status === "APPROVED") {
         nextStatus = "DISQUALIFIED";
       }
     } else {
@@ -236,29 +278,20 @@ export async function reEvaluateLeadsWithRule(
         nextStatus = "NEEDS_REVIEW";
       }
     }
-    {
-      if (nextStatus !== c.status) {
-        await db
-          .update(companies)
-          .set({ status: nextStatus, updatedAt: new Date() })
-          .where(eq(companies.id, c.id));
-      }
+
+    if (nextStatus !== c.status) {
+      if (nextStatus === "DISQUALIFIED") toDisqualifyIds.push(c.id);
+      else if (nextStatus === "NEEDS_REVIEW") toNeedsReviewIds.push(c.id);
     }
 
     if (passed) qualifiedCount++;
     else disqualifiedCount++;
 
-    // Update or insert lead score
-    const [existingScore] = await db
-      .select()
-      .from(leadScores)
-      .where(eq(leadScores.companyId, c.id))
-      .limit(1);
-
+    const existingScore = existingScoreByCompanyId.get(c.id);
     if (existingScore) {
-      await db
-        .update(leadScores)
-        .set({
+      scoreUpdates.push({
+        id: existingScore.id,
+        data: {
           ruleId,
           icpScore: scoreBreakdown.icpScore,
           researchConfidence: Math.round(scoreBreakdown.researchConfidence * 100),
@@ -266,10 +299,10 @@ export async function reEvaluateLeadsWithRule(
           breakdown: scoreBreakdown as any,
           scoredAt: new Date(),
           updatedAt: new Date(),
-        })
-        .where(eq(leadScores.id, existingScore.id));
+        },
+      });
     } else {
-      await db.insert(leadScores).values({
+      scoreInserts.push({
         companyId: c.id,
         ruleId,
         icpScore: scoreBreakdown.icpScore,
@@ -279,6 +312,27 @@ export async function reEvaluateLeadsWithRule(
         scoredAt: new Date(),
       });
     }
+  }
+
+  const now = new Date();
+  await Promise.all([
+    toDisqualifyIds.length > 0
+      ? db.update(companies).set({ status: "DISQUALIFIED", updatedAt: now }).where(inArray(companies.id, toDisqualifyIds))
+      : Promise.resolve(),
+    toNeedsReviewIds.length > 0
+      ? db.update(companies).set({ status: "NEEDS_REVIEW", updatedAt: now }).where(inArray(companies.id, toNeedsReviewIds))
+      : Promise.resolve(),
+    scoreInserts.length > 0
+      ? db.insert(leadScores).values(scoreInserts)
+      : Promise.resolve(),
+  ]);
+
+  // Execute score updates in parallel batches of 30
+  for (let i = 0; i < scoreUpdates.length; i += 30) {
+    const chunk = scoreUpdates.slice(i, i + 30);
+    await Promise.all(
+      chunk.map((u) => db.update(leadScores).set(u.data).where(eq(leadScores.id, u.id)))
+    );
   }
 
   await audit(db, {
