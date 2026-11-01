@@ -355,11 +355,24 @@ export function LeadProspector({
     minDoors: number | null;
     minScore: number;
     customMustHaves?: string[];
+    gate?: Partial<LeadGate>;
   }) => {
     const kwStr = preset.keywords.join(", ");
     const negStr = preset.negativeKeywords.join(", ");
+    const baselineGate: LeadGate = {
+      requirePhone: true,
+      requireWebsite: true,
+      requireLocation: true,
+      requireDecisionMaker: false,
+      requireEmail: false,
+      requireDirectPhone: false,
+      requireBleedingAds: false,
+      requireHighValueProperty: false,
+      customMustHaves: preset.customMustHaves ?? [],
+    };
     const nextGate: LeadGate = {
-      ...gate,
+      ...baselineGate,
+      ...(preset.gate || {}),
       customMustHaves: preset.customMustHaves ?? [],
     };
 

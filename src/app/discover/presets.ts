@@ -6,6 +6,8 @@
  * are displayed, preventing off-niche clutter.
  */
 
+import type { LeadGate } from "@/server/domain/gate";
+
 export interface IntentPreset {
   id: string;
   label: string;
@@ -22,6 +24,7 @@ export interface IntentPreset {
   minDoors: number | null;
   minScore: number;
   customMustHaves: string[];
+  gate?: Partial<LeadGate>;
 }
 
 export const COMMON_ANTI_DUMP_NEGATIVES = [
@@ -39,6 +42,17 @@ export const COMMON_ANTI_DUMP_NEGATIVES = [
   "staffing agency",
   "it services",
 ];
+
+const STANDARD_NICHE_GATE: Partial<LeadGate> = {
+  requirePhone: true,
+  requireWebsite: true,
+  requireLocation: true,
+  requireDecisionMaker: false,
+  requireEmail: false,
+  requireDirectPhone: false,
+  requireBleedingAds: false,
+  requireHighValueProperty: false,
+};
 
 export const ALL_INTENT_PRESETS: IntentPreset[] = [
   // =========================================================================
@@ -58,6 +72,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 80,
     minDoors: 15,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "vacation rental management company",
       "short term rental property management",
@@ -93,6 +108,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 50,
     minDoors: 5,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "vacation rentals book direct",
       "short term rental properties book direct",
@@ -126,6 +142,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 60,
     minDoors: 10,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "corporate housing provider",
       "furnished corporate housing management",
@@ -159,6 +176,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 40,
     minDoors: 10,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "short term rental co hosting company",
       "airbnb co host management company",
@@ -190,6 +208,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 100,
     minDoors: 50,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "residential property management company",
       "multifamily property management company",
@@ -219,6 +238,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 120,
     minDoors: null,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "commercial real estate brokerage",
       "commercial property management company",
@@ -248,6 +268,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 80,
     minDoors: null,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "residential real estate brokerage",
       "top real estate team",
@@ -281,6 +302,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 60,
     minDoors: null,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "residential HVAC contractor",
       "AC replacement and installation company",
@@ -309,6 +331,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 80,
     minDoors: null,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "24 7 emergency HVAC repair company",
       "after hours emergency AC repair",
@@ -332,6 +355,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 150,
     minDoors: null,
     minScore: 65,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "commercial HVAC contractor",
       "commercial refrigeration company",
@@ -359,6 +383,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 80,
     minDoors: null,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "private medical clinic",
       "specialty healthcare practice",
@@ -383,6 +408,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 50,
     minDoors: null,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "dental implant center",
       "cosmetic dentist office",
@@ -410,6 +436,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 80,
     minDoors: null,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "residential solar contractor",
       "solar panel installation company",
@@ -437,6 +464,7 @@ export const ALL_INTENT_PRESETS: IntentPreset[] = [
     maxEmployees: 70,
     minDoors: null,
     minScore: 60,
+    gate: { ...STANDARD_NICHE_GATE },
     keywords: [
       "roof replacement contractor",
       "residential roofing company",

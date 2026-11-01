@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/server/db/client";
-import { researchRuns } from "@/server/db/schema";
-import { getRunTelemetry } from "@/server/research/telemetry";
+import { researchJobs, researchRuns } from "@/server/db/schema";
+import { getRunTelemetry, type TelemetryLogEntry } from "@/server/research/telemetry";
+import { executeQueuedBatch } from "@/server/research/runner";
 import { getActiveContext } from "@/server/repo/markets";
 import { getActiveTeamMember } from "@/server/repo/team";
 import { loadLeadRows } from "@/server/repo/queue";
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
     }
 
     const db = await getDb();
-    const [runRow] = await db
+    let [runRow] = await db
       .select()
       .from(researchRuns)
       .where(eq(researchRuns.id, runId))
@@ -32,7 +33,97 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Run not found" }, { status: 404 });
     }
 
-    const logs = getRunTelemetry(runId, sinceIso);
+    // Serverless Driver: If run is RUNNING, execute the next chunk of queued jobs in this active HTTP cycle
+    if (runRow.status === "RUNNING") {
+      try {
+        await executeQueuedBatch(db, runId, 5);
+        const [refreshed] = await db
+          .select()
+          .from(researchRuns)
+          .where(eq(researchRuns.id, runId))
+          .limit(1);
+        if (refreshed) {
+          runRow = refreshed;
+        }
+      } catch (execErr) {
+        console.error("Batch execution error in /api/discover/status:", execErr);
+      }
+    }
+
+    // Persisted & In-Memory Telemetry Synthesis: Guarantee 0 dropped logs across serverless lambdas
+    const memoryLogs = getRunTelemetry(runId, sinceIso);
+    const completedJobs = await db
+      .select({
+        id: researchJobs.id,
+        status: researchJobs.status,
+        result: researchJobs.result,
+        finishedAt: researchJobs.finishedAt,
+      })
+      .from(researchJobs)
+      .where(
+        and(
+          eq(researchJobs.runId, runId),
+          inArray(researchJobs.status, ["COMPLETED", "FAILED"])
+        )
+      )
+      .orderBy(desc(researchJobs.finishedAt))
+      .limit(60);
+
+    const dbLogs: TelemetryLogEntry[] = [];
+    const sinceTime = sinceIso ? new Date(sinceIso).getTime() : 0;
+
+    for (const j of completedJobs) {
+      if (!j.finishedAt) continue;
+      const jobTime = j.finishedAt.getTime();
+      if (sinceTime > 0 && jobTime <= sinceTime) continue;
+
+      const res = j.result as any;
+      if (j.status === "COMPLETED" && res) {
+        const isApproved =
+          (res.status === "APPROVED" || res.status === "NEEDS_REVIEW") &&
+          res.icpScore >= 60;
+        const timeStr = j.finishedAt.toTimeString().slice(0, 8);
+        if (isApproved) {
+          dbLogs.push({
+            id: `job-app-${j.id}`,
+            runId,
+            timestamp: timeStr,
+            isoTime: j.finishedAt.toISOString(),
+            stage: "APPROVED",
+            level: "success",
+            companyName: res.companyName,
+            domain: res.domain,
+            message: `[ACCEPTED: ICP Qualified] "${res.companyName}" (${res.domain}) • Score: ${res.icpScore}/100 • Discovered ${res.contactsDiscovered} contacts & ${res.factsRecorded} verified facts.`,
+          });
+        } else {
+          const reason =
+            res.gateReasons?.length
+              ? res.gateReasons.join("; ")
+              : res.gateMissing?.length
+              ? `Missing: ${res.gateMissing.join(", ")}`
+              : res.summary || "Did not meet strict ICP thresholds";
+          dbLogs.push({
+            id: `job-gate-${j.id}`,
+            runId,
+            timestamp: timeStr,
+            isoTime: j.finishedAt.toISOString(),
+            stage: "GATE",
+            level: "rejection",
+            companyName: res.companyName,
+            domain: res.domain,
+            message: `[REJECTED: Quality Gate] "${res.companyName}" (${res.domain}) — ${reason}`,
+          });
+        }
+      }
+    }
+
+    const logMap = new Map<string, TelemetryLogEntry>();
+    for (const l of memoryLogs) logMap.set(l.id, l);
+    for (const l of dbLogs) {
+      if (!logMap.has(l.id)) logMap.set(l.id, l);
+    }
+    const logs = Array.from(logMap.values()).sort((a, b) => a.isoTime.localeCompare(b.isoTime));
+
     const isFinished =
       runRow.status === "COMPLETED" ||
       runRow.status === "FAILED" ||

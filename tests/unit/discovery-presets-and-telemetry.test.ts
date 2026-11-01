@@ -231,4 +231,40 @@ describe("Real-Time Discovery Telemetry Engine", () => {
     clearRunTelemetry(testRunId);
     expect(getRunTelemetry(testRunId)).toHaveLength(0);
   });
+
+  it("verifies preset-specific quality gates prevent false rejections of Property Management firms", () => {
+    const pmPreset = ALL_INTENT_PRESETS.find((p) => p.id === "property_mgmt_longterm");
+    expect(pmPreset).toBeDefined();
+    expect(pmPreset?.gate).toBeDefined();
+    expect(pmPreset?.gate?.requireBleedingAds).toBe(false);
+    expect(pmPreset?.gate?.requireHighValueProperty).toBe(false);
+    expect(pmPreset?.gate?.requirePhone).toBe(true);
+    expect(pmPreset?.gate?.requireWebsite).toBe(true);
+
+    // Verify a high-quality property management company passes this gate
+    const pmGate = {
+      ...defaultGate(),
+      ...(pmPreset?.gate || {}),
+      customMustHaves: pmPreset?.customMustHaves || [],
+    };
+
+    const pmCompanyLead = {
+      name: "Real Property Management One Source",
+      website: "https://rpmonesource.com",
+      city: "Austin",
+      state: "TX",
+      phoneDisplay: "(512) 555-0123",
+      icpScore: 95,
+      facts: {
+        niche_verified: "YES",
+        doors_managed: "120",
+        property_management: "YES",
+        bleeding_ads: "NO",
+        avg_property_value: "$2,200/mo",
+      },
+      researchSummary: "Full service residential property management company managing 120 doors in Austin TX.",
+    };
+
+    expect(passesLeadRowGate(pmCompanyLead, pmGate)).toBe(true);
+  });
 });
