@@ -125,6 +125,325 @@ export async function runBulkDiscoveryAction(options: {
   });
 }
 
+export async function getDiscoveryProgressAction(runId: string, sinceIso?: string) {
+  try {
+    const db = await getDb();
+    const [runRow] = await db
+      .select()
+      .from(researchRuns)
+      .where(eq(researchRuns.id, runId))
+      .limit(1);
+
+    if (!runRow) {
+      return { ok: false, error: "Run not found" };
+    }
+
+    const { getRunTelemetry } = await import("@/server/research/telemetry");
+    const logs = getRunTelemetry(runId, sinceIso);
+    const isFinished =
+      runRow.status === "COMPLETED" ||
+      runRow.status === "FAILED" ||
+      runRow.status === "CANCELLED" ||
+      runRow.status === "PARTIAL";
+
+    let leads: any[] = [];
+    let totalReviewCount = 0;
+    let crmReadyCount = 0;
+
+    if (isFinished && runRow.marketId) {
+      const [{ activeMember }, { rule }] = await Promise.all([
+        getActiveTeamMember(db),
+        getActiveContext(db),
+      ]);
+
+      const isOwnerOrManager =
+        activeMember.role === "OWNER" || Boolean(activeMember.permissions?.manageTeamAndSettings);
+      const { loadLeadRows } = await import("@/server/repo/queue");
+      const allMarketRows = await loadLeadRows(db, "all", runRow.marketId);
+      const scopedRows = isOwnerOrManager
+        ? allMarketRows
+        : allMarketRows.filter((l) => l.assignedMemberId === activeMember.id);
+
+      const activeRuleConfig = (rule.config as any) || null;
+      const activeGate = resolveGate(activeRuleConfig?.gate);
+      const postApprovalSet = new Set<string>(POST_APPROVAL as readonly string[]);
+
+      const qualifiedLeads = scopedRows.filter((l) => passesLeadRowGate(l, activeGate, activeRuleConfig));
+      const pendingLeads = qualifiedLeads.filter((l) => !postApprovalSet.has(l.status));
+      crmReadyCount = qualifiedLeads.filter((l) => postApprovalSet.has(l.status)).length;
+      totalReviewCount = pendingLeads.length;
+      leads = JSON.parse(JSON.stringify(pendingLeads.slice(0, 60)));
+    }
+
+    return {
+      ok: true,
+      runId,
+      status: runRow.status,
+      counters: runRow.counters || {},
+      logs,
+      isFinished,
+      lastError: runRow.lastError,
+      leads,
+      totalReviewCount,
+      crmReadyCount,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to fetch run progress" };
+  }
+}
+
+export async function startLeadDiscoveryAction(
+  options: {
+    targetCount?: number;
+    cities?: string[];
+    states?: string[];
+    keywords?: string[];
+    negativeKeywords?: string[];
+    subNiche?: string;
+    businessType?: "residential" | "commercial" | "both";
+    minScore?: number;
+    gate?: Partial<LeadGate>;
+    minEmployees?: number | null;
+    maxEmployees?: number | null;
+    minDoors?: number | null;
+  } = {}
+) {
+  const startedAtMs = Date.now();
+  try {
+    const db = await getDb();
+    const [{ market, rule: defaultRule }, { activeMember }] = await Promise.all([
+      getActiveContext(db),
+      getActiveTeamMember(db),
+    ]);
+    const actorName = activeMember?.name || (await getActor(db));
+    const isOwnerOrManager =
+      activeMember.role === "OWNER" || Boolean(activeMember.permissions.manageTeamAndSettings);
+    const canEditRules =
+      activeMember.role === "OWNER" || Boolean(activeMember.permissions.editRules);
+
+    const { saveRule, reEvaluateLeadsWithRule } = await import("@/server/repo/rules");
+    const { createResearchRun, executeRun } = await import("@/server/research/runner");
+    const { recordRunTelemetry } = await import("@/server/research/telemetry");
+    const { loadLeadRows } = await import("@/server/repo/queue");
+
+    let ruleConfig = (defaultRule.config as any) || {};
+    const mergedGate = resolveGate(options.gate ?? ruleConfig?.gate);
+
+    const statesToUse: string[] =
+      options.states && options.states.length > 0
+        ? options.states
+        : ruleConfig?.geography?.states?.length
+        ? ruleConfig.geography.states
+        : ["TX"];
+    const citiesToUse: string[] =
+      options.cities !== undefined ? options.cities : ruleConfig?.geography?.cities || [];
+    const keywordsToUse: string[] =
+      options.keywords && options.keywords.length > 0
+        ? options.keywords
+        : ruleConfig?.discovery?.keywords?.length
+        ? ruleConfig.discovery.keywords
+        : market.keywords?.length
+        ? market.keywords
+        : [market.name];
+    const negativeKeywordsToUse: string[] =
+      options.negativeKeywords !== undefined
+        ? options.negativeKeywords
+        : ruleConfig?.discovery?.negativeKeywords || [];
+    const subNicheToUse: string =
+      options.subNiche !== undefined
+        ? options.subNiche
+        : ruleConfig?.discovery?.subNiche || "";
+    const businessTypeToUse: "residential" | "commercial" | "both" =
+      options.businessType !== undefined
+        ? options.businessType
+        : ruleConfig?.businessType || "both";
+    const minScoreToUse: number =
+      options.minScore !== undefined ? options.minScore : ruleConfig?.scoring?.minScore ?? 60;
+    const minEmployeesToUse: number | null =
+      options.minEmployees !== undefined
+        ? options.minEmployees
+        : ruleConfig?.size?.minEmployees ?? null;
+    const maxEmployeesToUse: number | null =
+      options.maxEmployees !== undefined
+        ? options.maxEmployees
+        : ruleConfig?.size?.maxEmployees ?? null;
+    const minDoorsToUse: number | null =
+      options.minDoors !== undefined
+        ? options.minDoors
+        : ruleConfig?.size?.minDoors ?? null;
+
+    if (
+      canEditRules &&
+      (options.cities !== undefined ||
+        (options.states && options.states.length > 0) ||
+        options.minScore !== undefined ||
+        (options.keywords && options.keywords.length > 0) ||
+        options.negativeKeywords !== undefined ||
+        options.subNiche !== undefined ||
+        options.businessType !== undefined ||
+        options.minEmployees !== undefined ||
+        options.maxEmployees !== undefined ||
+        options.minDoors !== undefined ||
+        options.gate !== undefined)
+    ) {
+      ruleConfig = {
+        ...ruleConfig,
+        businessType: businessTypeToUse,
+        geography: {
+          ...ruleConfig.geography,
+          states: statesToUse,
+          cities: citiesToUse,
+        },
+        discovery: {
+          ...ruleConfig.discovery,
+          keywords: keywordsToUse,
+          negativeKeywords: negativeKeywordsToUse,
+          subNiche: subNicheToUse,
+          strictNicheMatch: true,
+        },
+        scoring: {
+          ...ruleConfig.scoring,
+          minScore: minScoreToUse,
+        },
+        size: {
+          ...ruleConfig.size,
+          minEmployees: minEmployeesToUse,
+          maxEmployees: maxEmployeesToUse,
+          minDoors: minDoorsToUse,
+        },
+        gate: mergedGate,
+      };
+      try {
+        await saveRule(db, defaultRule.id, { name: defaultRule.name, config: ruleConfig }, actorName);
+        await reEvaluateLeadsWithRule(db, defaultRule.id, actorName);
+      } catch {
+        // Non-blocking
+      }
+    }
+
+    const requestedCount = Number(options.targetCount);
+    const targetCount = Number.isFinite(requestedCount)
+      ? Math.max(Math.min(Math.round(requestedCount), 200), 1)
+      : 25;
+    const mode = targetCount <= 25 ? "small" : "full";
+
+    const runId = await createResearchRun(db, {
+      mode,
+      ruleId: defaultRule.id,
+      marketId: market.id,
+      actor: `${actorName} (${market.name})`,
+      maxCandidates: targetCount,
+      concurrency: 8,
+      pagesPerCompany: 4,
+      providerFilter: undefined,
+    });
+
+    recordRunTelemetry(runId, {
+      stage: "INIT",
+      level: "info",
+      message: `Lead discovery launched for ${market.name}. Target: ${targetCount} verified leads.`,
+    });
+
+    const assignMemberId = !isOwnerOrManager && activeMember.id !== "guest" ? activeMember.id : null;
+    const assignMemberName = !isOwnerOrManager && activeMember.id !== "guest" ? activeMember.name : null;
+
+    // Execute in background so the client receives the runId instantly without timeouts
+    (async () => {
+      try {
+        const counters = await executeRun(db, runId, {
+          timeoutMs: 2800,
+          maxWallClockMs: targetCount <= 25 ? 75000 : targetCount <= 50 ? 130000 : 240000,
+          autoEnrich: true,
+        });
+
+        if (assignMemberId && counters.qualifiedCompanyIds && counters.qualifiedCompanyIds.length > 0) {
+          await db
+            .update(companies)
+            .set({
+              assignedMemberId: assignMemberId,
+              assignedMemberName: assignMemberName,
+            })
+            .where(inArray(companies.id, counters.qualifiedCompanyIds));
+        }
+
+        const allMarketRows = await loadLeadRows(db, "all", market.id);
+        const liveQualifiedIds = new Set(counters.qualifiedCompanyIds || []);
+        const livePassedGateCount = liveQualifiedIds.size > 0
+          ? allMarketRows.filter((r) => liveQualifiedIds.has(r.id) && passesLeadRowGate(r, mergedGate, ruleConfig)).length
+          : 0;
+
+        const enrichedCounters = {
+          ...counters,
+          totalCandidates: counters.totalCandidates,
+          createdCompanies: counters.createdCompanies || 0,
+          approvedCount: livePassedGateCount,
+          targetCount,
+          memberId: activeMember.id,
+          memberName: activeMember.name,
+          memberRole: activeMember.role,
+          marketName: market.name,
+          states: statesToUse,
+          cities: citiesToUse,
+          durationMs: Date.now() - startedAtMs,
+        };
+
+        await Promise.all([
+          db
+            .update(researchRuns)
+            .set({
+              status: "COMPLETED",
+              counters: enrichedCounters as any,
+              finishedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(researchRuns.id, runId)),
+          audit(db, {
+            actor: activeMember.name,
+            action: "discovery.completed",
+            entityType: "research_run",
+            entityId: runId,
+            details: {
+              memberId: activeMember.id,
+              memberName: activeMember.name,
+              marketId: market.id,
+              marketName: market.name,
+              targetCount,
+              qualifiedCount: livePassedGateCount,
+              totalScanned: counters.totalCandidates,
+              durationMs: Date.now() - startedAtMs,
+            },
+          }),
+        ]);
+      } catch (err: any) {
+        console.error("Background lead discovery failed:", err);
+        recordRunTelemetry(runId, {
+          stage: "FAILED",
+          level: "error",
+          message: `Discovery Run Failed: ${err?.message || String(err)}`,
+        });
+        await db
+          .update(researchRuns)
+          .set({
+            status: "FAILED",
+            lastError: err?.message || String(err),
+            finishedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(researchRuns.id, runId));
+      }
+    })();
+
+    return {
+      ok: true,
+      runId,
+      targetCount,
+      gate: mergedGate,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to start lead discovery" };
+  }
+}
+
 export async function runLeadDiscoveryAction(
   options: {
     targetCount?: number;

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useTransition } from "react";
+import React, { useState, useEffect, useRef, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -27,9 +27,12 @@ import {
   Globe,
   Plus,
   X,
+  Terminal,
 } from "lucide-react";
 import {
   runLeadDiscoveryAction,
+  startLeadDiscoveryAction,
+  getDiscoveryProgressAction,
   getLatestReviewLeadsAction,
   quickApproveLeadAction,
   approveAllReviewLeadsAction,
@@ -41,6 +44,9 @@ import { switchMarketAction } from "@/app/actions/tenant";
 import { autoDistributeLeadsAction } from "@/app/caller/actions";
 import { CandidateForm } from "./candidate-form";
 import { EvidenceDrawer } from "@/components/evidence-drawer";
+import { DiscoveryTerminal, type TerminalCounters } from "./discovery-terminal";
+import { getFilteredPresetsForMarket, ALL_INTENT_PRESETS, type IntentPreset } from "./presets";
+import type { TelemetryLogEntry } from "@/server/research/telemetry";
 import { GATE_FIELDS, GATE_META, resolveGate, type GateField, type LeadGate } from "@/server/domain/gate";
 import type { TeamMember } from "@/server/domain/team";
 import type { MarketView } from "@/server/repo/markets";
@@ -177,6 +183,31 @@ export function LeadProspector({
       : "web design, web development, digital marketing agency, seo agency, software vendor, directory"
   );
   const [savingFilters, setSavingFilters] = useState(false);
+
+  // Live Discovery Console & Telemetry state
+  const [isRunningDiscovery, setIsRunningDiscovery] = useState(false);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [terminalLogs, setTerminalLogs] = useState<TelemetryLogEntry[]>([]);
+  const [showTerminal, setShowTerminal] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [liveCounters, setLiveCounters] = useState<TerminalCounters>({
+    scanned: 0,
+    inspected: 0,
+    rejected: 0,
+    approved: 0,
+    target: 25,
+  });
+  const [selectedPresetGroup, setSelectedPresetGroup] = useState<string>("all");
+  const timerIntervalRef = useRef<any>(null);
+  const pollIntervalRef = useRef<any>(null);
+
+  // Cleanup polling & timers on unmount
+  useEffect(() => {
+    return () => {
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
 
   // Manual URL accordion toggle
   const [showManualIntake, setShowManualIntake] = useState(false);
@@ -456,7 +487,7 @@ export function LeadProspector({
     }
   };
 
-  // Primary 1-Click Discovery Action
+  // Primary 1-Click Discovery Action with Live Console Streaming
   const handleStartDiscovery = () => {
     setErrorMsg(null);
     setSuccessBanner(null);
@@ -466,76 +497,163 @@ export function LeadProspector({
     setTargetCount(finalCount);
     setCustomCountInput(String(finalCount));
 
-    startTransition(async () => {
-      try {
-        const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
-        const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
-        const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-        const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+    const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
 
-        const res = await runLeadDiscoveryAction({
-          targetCount: finalCount,
-          keywords: kwsArr,
-          negativeKeywords: negsArr,
-          subNiche: editSubNiche,
-          businessType: editBusinessType,
-          states: statesArr.length > 0 ? statesArr : ["TX"],
-          cities: citiesArr,
-          minScore: editMinScore,
-          gate,
-          minEmployees: editMinEmployees,
-          maxEmployees: editMaxEmployees,
-          minDoors: editMinDoors,
-        });
-
-        if (res.ok) {
-          const returnedLeads = (res.leads as any[]) || [];
-          setLeads(returnedLeads);
-          const totalQualified = res.totalReviewCount ?? returnedLeads.length;
-          const readyInCrm = (res as any).crmReadyCount ?? totalQualified;
-          setTotalReviewCount(totalQualified);
-          setCrmReadyCount(readyInCrm);
-
-          const scanned = res.counters?.totalCandidates ?? 0;
-          const approvedNew = (res.counters as any)?.approvedCount ?? res.counters?.createdCompanies ?? 0;
-          const rejectedNew = Math.max(0, scanned - approvedNew);
-
-          setRunSummary({
-            totalScanned: scanned,
-            qualifiedCount: approvedNew,
-            rejectedCount: rejectedNew,
-            crmReadyCount: readyInCrm,
-          });
-
-          if (approvedNew > 0) {
-            setSuccessBanner(
-              `Discovery complete for ${nicheInfo?.name || "Active Niche"}: ${approvedNew} qualified leads passed your Must-Have Quality Gate.`
-            );
-          } else {
-            setSuccessBanner(
-              `Discovery scanned ${scanned} candidates. No new leads met all strict quality gate criteria in this run.`
-            );
-          }
-        } else {
-          setErrorMsg(res.error || "Discovery run encountered an issue. Please try again.");
-        }
-      } catch (err: any) {
-        // If client network connection dropped or timed out while server finished, recover latest leads
-        try {
-          const latest = await getLatestReviewLeadsAction();
-          if (latest.ok && latest.leads && latest.leads.length > 0) {
-            setLeads(latest.leads);
-            setSuccessBanner(`Discovery completed! Showing ${latest.leads.length} qualified leads in review.`);
-            return;
-          }
-        } catch {}
-        setErrorMsg(
-          err?.message?.includes("unexpected response")
-            ? "Discovery completed on server. Please refresh or check Leads to review newly discovered prospects."
-            : err?.message || "Discovery run was interrupted. Please retry in a moment."
-        );
-      }
+    // Initialize Live Discovery Console state
+    setIsRunningDiscovery(true);
+    setShowTerminal(true);
+    setElapsedSeconds(0);
+    setLiveCounters({
+      scanned: 0,
+      inspected: 0,
+      rejected: 0,
+      approved: 0,
+      target: finalCount,
     });
+
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+
+    const nowTime = new Date().toTimeString().split(" ")[0] || "00:00:00";
+    setTerminalLogs([
+      {
+        id: `init_${Date.now()}`,
+        runId: "",
+        timestamp: nowTime,
+        isoTime: new Date().toISOString(),
+        level: "info",
+        stage: "INIT",
+        message: `🚀 Launching live lead discovery for ${nicheInfo?.name || "Active Niche"} (Target: ${finalCount} leads)...`,
+      },
+    ]);
+
+    // Timer interval
+    timerIntervalRef.current = setInterval(() => {
+      setElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+
+    // Launch non-blocking discovery action
+    startLeadDiscoveryAction({
+      targetCount: finalCount,
+      keywords: kwsArr,
+      negativeKeywords: negsArr,
+      subNiche: editSubNiche,
+      businessType: editBusinessType,
+      states: statesArr.length > 0 ? statesArr : ["TX"],
+      cities: citiesArr,
+      minScore: editMinScore,
+      gate,
+      minEmployees: editMinEmployees,
+      maxEmployees: editMaxEmployees,
+      minDoors: editMinDoors,
+    })
+      .then((startRes) => {
+        if (!startRes.ok || !startRes.runId) {
+          setIsRunningDiscovery(false);
+          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+          setErrorMsg(startRes.error || "Failed to start discovery run.");
+          return;
+        }
+
+        const runId = startRes.runId;
+        setActiveRunId(runId);
+
+        let lastSeenIso = "";
+        const pollStatus = async () => {
+          try {
+            let data: any = null;
+            try {
+              const res = await fetch(
+                `/api/discover/status?runId=${runId}${lastSeenIso ? `&since=${encodeURIComponent(lastSeenIso)}` : ""}`,
+                { cache: "no-store" }
+              );
+              if (res.ok) {
+                data = await res.json();
+              }
+            } catch {
+              // fallback
+            }
+
+            if (!data || !data.ok) {
+              data = await getDiscoveryProgressAction(runId, lastSeenIso);
+            }
+
+            if (data && data.ok) {
+              if (data.logs && data.logs.length > 0) {
+                setTerminalLogs((prev) => {
+                  const existingIds = new Set(prev.map((l) => l.id));
+                  const newItems = data.logs.filter((l: any) => !existingIds.has(l.id));
+                  return [...prev, ...newItems];
+                });
+                lastSeenIso = data.logs[data.logs.length - 1].isoTime;
+              }
+
+              const scanned = data.counters?.totalCandidates || 0;
+              const inspected = data.counters?.completedJobs || 0;
+              const approved = data.counters?.approvedCount || 0;
+              const rejected = Math.max(0, scanned - approved);
+
+              setLiveCounters({
+                scanned,
+                inspected,
+                rejected,
+                approved,
+                target: finalCount,
+              });
+
+              if (data.isFinished) {
+                if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+                setIsRunningDiscovery(false);
+
+                if (data.leads && data.leads.length > 0) {
+                  setLeads(data.leads);
+                } else {
+                  getLatestReviewLeadsAction().then((latest) => {
+                    if (latest.ok && latest.leads) setLeads(latest.leads as any);
+                  });
+                }
+
+                const totalRev = data.totalReviewCount ?? (data.leads ? data.leads.length : 0);
+                const crmR = data.crmReadyCount ?? totalRev;
+                setTotalReviewCount(totalRev);
+                setCrmReadyCount(crmR);
+
+                setRunSummary({
+                  totalScanned: scanned,
+                  qualifiedCount: approved,
+                  rejectedCount: rejected,
+                  crmReadyCount: crmR,
+                });
+
+                if (approved > 0) {
+                  setSuccessBanner(
+                    `Discovery complete for ${nicheInfo?.name || "Active Niche"}: ${approved} qualified leads verified and staged for review!`
+                  );
+                } else {
+                  setSuccessBanner(
+                    `Discovery completed. Scanned ${scanned} web candidates. Anti-dump filters rejected off-niche results to keep your CRM clean.`
+                  );
+                }
+              }
+            }
+          } catch (pollErr) {
+            console.warn("Polling discovery status error:", pollErr);
+          }
+        };
+
+        // Poll immediately and then every 850ms
+        pollStatus();
+        pollIntervalRef.current = setInterval(pollStatus, 850);
+      })
+      .catch((err) => {
+        setIsRunningDiscovery(false);
+        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+        setErrorMsg(err?.message || "Failed to initiate discovery.");
+      });
   };
 
   const handleAutoDistributeFromDiscover = async () => {
@@ -726,7 +844,28 @@ export function LeadProspector({
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5 self-start md:self-auto">
+          <div className="flex flex-wrap items-center gap-2.5 self-start md:self-auto">
+            <button
+              type="button"
+              onClick={() => setShowTerminal((prev) => !prev)}
+              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-semibold transition shadow-sm ${
+                showTerminal || isRunningDiscovery
+                  ? "bg-zinc-800 text-emerald-400 border-zinc-700 font-bold"
+                  : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300 hover:text-white"
+              }`}
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              <span>{showTerminal ? "Hide Live Console" : "Live Crawl Console"}</span>
+              {isRunningDiscovery ? (
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
+              ) : (
+                terminalLogs.length > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">
+                    {terminalLogs.length}
+                  </span>
+                )
+              )}
+            </button>
             <button
               type="button"
               onClick={() => setIsEditingFilters(!isEditingFilters)}
@@ -748,180 +887,143 @@ export function LeadProspector({
           </div>
         </div>
 
-        {/* 1-Click Campaign & ICP Intent Presets (Airbnb 24/7 AI Concierge, Commercial Only, Residential, PM, HVAC) */}
-        <div className="p-4 rounded-xl bg-[#09090b] border border-zinc-800/90 space-y-2.5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-            <div className="text-xs font-bold text-white flex items-center gap-2">
-              <Zap className="w-3.5 h-3.5 text-amber-400" />
-              <span>1-Click ICP &amp; AI Offer Intent Presets (Zero Dump Data &bull; Strict Sub-Niche Control)</span>
-            </div>
-            <span className="text-[11px] text-zinc-400">
-              Select an exact campaign profile or customize every ICP parameter below
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {[
-              {
-                id: "airbnb_str",
-                label: "🌙 Airbnb / STR Managers (24/7 AI Concierge & Night Calls)",
-                badge: "24/7 AI Calling",
-                subNiche: "airbnb_str",
-                businessType: "residential" as const,
-                minEmployees: 2,
-                maxEmployees: 60,
-                minDoors: 10,
-                minScore: 60,
-                keywords: [
-                  "vacation rental management company",
-                  "airbnb property management company",
-                  "short term rental property management",
-                  "luxury vacation rental management",
-                  "serviced apartment operator",
-                  "airbnb co-hosting company",
-                  "guesty property management",
-                ],
-                negativeKeywords: [
-                  "single room",
-                  "roommate",
-                  "sublet",
-                  "student housing",
-                  "web design",
-                  "web development",
-                  "digital marketing agency",
-                  "seo agency",
-                  "software vendor",
-                ],
-                customMustHaves: ["Short-Term / Vacation Rental"],
-              },
-              {
-                id: "commercial_re",
-                label: "🏢 Commercial Real Estate Only (CRE Brokerage & Leasing)",
-                badge: "Strict Commercial",
-                subNiche: "commercial_real_estate",
-                businessType: "commercial" as const,
-                minEmployees: 4,
-                maxEmployees: 100,
-                minDoors: null,
-                minScore: 65,
-                keywords: [
-                  "commercial real estate brokerage",
-                  "commercial property management company",
-                  "retail office industrial leasing brokerage",
-                  "tenant representation brokerage",
-                  "commercial real estate investment sales",
-                ],
-                negativeKeywords: [
-                  "single family residential",
-                  "apartment roommate",
-                  "web design",
-                  "web development",
-                  "marketing agency",
-                  "seo agency",
-                ],
-                customMustHaves: ["Commercial"],
-              },
-              {
-                id: "residential_re",
-                label: "🏡 Residential Real Estate Teams (Speed-to-Lead AI)",
-                badge: "Strict Residential",
-                subNiche: "residential_real_estate",
-                businessType: "residential" as const,
-                minEmployees: 3,
-                maxEmployees: 80,
-                minDoors: null,
-                minScore: 60,
-                keywords: [
-                  "residential real estate brokerage",
-                  "real estate team",
-                  "luxury home realty brokerage",
-                  "buyer seller real estate brokerage",
-                  "local real estate group",
-                ],
-                negativeKeywords: [
-                  "commercial warehouse only",
-                  "real estate school",
-                  "web design",
-                  "web development",
-                  "marketing agency",
-                  "seo agency",
-                ],
-                customMustHaves: [],
-              },
-              {
-                id: "property_mgmt",
-                label: "🔑 Property Management (50+ Doors / AppFolio & Buildium)",
-                badge: "50+ Doors",
-                subNiche: "property_management",
-                businessType: "both" as const,
-                minEmployees: 4,
-                maxEmployees: 80,
-                minDoors: 50,
-                minScore: 65,
-                keywords: [
-                  "residential property management company",
-                  "turnkey rental property management",
-                  "multifamily property management company",
-                  "HOA and residential property management",
-                  "appfolio property management",
-                ],
-                negativeKeywords: [
-                  "self storage",
-                  "web design",
-                  "web development",
-                  "marketing agency",
-                  "seo agency",
-                ],
-                customMustHaves: [],
-              },
-              {
-                id: "hvac_home",
-                label: "❄️ Residential HVAC Contractors (Install & Quote Follow-Up)",
-                badge: "5–60 Staff",
-                subNiche: "hvac",
-                businessType: "residential" as const,
-                minEmployees: 5,
-                maxEmployees: 60,
-                minDoors: null,
-                minScore: 60,
-                keywords: [
-                  "residential HVAC contractor",
-                  "AC replacement and installation company",
-                  "heating and air conditioning company",
-                  "ductless mini split installer",
-                ],
-                negativeKeywords: [
-                  "supply house",
-                  "parts distributor",
-                  "web design",
-                  "web development",
-                  "marketing agency",
-                  "seo agency",
-                ],
-                customMustHaves: [],
-              },
-            ].map((preset) => {
-              const isSelected = editSubNiche === preset.subNiche && preset.subNiche !== "";
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  disabled={isPending || savingFilters}
-                  onClick={() => handleApplyIntentPreset(preset)}
-                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-                    isSelected
-                      ? "bg-amber-500/15 text-amber-300 border-amber-500/50 shadow-sm"
-                      : "bg-zinc-900/90 text-zinc-300 border-zinc-800 hover:border-zinc-600 hover:text-white"
-                  }`}
-                >
-                  <span>{preset.label}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-bold">
-                    {preset.badge}
+        {/* 1-Click Campaign & ICP Intent Presets (Zero Dump Data • Strict Sub-Niche Control) */}
+        {(() => {
+          const activeMarketPresets = getFilteredPresetsForMarket(nicheInfo);
+          const hasMultipleGroups =
+            new Set(activeMarketPresets.map((p) => p.filterGroup)).size > 1;
+          const visiblePresets =
+            selectedPresetGroup === "all"
+              ? activeMarketPresets
+              : activeMarketPresets.filter((p) => p.filterGroup === selectedPresetGroup);
+
+          return (
+            <div className="p-4 rounded-xl bg-[#09090b] border border-zinc-800/90 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <div className="text-xs font-bold text-white flex items-center gap-2">
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                  <span>
+                    1-Click ICP &amp; AI Offer Intent Presets (Strict {activeNicheName} Sub-Niches • Zero Dump Data)
                   </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+                </div>
+                <span className="text-[11px] text-zinc-400">
+                  Select a tailored profile or refine individual ICP parameters below
+                </span>
+              </div>
+
+              {/* Sub-filter group pills when in Real Estate / STR */}
+              {hasMultipleGroups && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5 border-b border-zinc-850 pb-2">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 mr-1">
+                    Filter Sub-Niche:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPresetGroup("all")}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                      selectedPresetGroup === "all"
+                        ? "bg-zinc-800 text-white font-bold"
+                        : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    All ({activeMarketPresets.length})
+                  </button>
+                  {activeMarketPresets.some((p) => p.filterGroup === "str_concierge") && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPresetGroup("str_concierge")}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                        selectedPresetGroup === "str_concierge"
+                          ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
+                          : "text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >
+                      🌙 24/7 AI Concierge &amp; STR
+                    </button>
+                  )}
+                  {activeMarketPresets.some((p) => p.filterGroup === "corporate_mtr") && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPresetGroup("corporate_mtr")}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                        selectedPresetGroup === "corporate_mtr"
+                          ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
+                          : "text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >
+                      🏢 Corporate &amp; Mid-Term (MTR)
+                    </button>
+                  )}
+                  {activeMarketPresets.some((p) => p.filterGroup === "property_mgmt") && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPresetGroup("property_mgmt")}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                        selectedPresetGroup === "property_mgmt"
+                          ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
+                          : "text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >
+                      🔑 50+ Doors PM
+                    </button>
+                  )}
+                  {activeMarketPresets.some((p) => p.filterGroup === "commercial") && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPresetGroup("commercial")}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                        selectedPresetGroup === "commercial"
+                          ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
+                          : "text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >
+                      🏢 Commercial Only
+                    </button>
+                  )}
+                  {activeMarketPresets.some((p) => p.filterGroup === "residential") && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPresetGroup("residential")}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                        selectedPresetGroup === "residential"
+                          ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
+                          : "text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >
+                      🏡 Residential Teams
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                {visiblePresets.map((preset) => {
+                  const isSelected =
+                    editSubNiche === preset.subNiche && preset.subNiche !== "";
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      disabled={isPending || savingFilters || isRunningDiscovery}
+                      onClick={() => handleApplyIntentPreset(preset)}
+                      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                        isSelected
+                          ? "bg-amber-500/15 text-amber-300 border-amber-500/50 shadow-sm"
+                          : "bg-zinc-900/90 text-zinc-300 border-zinc-800 hover:border-zinc-600 hover:text-white"
+                      }`}
+                      title={preset.description}
+                    >
+                      <span>{preset.label}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-bold">
+                        {preset.badge}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Owner-Controlled Must-Have Quality Gate */}
         <div className="p-4 rounded-xl bg-[#09090b] border border-zinc-800/90 space-y-3">
@@ -1391,18 +1493,20 @@ export function LeadProspector({
           {/* Primary Solid Button */}
           <button
             type="button"
-            disabled={isPending}
+            disabled={isPending || isRunningDiscovery}
             onClick={handleStartDiscovery}
             className={`w-full lg:w-auto flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-xl font-bold text-xs tracking-wide shadow-lg transition-all ${
-              isPending
+              isPending || isRunningDiscovery
                 ? "bg-zinc-800 text-zinc-400 cursor-not-allowed border border-zinc-700"
                 : "bg-white hover:bg-zinc-200 text-black shadow-black/40 active:scale-[0.98]"
             }`}
           >
-            {isPending ? (
+            {isPending || isRunningDiscovery ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin text-zinc-400" />
-                <span>Scanning &amp; Verifying {targetCount} {activeNicheName} Leads...</span>
+                <span>
+                  Crawling &amp; Verifying {targetCount} {activeNicheName} Leads (Live)...
+                </span>
               </>
             ) : (
               <>
@@ -1413,39 +1517,18 @@ export function LeadProspector({
           </button>
         </div>
 
-        {/* Live Progress Card (Active Execution State — 100% Niche-Agnostic) */}
-        {isPending && (
-          <div className="p-5 rounded-2xl bg-[#09090b] border border-zinc-800 space-y-4 animate-pulse">
-            <div className="flex items-center gap-3 text-zinc-200 text-sm font-bold">
-              <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
-              <span>
-                AI Lead Engine is actively discovering and verifying {activeNicheName} companies...
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-[11px] text-zinc-400">
-              <div className="p-3 rounded-xl bg-[#121215] border border-zinc-800/80">
-                <span className="text-zinc-100 font-bold block mb-1">1. Live Web Search</span>
-                Querying Tavily across{" "}
-                {cities.length > 0 ? cities.slice(0, 3).join(", ") : `${states.join(", ")} markets`} for active{" "}
-                {activeNicheName} businesses.
-              </div>
-              <div className="p-3 rounded-xl bg-[#121215] border border-zinc-800/80">
-                <span className="text-zinc-100 font-bold block mb-1">2. Directory &amp; Listicle Filter</span>
-                Excluding aggregators (Yelp, Zillow, BBB, directories) &amp; blog listicles; keeping only real company domains.
-              </div>
-              <div className="p-3 rounded-xl bg-[#121215] border border-zinc-800/80">
-                <span className="text-zinc-100 font-bold block mb-1">3. Deep Website Inspection</span>
-                Crawling live company pages to extract dialable phone numbers, decision makers, emails &amp; services.
-              </div>
-              <div className="p-3 rounded-xl bg-[#121215] border border-zinc-800/80">
-                <span className="text-zinc-100 font-bold block mb-1">4. Must-Have Quality Gate</span>
-                Enforcing required fields (
-                {GATE_FIELDS.filter((f) => gate[f])
-                  .map((f) => GATE_META[f].shortLabel)
-                  .join(", ") || "ICP Score"}
-                ) before adding to CRM.
-              </div>
-            </div>
+        {/* Interactive Live Discovery & Crawl Console Widget */}
+        {(showTerminal || isRunningDiscovery || terminalLogs.length > 0) && (
+          <div className="pt-2">
+            <DiscoveryTerminal
+              runId={activeRunId}
+              isRunning={isRunningDiscovery}
+              logs={terminalLogs}
+              counters={liveCounters}
+              elapsedSeconds={elapsedSeconds}
+              onClose={() => setShowTerminal(false)}
+              onClear={() => setTerminalLogs([])}
+            />
           </div>
         )}
 

@@ -13,8 +13,10 @@ import { audit } from "../repo/audit";
 import { executeDiscovery } from "../providers/registry";
 import { researchCompany, type ResearchResult } from "./engine";
 import { getStaleDays } from "../repo/settings";
+import { recordRunTelemetry } from "./telemetry";
 
 export type RunMode = "test" | "small" | "full" | "stale" | "rejected" | "retry";
+export { getRunTelemetry, recordRunTelemetry, type TelemetryLogEntry } from "./telemetry";
 
 export interface CreateRunOptions {
   mode: RunMode;
@@ -212,6 +214,12 @@ export async function executeRun(
   const companyIdsToResearch: string[] = [];
   let baseQueryOffset = 0;
 
+  recordRunTelemetry(runId, {
+    stage: "INIT",
+    level: "info",
+    message: `Discovery Engine initialized (Mode: ${run.mode}, Target: ${maxCandidates} qualified leads, Concurrency: ${concurrency}).`,
+  });
+
   // Step 1: Candidate intake according to mode
   if (run.mode === "stale") {
     const staleDays = await getStaleDays(db);
@@ -223,6 +231,11 @@ export async function executeRun(
       .where(run.marketId ? and(eq(companies.marketId, run.marketId), staleCond) : staleCond)
       .limit(maxCandidates);
     companyIdsToResearch.push(...staleRows.map((r) => r.id));
+    recordRunTelemetry(runId, {
+      stage: "INIT",
+      level: "info",
+      message: `Selected ${companyIdsToResearch.length} stale leads for re-verification.`,
+    });
   } else if (run.mode === "rejected") {
     const rejCond = inArray(companies.status, ["REJECTED", "DISQUALIFIED"]);
     const rejectedRows = await db
@@ -231,6 +244,11 @@ export async function executeRun(
       .where(run.marketId ? and(eq(companies.marketId, run.marketId), rejCond) : rejCond)
       .limit(maxCandidates);
     companyIdsToResearch.push(...rejectedRows.map((r) => r.id));
+    recordRunTelemetry(runId, {
+      stage: "INIT",
+      level: "info",
+      message: `Selected ${companyIdsToResearch.length} previously rejected leads for re-evaluation.`,
+    });
   } else if (run.mode === "retry") {
     const failedJobs = await db
       .select({ companyId: researchJobs.companyId })
@@ -239,6 +257,11 @@ export async function executeRun(
     for (const j of failedJobs) {
       if (j.companyId) companyIdsToResearch.push(j.companyId);
     }
+    recordRunTelemetry(runId, {
+      stage: "INIT",
+      level: "info",
+      message: `Retrying ${companyIdsToResearch.length} previously failed jobs.`,
+    });
   } else {
     // Pull a larger candidate pool so filtering/deduping still yields the requested qualified count
     const poolLimit = runOpts?.mockPages
@@ -263,6 +286,14 @@ export async function executeRun(
 
     baseQueryOffset = Math.max(0, (priorRunRows.length - 1) * 3);
 
+    const kwSample = (ruleConfig.discovery.keywords || []).slice(0, 3).join(", ");
+    const geoSample = (ruleConfig.geography.states || ["TX"]).join(", ");
+    recordRunTelemetry(runId, {
+      stage: "SEARCH",
+      level: "info",
+      message: `Formulating search query plan: [${kwSample || "Target ICP"}] across [${geoSample}] (pool target: ${poolLimit} candidates)...`,
+    });
+
     const discovered = await executeDiscovery(
       db,
       {
@@ -279,6 +310,12 @@ export async function executeRun(
     );
 
     counters.totalCandidates = discovered.length;
+
+    recordRunTelemetry(runId, {
+      stage: "SEARCH",
+      level: "info",
+      message: `Tavily Search completed: Discovered ${discovered.length} raw website candidates. Now running anti-dump exclusions & deduplication...`,
+    });
 
     const intakeResult = await createCandidatesBatch(
       db,
@@ -299,6 +336,12 @@ export async function executeRun(
     counters.createdCompanies = intakeResult.createdCount;
     counters.duplicatesMerged = intakeResult.duplicateCount;
     counters.excludedCount = intakeResult.excludedCount;
+
+    recordRunTelemetry(runId, {
+      stage: "SEARCH",
+      level: "info",
+      message: `Intake Complete: ${intakeResult.createdCount} new websites queued for live deep-crawl, ${intakeResult.duplicateCount} deduplicated, ${intakeResult.excludedCount} blocked by negative filters.`,
+    });
 
     companyIdsToResearch.push(...intakeResult.createdIds);
     for (const dupId of intakeResult.duplicateIds) {
@@ -372,12 +415,33 @@ export async function executeRun(
         counters.factsRecorded += result.factsRecorded;
         counters.contactsDiscovered += result.contactsDiscovered;
 
-        if (
+        const isApproved =
           (result.status === "APPROVED" || result.status === "NEEDS_REVIEW") &&
-          result.icpScore >= minScoreTarget
-        ) {
+          result.icpScore >= minScoreTarget;
+
+        if (isApproved) {
           counters.approvedCount = (counters.approvedCount || 0) + 1;
           counters.qualifiedCompanyIds?.push(companyId);
+          recordRunTelemetry(runId, {
+            stage: "APPROVED",
+            level: "success",
+            companyName: result.companyName,
+            domain: result.domain,
+            message: `[ACCEPTED: ICP Qualified] "${result.companyName}" (${result.domain}) • Score: ${result.icpScore}/100 • Discovered ${result.contactsDiscovered} contacts & ${result.factsRecorded} verified facts.`,
+          });
+        } else {
+          const reason = result.gateReasons?.length
+            ? result.gateReasons.join("; ")
+            : result.gateMissing?.length
+            ? `Missing: ${result.gateMissing.join(", ")}`
+            : result.summary || "Did not meet strict ICP thresholds";
+          recordRunTelemetry(runId, {
+            stage: "GATE",
+            level: "rejection",
+            companyName: result.companyName,
+            domain: result.domain,
+            message: `[REJECTED: Quality Gate] "${result.companyName}" (${result.domain}) — ${reason}`,
+          });
         }
 
         if (
@@ -435,6 +499,11 @@ export async function executeRun(
     const needed = maxCandidates - (counters.approvedCount || 0);
     const replenishLimit = Math.min(Math.max(Math.ceil(needed * 2.8), 25), 120);
     const roundQueryOffset = baseQueryOffset + replenishRound * 4;
+    recordRunTelemetry(runId, {
+      stage: "REPLENISH",
+      level: "info",
+      message: `Dynamic Replenishment Round ${replenishRound}: Currently have ${counters.approvedCount || 0}/${maxCandidates} qualified leads. Fetching next pool of up to ${replenishLimit} candidates...`,
+    });
     replenishRound++;
 
     const freshDomainRows = await db
@@ -530,12 +599,33 @@ export async function executeRun(
           counters.factsRecorded += result.factsRecorded;
           counters.contactsDiscovered += result.contactsDiscovered;
 
-          if (
+          const isApproved =
             (result.status === "APPROVED" || result.status === "NEEDS_REVIEW") &&
-            result.icpScore >= minScoreTarget
-          ) {
+            result.icpScore >= minScoreTarget;
+
+          if (isApproved) {
             counters.approvedCount = (counters.approvedCount || 0) + 1;
             counters.qualifiedCompanyIds?.push(companyId);
+            recordRunTelemetry(runId, {
+              stage: "APPROVED",
+              level: "success",
+              companyName: result.companyName,
+              domain: result.domain,
+              message: `[ACCEPTED: ICP Qualified] "${result.companyName}" (${result.domain}) • Score: ${result.icpScore}/100 • Discovered ${result.contactsDiscovered} contacts & ${result.factsRecorded} verified facts.`,
+            });
+          } else {
+            const reason = result.gateReasons?.length
+              ? result.gateReasons.join("; ")
+              : result.gateMissing?.length
+              ? `Missing: ${result.gateMissing.join(", ")}`
+              : result.summary || "Did not meet strict ICP thresholds";
+            recordRunTelemetry(runId, {
+              stage: "GATE",
+              level: "rejection",
+              companyName: result.companyName,
+              domain: result.domain,
+              message: `[REJECTED: Quality Gate] "${result.companyName}" (${result.domain}) — ${reason}`,
+            });
           }
 
           if (runOpts?.autoEnrich && result.status !== "DISQUALIFIED" && Date.now() + 2000 < jobDeadline) {
@@ -581,6 +671,12 @@ export async function executeRun(
       : counters.completedJobs > 0
       ? "PARTIAL"
       : "FAILED";
+
+  recordRunTelemetry(runId, {
+    stage: finalStatus === "FAILED" ? "FAILED" : "COMPLETED",
+    level: finalStatus === "FAILED" ? "error" : "success",
+    message: `Discovery Run ${finalStatus}: Total Scanned: ${counters.totalCandidates} | Created: ${counters.createdCompanies} | ICP Approved: ${counters.approvedCount || 0} | Rejections: ${Math.max(0, counters.totalCandidates - (counters.approvedCount || 0))}`,
+  });
 
   await db
     .update(researchRuns)
