@@ -396,7 +396,7 @@ export interface ExecuteBatchOptions {
 export async function executeQueuedBatch(
   db: Db,
   runId: string,
-  batchSize = 5,
+  batchSize = 3,
   batchOpts?: ExecuteBatchOptions
 ): Promise<{ processed: number; approvedCount: number; isFinished: boolean }> {
   const [run] = await db
@@ -422,6 +422,28 @@ export async function executeQueuedBatch(
     qualifiedCompanyIds: [],
     ...((run.counters as any) || {}),
   };
+
+  // Reap stale zombie jobs running longer than 15 seconds (e.g. from severed serverless requests)
+  const staleCutoff = new Date(Date.now() - 15_000);
+  const reaped = await db
+    .update(researchJobs)
+    .set({
+      status: "FAILED",
+      finishedAt: new Date(),
+      lastError: "Worker execution timeout / container restarted",
+    })
+    .where(
+      and(
+        eq(researchJobs.runId, runId),
+        eq(researchJobs.status, "RUNNING"),
+        lt(researchJobs.startedAt, staleCutoff)
+      )
+    )
+    .returning({ id: researchJobs.id });
+
+  if (reaped.length > 0) {
+    currentCounters.failedJobs = (currentCounters.failedJobs || 0) + reaped.length;
+  }
 
   // If already reached target or previously finished
   if ((currentCounters.approvedCount || 0) >= maxCandidates) {
@@ -465,7 +487,7 @@ export async function executeQueuedBatch(
     ) {
       const nextRound = currentReplenish + 1;
       const needed = maxCandidates - (currentCounters.approvedCount || 0);
-      const replenishLimit = Math.min(Math.max(Math.ceil(needed * 3.2), 30), 120);
+      const replenishLimit = Math.min(Math.max(Math.ceil(needed * 3.5), 30), 100);
 
       let ruleConfig: RuleConfig = defaultHvacRuleConfig();
       if (run.ruleId) {
@@ -599,14 +621,21 @@ export async function executeQueuedBatch(
     claimedJobs.map(async (job) => {
       if (!job.companyId) return;
       try {
-        const result: ResearchResult = await researchCompany(db, job.companyId, {
-          runId,
-          ruleConfig,
-          maxPages: pagesPerCompany,
-          timeoutMs,
-          mockPages: batchOpts?.mockPages,
-          actor: runActor,
-        });
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Job execution timeout (3200ms exceeded)")), 3200)
+        );
+
+        const result: ResearchResult = await Promise.race([
+          researchCompany(db, job.companyId, {
+            runId,
+            ruleConfig,
+            maxPages: pagesPerCompany,
+            timeoutMs,
+            mockPages: batchOpts?.mockPages,
+            actor: runActor,
+          }),
+          timeoutPromise,
+        ]);
 
         batchCompleted++;
         batchFacts += result.factsRecorded;

@@ -143,7 +143,7 @@ export async function getDiscoveryProgressAction(runId: string, sinceIso?: strin
     // Serverless Driver: If run is RUNNING, execute the next batch of queued jobs in this cycle
     if (runRow.status === "RUNNING") {
       try {
-        await executeQueuedBatch(db, runId, 5);
+        await executeQueuedBatch(db, runId, 3);
         const [refreshed] = await db
           .select()
           .from(researchRuns)
@@ -451,7 +451,7 @@ export async function startLeadDiscoveryAction(
     // Immediately prepare candidates in DB and run first batch synchronously
     try {
       await prepareRunCandidates(db, runId);
-      await executeQueuedBatch(db, runId, 5);
+      await executeQueuedBatch(db, runId, 3);
     } catch (prepErr) {
       console.error("Initial candidate preparation/batch error:", prepErr);
     }

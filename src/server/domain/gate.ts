@@ -159,6 +159,13 @@ export function hasDialableNumber(value: string | null | undefined): boolean {
   return true;
 }
 
+export function isTollFreeNumber(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const digits = value.replace(/\D/g, "");
+  const national = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  return /^8(?:00|88|77|66|55|44|33)/.test(national);
+}
+
 export function matchesCustomMustHave(
   reqRaw: string,
   factsIn: Record<string, any>,
@@ -313,12 +320,15 @@ export function evaluateGate(gateIn: Partial<LeadGate> | null | undefined, input
   }
 
   if (gate.requireDirectPhone) {
+    const isDirectLocalPhone =
+      hasDialableNumber(input.phone) && !isTollFreeNumber(input.phone);
     const ok =
       f.direct_mobile_found === "YES" ||
+      isDirectLocalPhone ||
       input.contacts.some(
         (c) =>
           hasDialableNumber(c.phone) &&
-          (c.phoneType === "PROFESSIONAL_MOBILE" || c.phoneType === "PUBLISHED_DIRECT")
+          (c.phoneType === "PROFESSIONAL_MOBILE" || c.phoneType === "PUBLISHED_DIRECT" || !isTollFreeNumber(c.phone))
       );
     if (!ok) missing.push("requireDirectPhone");
   }
@@ -447,7 +457,9 @@ export function passesLeadRowGate(
     if (!lead.city || !lead.state) return false;
   }
   if (gate.requireDirectPhone) {
-    if (!lead.hasDirectContact && fv("direct_mobile_found") !== "YES") return false;
+    const phone = String(lead.best?.phone || lead.phoneDisplay || "");
+    const isDirectLocal = hasDialableNumber(phone) && !isTollFreeNumber(phone);
+    if (!lead.hasDirectContact && fv("direct_mobile_found") !== "YES" && !isDirectLocal) return false;
   }
   if (gate.requireBleedingAds) {
     const hasAds =

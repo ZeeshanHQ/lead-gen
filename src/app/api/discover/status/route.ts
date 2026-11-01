@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     // Serverless Driver: If run is RUNNING, execute the next chunk of queued jobs in this active HTTP cycle
     if (runRow.status === "RUNNING") {
       try {
-        await executeQueuedBatch(db, runId, 5);
+        await executeQueuedBatch(db, runId, 3);
         const [refreshed] = await db
           .select()
           .from(researchRuns)
