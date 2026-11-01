@@ -522,6 +522,7 @@ export function LeadProspector({
       {
         id: `init_${Date.now()}`,
         runId: "",
+        seq: 0,
         timestamp: nowTime,
         isoTime: new Date().toISOString(),
         level: "info",

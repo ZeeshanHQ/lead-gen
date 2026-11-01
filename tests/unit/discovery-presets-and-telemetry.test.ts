@@ -118,18 +118,18 @@ describe("Real-Time Discovery Telemetry Engine", () => {
 
     const allLogs = getRunTelemetry(testRunId);
     expect(allLogs).toHaveLength(4);
-    expect(allLogs[0].stage).toBe("INIT");
-    expect(allLogs[2].level).toBe("rejection");
-    expect(allLogs[3].level).toBe("success");
+    expect(allLogs[0]?.stage).toBe("INIT");
+    expect(allLogs[2]?.level).toBe("rejection");
+    expect(allLogs[3]?.level).toBe("success");
 
     // Filter since log2 by sequence or ID
     const sinceLog2 = getRunTelemetry(testRunId, log2.seq);
     expect(sinceLog2.length).toBe(2);
-    expect(sinceLog2[0].companyName).toBe("Austin Web Agency");
+    expect(sinceLog2[0]?.companyName).toBe("Austin Web Agency");
 
     const sinceLog2ById = getRunTelemetry(testRunId, log2.id);
     expect(sinceLog2ById.length).toBe(2);
-    expect(sinceLog2ById[1].companyName).toBe("Lone Star Vacation Rentals");
+    expect(sinceLog2ById[1]?.companyName).toBe("Lone Star Vacation Rentals");
 
     clearRunTelemetry(testRunId);
     expect(getRunTelemetry(testRunId)).toHaveLength(0);

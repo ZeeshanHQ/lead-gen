@@ -21,7 +21,7 @@ export type TelemetryStage =
 export interface TelemetryLogEntry {
   id: string;
   runId: string;
-  seq: number;
+  seq?: number;
   timestamp: string; // HH:mm:ss format
   isoTime: string;
   level: TelemetryLogLevel;
@@ -115,8 +115,8 @@ export function getRunTelemetry(
 
   // If sinceParam is a sequence number or numeric string
   const numSeq = typeof sinceParam === "number" ? sinceParam : parseInt(sinceParam, 10);
-  if (Number.isFinite(numSeq) && numSeq >= 0) {
-    return logs.filter((l) => l.seq > numSeq);
+  if (Number.isFinite(numSeq) && numSeq >= 0 && typeof sinceParam === "number") {
+    return logs.filter((l) => (l.seq ?? 0) > numSeq);
   }
 
   // If sinceParam is an ISO date string or log ID
@@ -125,7 +125,7 @@ export function getRunTelemetry(
       const parts = sinceParam.split("_");
       const idSeq = parseInt(parts[parts.length - 1] || "", 10);
       if (Number.isFinite(idSeq)) {
-        return logs.filter((l) => l.seq > idSeq);
+        return logs.filter((l) => (l.seq ?? 0) > idSeq);
       }
     }
     return logs.filter((l) => l.isoTime > sinceParam);
