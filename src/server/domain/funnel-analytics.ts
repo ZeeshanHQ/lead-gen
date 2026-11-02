@@ -281,6 +281,7 @@ export interface ZoneLeadCount {
 
 export interface FunnelResult {
   pool: number;
+  totalPool: number;
   stages: FunnelStage[];
   outcomeCounts: Record<CallOutcomeKey, number>;
   /** Mutually exclusive: every lead in the pool has exactly one current status. */
@@ -386,16 +387,26 @@ export function computeFunnel(
   const { scope, timeframe, nowMs } = filters;
   const range = timeframeRange(timeframe, nowMs);
 
-  const poolLeads = allLeads.filter((l) => {
+  const scopedAllLeads = allLeads.filter((l) => {
     if (scope === "ALL") return true;
     if (scope === "UNASSIGNED") return !l.assignedMemberId;
     return l.assignedMemberId === scope;
   });
-  const poolIds = new Set(poolLeads.map((l) => l.id));
-  const leadById = new Map(allLeads.map((l) => [l.id, l]));
+  const totalLifetimePool = scopedAllLeads.length;
+  const scopedAllIds = new Set(scopedAllLeads.map((l) => l.id));
 
   const inRange = (e: CallEvent) => !range || (e.atMs >= range.from && e.atMs < range.to);
-  const scopedEvents = events.filter((e) => poolIds.has(e.companyId) && inRange(e));
+  const scopedEvents = events.filter((e) => scopedAllIds.has(e.companyId) && inRange(e));
+  const dialedInPeriodIds = new Set(scopedEvents.map((e) => e.companyId));
+
+  const poolLeads = scopedAllLeads.filter((l) => {
+    if (timeframe === "ALL" || !range) return true;
+    const createdInPeriod = l.createdAtMs ? l.createdAtMs >= range.from && l.createdAtMs < range.to : false;
+    const dialedInPeriod = dialedInPeriodIds.has(l.id);
+    return createdInPeriod || dialedInPeriod;
+  });
+  const poolIds = new Set(poolLeads.map((l) => l.id));
+  const leadById = new Map(allLeads.map((l) => [l.id, l]));
 
   // ---- lead level ---------------------------------------------------------
   const perLead = new Map<
@@ -807,6 +818,7 @@ export function computeFunnel(
 
   return {
     pool,
+    totalPool: totalLifetimePool,
     stages,
     outcomeCounts,
     statusCounts,

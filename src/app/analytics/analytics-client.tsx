@@ -322,6 +322,21 @@ export function SalesFunnelClient({
   const [hourlyTzMode, setHourlyTzMode] = useState<"PROSPECT" | "CALLER">("PROSPECT");
   const [showLegendMeaning, setShowLegendMeaning] = useState<boolean>(false);
 
+  const timeframeLabel = useMemo(() => {
+    switch (timeframe) {
+      case "TODAY":
+        return "Today";
+      case "YESTERDAY":
+        return "Yesterday";
+      case "LAST_7_DAYS":
+        return "7 Days";
+      case "LAST_30_DAYS":
+        return "30 Days";
+      default:
+        return "All Time";
+    }
+  }, [timeframe]);
+
   // Live Clock Tick (every 10 seconds)
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 10000);
@@ -658,9 +673,16 @@ export function SalesFunnelClient({
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {/* Metric 1: Total Leads in Pool */}
         <div className="p-4 rounded-xl border border-zinc-800 bg-[#101014]">
-          <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
-            <Target className="w-3.5 h-3.5 text-zinc-400" />
-            <span>Lead Pool</span>
+          <div className="text-[11px] text-zinc-400 flex items-center justify-between gap-1.5">
+            <span className="flex items-center gap-1.5">
+              <Target className="w-3.5 h-3.5 text-zinc-400" />
+              <span>{timeframe === "ALL" ? "Lead Pool" : `Lead Pool (${timeframeLabel})`}</span>
+            </span>
+            {timeframe !== "ALL" && (
+              <span className="text-[10px] text-zinc-500 font-mono">
+                Total: {funnelResult.totalPool}
+              </span>
+            )}
           </div>
           <div className="text-2xl font-black font-mono text-white mt-1">
             {funnelResult.pool}
