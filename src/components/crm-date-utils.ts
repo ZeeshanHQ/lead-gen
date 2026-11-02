@@ -128,7 +128,7 @@ export function parseLatestCallerNote(notes: string | null | undefined): ParsedC
   const logLine = lines.find((l) => l.startsWith("[")) || lines[0]!;
 
   // Match format: [Oct 27, 11:53 PM • Hamda (Connected / Spoke)]: voice mail sent
-  const match = logLine.match(/^\[([^•\]]+)(?:•\s*([^(]+))?(?:\(([^)]+)\))?\]:\s*(.*)$/);
+  const match = logLine.match(/^\[([^•\u2022\]]+)(?:[•\u2022]\s*([^(]+))?(?:\(([^)]+)\))?\]:\s*(.*)$/);
   if (match) {
     return {
       timestamp: match[1]?.trim(),

@@ -291,7 +291,7 @@ export interface ParsedCallLogEntry {
   text: string;
 }
 
-const CALL_LOG_LINE = /^\[([^•\]]+)(?:•\s*([^(]+))?(?:\(([^)]+)\))?\]:\s*(.*)$/;
+const CALL_LOG_LINE = /^\[([^•\u2022\]]+)(?:[•\u2022]\s*([^(]+))?(?:\(([^)]+)\))?\]:\s*(.*)$/;
 const FOLLOW_UP_NOTE_LINE = /^\[Follow-Up Note\s+([^\]]+)\]\s*(.*)$/i;
 
 function isSystemBattlecardOrTagLine(line: string): boolean {

@@ -37,10 +37,13 @@ import {
   computeLiveCrmTelemetry,
   deriveCallStatus,
   extractFollowUp,
+  parseCallLog,
+  parseNoteTimestamp,
   type CallOutcomeKey,
   type CallStatusKey,
 } from "@/server/domain/call-outcomes";
 import { CallOutcomePicker, CallStatusBadge, CallStatusLegend } from "@/components/call-status-ui";
+import { CallLogModal, type CallLogSubmitData } from "@/components/call-log-modal";
 import {
   Sheet,
   Phone,
@@ -101,6 +104,7 @@ export interface CrmLeadItem {
   researchSummary?: string | null;
   createdAt?: string | Date | null;
   approvedAt?: string | Date | null;
+  updatedAt?: string | Date | null;
   assignedMemberId?: string | null;
   assignedMemberName?: string | null;
   marketName?: string | null;
@@ -216,6 +220,108 @@ export function stripFollowUpTagFromNotes(notes: string | null | undefined): str
   return notes.replace(/\[Next Follow-up Scheduled:\s*[^\]]+\]\s*/gi, "").trim();
 }
 
+export function getLeadLastActivityTime(lead: {
+  notes?: string | null;
+  updatedAt?: string | Date | null;
+  approvedAt?: string | Date | null;
+  createdAt?: string | Date | null;
+}): number {
+  if (lead.notes) {
+    const log = parseCallLog(lead.notes);
+    if (log[0]?.timestampRaw) {
+      const parsed = parseNoteTimestamp(log[0].timestampRaw, Date.now());
+      if (parsed) return parsed;
+    }
+  }
+  if (lead.updatedAt) {
+    const d = new Date(lead.updatedAt).getTime();
+    if (!isNaN(d)) return d;
+  }
+  if (lead.approvedAt) {
+    const d = new Date(lead.approvedAt).getTime();
+    if (!isNaN(d)) return d;
+  }
+  if (lead.createdAt) {
+    const d = new Date(lead.createdAt).getTime();
+    if (!isNaN(d)) return d;
+  }
+  return 0;
+}
+
+const InlineCellInput = React.memo(function InlineCellInput({
+  initialValue,
+  onCommit,
+  onCancel,
+  className,
+  type = "text",
+  placeholder,
+}: {
+  initialValue: string;
+  onCommit: (val: string) => void;
+  onCancel: () => void;
+  className?: string;
+  type?: string;
+  placeholder?: string;
+}) {
+  const [val, setVal] = useState(initialValue);
+  return (
+    <input
+      autoFocus
+      type={type}
+      placeholder={placeholder}
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onCommit(val);
+        } else if (e.key === "Escape") {
+          onCancel();
+        }
+      }}
+      onBlur={() => onCommit(val)}
+      className={className}
+    />
+  );
+});
+
+const InlineCellTextarea = React.memo(function InlineCellTextarea({
+  initialValue,
+  onCommit,
+  onCancel,
+  className,
+  placeholder,
+  rows = 2,
+}: {
+  initialValue: string;
+  onCommit: (val: string) => void;
+  onCancel: () => void;
+  className?: string;
+  placeholder?: string;
+  rows?: number;
+}) {
+  const [val, setVal] = useState(initialValue);
+  return (
+    <textarea
+      autoFocus
+      rows={rows}
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          onCommit(val);
+        } else if (e.key === "Escape") {
+          onCancel();
+        }
+      }}
+      onBlur={() => onCommit(val)}
+      className={className}
+      placeholder={placeholder}
+    />
+  );
+});
+
 export function CrmLeadSheet({
   initialLeads,
   nicheName,
@@ -241,17 +347,18 @@ export function CrmLeadSheet({
   const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter);
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "YESTERDAY" | "OLDER">("ALL");
   const [callerFilter, setCallerFilter] = useState<string>("ALL");
-  const [sortBy, setSortBy] = useState<"INTAKE_DATE" | "ICP_SCORE" | "NAME_AZ" | "STAGE">("INTAKE_DATE");
+  const [sortBy, setSortBy] = useState<"INTAKE_DATE" | "RECENTLY_CONTACTED" | "ICP_SCORE" | "NAME_AZ" | "STAGE">("RECENTLY_CONTACTED");
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState(false);
   const [viewingNotesHistoryLead, setViewingNotesHistoryLead] = useState<CrmLeadItem | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [recentlyDialedIds, setRecentlyDialedIds] = useState<Set<string>>(new Set());
 
-  // Inline Cell Editing State (Airtable / Google Sheets style)
+  // Inline Cell Editing State (Airtable / Google Sheets style with isolated local inputs)
   const [activeCellEdit, setActiveCellEdit] = useState<{
     leadId: string;
     field: "name" | "contactName" | "contactTitle" | "phone" | "notes";
+    initialVal: string;
   } | null>(null);
-  const [activeCellDraft, setActiveCellDraft] = useState<string>("");
   const [savingCellKey, setSavingCellKey] = useState<string | null>(null);
 
   const startInlineEdit = (
@@ -259,14 +366,13 @@ export function CrmLeadSheet({
     field: "name" | "contactName" | "contactTitle" | "phone" | "notes",
     currentVal: string
   ) => {
-    setActiveCellEdit({ leadId, field });
-    setActiveCellDraft(currentVal || "");
+    setActiveCellEdit({ leadId, field, initialVal: currentVal || "" });
   };
 
-  const commitInlineEdit = async (lead: CrmLeadItem) => {
+  const commitInlineEdit = async (lead: CrmLeadItem, rawNewValue?: string) => {
     if (!activeCellEdit || activeCellEdit.leadId !== lead.id) return;
     const field = activeCellEdit.field;
-    const value = activeCellDraft.trim();
+    const value = (rawNewValue !== undefined ? rawNewValue : activeCellEdit.initialVal).trim();
     setActiveCellEdit(null);
 
     if (field !== "notes" && !canEdit) {
@@ -338,6 +444,7 @@ export function CrmLeadSheet({
             : `[Next Follow-up Scheduled: ${lead.nextFollowUp}]`
           : value || null;
         patch.notes = updatedNotes;
+        patch.updatedAt = new Date().toISOString();
         serverPayload.notes = value || null;
       }
     }
@@ -354,6 +461,7 @@ export function CrmLeadSheet({
         applyLeadPatch(lead.id, {
           ...(res.updatedNotes !== undefined ? { notes: res.updatedNotes } : {}),
           ...(res.nextStatus !== undefined ? { status: res.nextStatus } : {}),
+          updatedAt: new Date().toISOString(),
         });
       }
       setSyncFeedback(`Updated ${field} for ${lead.name}.`);
@@ -369,12 +477,51 @@ export function CrmLeadSheet({
     setLeads(initialLeads);
   }, [initialLeads]);
 
-  // Quick Call Modal State
+  React.useEffect(() => {
+    try {
+      const savedSort = localStorage.getItem("astraventa_crm_sort_by");
+      if (
+        savedSort &&
+        ["RECENTLY_CONTACTED", "INTAKE_DATE", "ICP_SCORE", "NAME_AZ", "STAGE"].includes(savedSort)
+      ) {
+        setSortBy(savedSort as any);
+      }
+      const savedStatus = localStorage.getItem("astraventa_crm_status_filter");
+      if (savedStatus && initialStatusFilter === "ALL") {
+        setStatusFilter(savedStatus);
+      }
+      const savedDate = localStorage.getItem("astraventa_crm_date_filter");
+      if (savedDate && ["ALL", "TODAY", "YESTERDAY", "OLDER"].includes(savedDate)) {
+        setDateFilter(savedDate as any);
+      }
+    } catch {}
+  }, [initialStatusFilter]);
+
+  const setStatusFilterAndPersist = (f: string) => {
+    setStatusFilter(f);
+    try {
+      localStorage.setItem("astraventa_crm_status_filter", f);
+    } catch {}
+  };
+
+  const setDateFilterAndPersist = (df: "ALL" | "TODAY" | "YESTERDAY" | "OLDER") => {
+    setDateFilter(df);
+    try {
+      localStorage.setItem("astraventa_crm_date_filter", df);
+    } catch {}
+  };
+
+  const setSortByAndPersist = (
+    s: "INTAKE_DATE" | "RECENTLY_CONTACTED" | "ICP_SCORE" | "NAME_AZ" | "STAGE"
+  ) => {
+    setSortBy(s);
+    try {
+      localStorage.setItem("astraventa_crm_sort_by", s);
+    } catch {}
+  };
+
+  // Quick Call Modal State (Uses isolated CallLogModal)
   const [selectedLead, setSelectedLead] = useState<CrmLeadItem | null>(null);
-  // No default outcome: the caller must pick what actually happened (prevents false "Connected" logs).
-  const [outcome, setOutcome] = useState<CallOutcomeKey | null>(null);
-  const [notes, setNotes] = useState("");
-  const [followUpDate, setFollowUpDate] = useState("");
   const [actor] = useState(activeActorName);
   const [isPending, startTransition] = useTransition();
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
@@ -646,6 +793,9 @@ export function CrmLeadSheet({
       if (!followUp) return false;
     } else if (statusFilter === "OVERDUE") {
       if (!followUp || new Date(followUp).getTime() >= Date.now()) return false;
+    } else if (statusFilter === "UNTOUCHED" || statusFilter === "TO_CALL") {
+      const isRecentlyDialed = recentlyDialedIds.has(lead.id);
+      if (!isRecentlyDialed && derived.key !== "UNTOUCHED") return false;
     } else if (statusFilter !== "ALL") {
       const wanted = STATUS_FILTER_TO_KEY[statusFilter];
       if (wanted) {
@@ -680,7 +830,14 @@ export function CrmLeadSheet({
   // Deterministic stable sorting so leads NEVER jump around unexpectedly
   const sortedLeads = React.useMemo(() => {
     const list = [...filteredLeads];
-    if (sortBy === "INTAKE_DATE") {
+    if (sortBy === "RECENTLY_CONTACTED") {
+      list.sort((a, b) => {
+        const aAct = getLeadLastActivityTime(a);
+        const bAct = getLeadLastActivityTime(b);
+        if (bAct !== aAct) return bAct - aAct;
+        return (b.icpScore || 0) - (a.icpScore || 0);
+      });
+    } else if (sortBy === "INTAKE_DATE") {
       list.sort((a, b) => {
         const aTime = getLeadIntakeDate(a).getTime();
         const bTime = getLeadIntakeDate(b).getTime();
@@ -716,19 +873,15 @@ export function CrmLeadSheet({
 
   const openCallModal = (lead: CrmLeadItem) => {
     setSelectedLead(lead);
-    setOutcome(null);
-    setNotes("");
-    setFollowUpDate(lead.nextFollowUp || "");
   };
 
-  const handleSaveCall = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedLead || !outcome) return;
+  const handleSaveCall = (data: CallLogSubmitData) => {
+    if (!selectedLead) return;
 
     const targetLead = selectedLead;
-    const chosenOutcome = outcome;
-    const chosenFollowUp = followUpDate || null;
-    const rawNoteText = notes.trim();
+    const chosenOutcome = data.outcome;
+    const chosenFollowUp = data.followUpDate || null;
+    const rawNoteText = data.callerNotes;
     const combinedNotes = chosenFollowUp
       ? `[Next Follow-up Scheduled: ${chosenFollowUp}] ${rawNoteText}`
       : rawNoteText;
@@ -756,14 +909,21 @@ export function CrmLeadSheet({
         ? "LOST"
         : "CALLING";
 
+    const nowIso = new Date().toISOString();
+
+    // Mark as recently dialed so it NEVER disappears from view
+    setRecentlyDialedIds((prev) => new Set([...prev, targetLead.id]));
+
     // Instant optimistic UI update + close modal immediately for zero caller lag
     applyLeadPatch(targetLead.id, {
       status: optimisticStatus,
       nextFollowUp: chosenFollowUp || targetLead.nextFollowUp,
       notes: optimisticNotes,
+      updatedAt: nowIso,
+      ...(data.softwareConfirmed ? { software: data.softwareConfirmed } : {}),
     });
     setSelectedLead(null);
-    setSyncFeedback(`Call logged for ${targetLead.name} (${outcomeLabel}).`);
+    setSyncFeedback(`Call logged for ${targetLead.name} (${outcomeLabel}). Lead updated.`);
     setTimeout(() => setSyncFeedback(null), 3000);
 
     startTransition(async () => {
@@ -771,6 +931,8 @@ export function CrmLeadSheet({
         companyId: targetLead.id,
         actor: actor.trim() || activeActorName,
         callOutcome: chosenOutcome,
+        softwareConfirmed: data.softwareConfirmed || null,
+        fleetSizeConfirmed: data.fleetSizeConfirmed || null,
         callerNotes: combinedNotes,
         followUpDate: chosenFollowUp,
       });
@@ -780,6 +942,7 @@ export function CrmLeadSheet({
           status: res.nextStatus,
           nextFollowUp: res.nextFollowUp || chosenFollowUp || targetLead.nextFollowUp,
           notes: res.updatedNotes || optimisticNotes,
+          updatedAt: res.updatedAt || nowIso,
         });
       }
     });
@@ -965,7 +1128,7 @@ export function CrmLeadSheet({
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
           <button
             type="button"
-            onClick={() => setStatusFilter("UNTOUCHED")}
+            onClick={() => setStatusFilterAndPersist("UNTOUCHED")}
             className={`p-2.5 rounded-lg border text-left transition ${
               statusFilter === "UNTOUCHED"
                 ? "border-zinc-400 bg-zinc-800 text-white"
@@ -985,7 +1148,7 @@ export function CrmLeadSheet({
 
           <button
             type="button"
-            onClick={() => setStatusFilter("ALL")}
+            onClick={() => setStatusFilterAndPersist("ALL")}
             className="p-2.5 rounded-lg border border-sky-500/25 bg-sky-500/5 hover:bg-sky-500/10 text-left transition"
           >
             <div className="text-[10px] uppercase tracking-wider font-bold text-sky-300">
@@ -1001,7 +1164,7 @@ export function CrmLeadSheet({
 
           <button
             type="button"
-            onClick={() => setStatusFilter("CONNECTED")}
+            onClick={() => setStatusFilterAndPersist("CONNECTED")}
             className="p-2.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/15 text-left transition"
           >
             <div className="text-[10px] uppercase tracking-wider font-bold text-indigo-300">
@@ -1022,7 +1185,7 @@ export function CrmLeadSheet({
 
           <button
             type="button"
-            onClick={() => setStatusFilter("CONNECTED")}
+            onClick={() => setStatusFilterAndPersist("CONNECTED")}
             className={`p-2.5 rounded-lg border text-left transition ${
               statusFilter === "CONNECTED"
                 ? "border-sky-400 bg-sky-500/20 text-white"
@@ -1047,7 +1210,7 @@ export function CrmLeadSheet({
 
           <button
             type="button"
-            onClick={() => setStatusFilter("NO_ANSWER")}
+            onClick={() => setStatusFilterAndPersist("NO_ANSWER")}
             className={`p-2.5 rounded-lg border text-left transition ${
               statusFilter === "NO_ANSWER"
                 ? "border-amber-400 bg-amber-500/20 text-white"
@@ -1067,7 +1230,7 @@ export function CrmLeadSheet({
 
           <button
             type="button"
-            onClick={() => setStatusFilter("GATEKEEPER")}
+            onClick={() => setStatusFilterAndPersist("GATEKEEPER")}
             className={`p-2.5 rounded-lg border text-left transition ${
               statusFilter === "GATEKEEPER"
                 ? "border-orange-400 bg-orange-500/20 text-white"
@@ -1087,7 +1250,7 @@ export function CrmLeadSheet({
 
           <button
             type="button"
-            onClick={() => setStatusFilter("FOLLOW_UP")}
+            onClick={() => setStatusFilterAndPersist("FOLLOW_UP")}
             className={`p-2.5 rounded-lg border text-left transition ${
               statusFilter === "FOLLOW_UP"
                 ? "border-indigo-400 bg-indigo-500/20 text-white"
@@ -1115,7 +1278,7 @@ export function CrmLeadSheet({
 
           <button
             type="button"
-            onClick={() => setStatusFilter("MEETINGS")}
+            onClick={() => setStatusFilterAndPersist("MEETINGS")}
             className={`p-2.5 rounded-lg border text-left transition ${
               statusFilter === "MEETINGS"
                 ? "border-emerald-400 bg-emerald-500/25 text-white"
@@ -1276,7 +1439,7 @@ export function CrmLeadSheet({
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
-            onClick={() => setStatusFilter("ALL")}
+            onClick={() => setStatusFilterAndPersist("ALL")}
             className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
               statusFilter === "ALL"
                 ? "border-white bg-white text-black"
@@ -1294,7 +1457,7 @@ export function CrmLeadSheet({
               <button
                 key={chip.filter}
                 type="button"
-                onClick={() => setStatusFilter(chip.filter)}
+                onClick={() => setStatusFilterAndPersist(chip.filter)}
                 title={`${def.meaning} ${def.whenToUse}`}
                 className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
                   active
@@ -1315,7 +1478,7 @@ export function CrmLeadSheet({
 
           <button
             type="button"
-            onClick={() => setStatusFilter("FOLLOW_UP")}
+            onClick={() => setStatusFilterAndPersist("FOLLOW_UP")}
             title="Leads with a scheduled follow-up date"
             className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
               statusFilter === "FOLLOW_UP"
@@ -1329,7 +1492,7 @@ export function CrmLeadSheet({
           </button>
           <button
             type="button"
-            onClick={() => setStatusFilter("OVERDUE")}
+            onClick={() => setStatusFilterAndPersist("OVERDUE")}
             title="Follow-up date has passed. Call these first."
             className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
               statusFilter === "OVERDUE"
@@ -1350,10 +1513,11 @@ export function CrmLeadSheet({
             <ArrowUpDown className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
+              onChange={(e) => setSortByAndPersist(e.target.value as any)}
               className="rounded-lg border border-zinc-800 bg-[#09090b] px-2.5 py-1.5 text-xs text-zinc-200 focus:border-zinc-600 focus:outline-none cursor-pointer"
               title="Sort lead sequence"
             >
+              <option value="RECENTLY_CONTACTED">Sort: Recently Contacted / Dialed First</option>
               <option value="INTAKE_DATE">Sort: Intake Date (Newest first)</option>
               <option value="ICP_SCORE">Sort: ICP Score (High to Low)</option>
               <option value="NAME_AZ">Sort: Company Name (A-Z)</option>
@@ -1402,7 +1566,7 @@ export function CrmLeadSheet({
             <button
               key={tab.key}
               type="button"
-              onClick={() => setDateFilter(tab.key as any)}
+              onClick={() => setDateFilterAndPersist(tab.key as any)}
               className={`rounded-md border px-2.5 py-0.5 text-[11px] font-semibold transition ${
                 dateFilter === tab.key
                   ? tab.activeClass || "border-zinc-500 bg-zinc-800 text-white"
@@ -1573,20 +1737,10 @@ export function CrmLeadSheet({
                       <td className="px-4 py-3.5 min-w-[240px] max-w-[280px]">
                         {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "name" ? (
                           <div className="flex items-center gap-1">
-                            <input
-                              autoFocus
-                              type="text"
-                              value={activeCellDraft}
-                              onChange={(e) => setActiveCellDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  commitInlineEdit(lead);
-                                } else if (e.key === "Escape") {
-                                  setActiveCellEdit(null);
-                                }
-                              }}
-                              onBlur={() => commitInlineEdit(lead)}
+                            <InlineCellInput
+                              initialValue={activeCellEdit.initialVal}
+                              onCommit={(v) => commitInlineEdit(lead, v)}
+                              onCancel={() => setActiveCellEdit(null)}
                               className="w-full bg-[#09090b] border border-emerald-500 rounded px-2 py-1 text-xs text-white focus:outline-none shadow-sm"
                             />
                           </div>
@@ -1635,20 +1789,10 @@ export function CrmLeadSheet({
                       {/* Decision Maker & LinkedIn */}
                       <td className="px-3 py-3.5 min-w-[210px] max-w-[260px]">
                         {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "contactName" ? (
-                          <input
-                            autoFocus
-                            type="text"
-                            value={activeCellDraft}
-                            onChange={(e) => setActiveCellDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                commitInlineEdit(lead);
-                              } else if (e.key === "Escape") {
-                                setActiveCellEdit(null);
-                              }
-                            }}
-                            onBlur={() => commitInlineEdit(lead)}
+                          <InlineCellInput
+                            initialValue={activeCellEdit.initialVal}
+                            onCommit={(v) => commitInlineEdit(lead, v)}
+                            onCancel={() => setActiveCellEdit(null)}
                             className="w-full bg-[#09090b] border border-emerald-500 rounded px-2 py-0.5 text-xs text-white focus:outline-none shadow-sm mb-1"
                             placeholder="Contact Name"
                           />
@@ -1670,20 +1814,10 @@ export function CrmLeadSheet({
 
                         <div className="flex items-center justify-between gap-1 mt-0.5">
                           {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "contactTitle" ? (
-                            <input
-                              autoFocus
-                              type="text"
-                              value={activeCellDraft}
-                              onChange={(e) => setActiveCellDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  commitInlineEdit(lead);
-                                } else if (e.key === "Escape") {
-                                  setActiveCellEdit(null);
-                                }
-                              }}
-                              onBlur={() => commitInlineEdit(lead)}
+                            <InlineCellInput
+                              initialValue={activeCellEdit.initialVal}
+                              onCommit={(v) => commitInlineEdit(lead, v)}
+                              onCancel={() => setActiveCellEdit(null)}
                               className="w-full bg-[#09090b] border border-emerald-500 rounded px-2 py-0.5 text-[11px] text-zinc-200 focus:outline-none shadow-sm"
                               placeholder="Role / Title"
                             />
@@ -1735,20 +1869,10 @@ export function CrmLeadSheet({
                       {/* Phone */}
                       <td className="px-3 py-3.5 whitespace-nowrap min-w-[150px]">
                         {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "phone" ? (
-                          <input
-                            autoFocus
-                            type="text"
-                            value={activeCellDraft}
-                            onChange={(e) => setActiveCellDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                commitInlineEdit(lead);
-                              } else if (e.key === "Escape") {
-                                setActiveCellEdit(null);
-                              }
-                            }}
-                            onBlur={() => commitInlineEdit(lead)}
+                          <InlineCellInput
+                            initialValue={activeCellEdit.initialVal}
+                            onCommit={(v) => commitInlineEdit(lead, v)}
+                            onCancel={() => setActiveCellEdit(null)}
                             className="w-36 bg-[#09090b] border border-emerald-500 rounded px-2 py-1 font-mono text-xs text-emerald-400 focus:outline-none shadow-sm"
                             placeholder="(555) 000-0000"
                           />
@@ -1808,9 +1932,9 @@ export function CrmLeadSheet({
                               {allMembers
                                 .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
                                 .map((m) => (
-                                  <option key={m.id} value={m.id}>
-                                    {m.name}
-                                  </option>
+                                   <option key={m.id} value={m.id}>
+                                     {m.name}
+                                   </option>
                                 ))}
                             </select>
                           ) : (
@@ -1827,11 +1951,19 @@ export function CrmLeadSheet({
                           const derived = derivedById.get(lead.id) ?? deriveCallStatus(lead);
                           return (
                             <div className="flex flex-col items-start gap-1">
-                              <CallStatusBadge
-                                statusKey={derived.key}
-                                attempts={derived.attempts}
-                                onClick={canCall ? () => openCallModal(lead) : undefined}
-                              />
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <CallStatusBadge
+                                  statusKey={derived.key}
+                                  attempts={derived.attempts}
+                                  onClick={canCall ? () => openCallModal(lead) : undefined}
+                                />
+                                {recentlyDialedIds.has(lead.id) && (
+                                  <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300 border border-emerald-500/30">
+                                    <PhoneCall className="w-2.5 h-2.5 animate-pulse" />
+                                    <span>Just Dialed</span>
+                                  </span>
+                                )}
+                              </div>
                               <span className="text-[10px] text-zinc-500">
                                 {derived.lastLog
                                   ? `Last call: ${derived.lastLog.timestampRaw}`
@@ -1914,20 +2046,10 @@ export function CrmLeadSheet({
                       {/* Latest Note & Call History */}
                       <td className="px-3 py-3.5 min-w-[260px] max-w-[340px]">
                         {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "notes" ? (
-                          <textarea
-                            autoFocus
-                            rows={2}
-                            value={activeCellDraft}
-                            onChange={(e) => setActiveCellDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && !e.shiftKey) {
-                                e.preventDefault();
-                                commitInlineEdit(lead);
-                              } else if (e.key === "Escape") {
-                                setActiveCellEdit(null);
-                              }
-                            }}
-                            onBlur={() => commitInlineEdit(lead)}
+                          <InlineCellTextarea
+                            initialValue={activeCellEdit.initialVal}
+                            onCommit={(v) => commitInlineEdit(lead, v)}
+                            onCancel={() => setActiveCellEdit(null)}
                             className="w-full bg-[#09090b] border border-emerald-500 rounded p-1.5 text-xs text-zinc-200 focus:outline-none shadow-sm"
                             placeholder="Type note and hit Enter to save..."
                           />
@@ -2400,126 +2522,15 @@ export function CrmLeadSheet({
         </div>
       )}
 
-      {/* Quick Call & Outcome Modal (Fully Responsive & Scrollable) */}
+      {/* Quick Call & Outcome Modal (Isolated State for Zero Keystroke Lag) */}
       {selectedLead && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setSelectedLead(null);
-          }}
-        >
-          <div className="w-full max-w-xl bg-[#121215] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[88vh]">
-            <div className="px-4 sm:px-6 py-3.5 border-b border-zinc-800 flex items-center justify-between gap-2 shrink-0 bg-[#121215]">
-              <div className="min-w-0">
-                <h3 className="text-sm font-bold text-white truncate">
-                  Log Call: {selectedLead.name}
-                </h3>
-                <p className="text-xs text-zinc-400 mt-0.5 truncate">
-                  {selectedLead.bestContact?.name || "Owner/Manager"} &bull;{" "}
-                  {selectedLead.bestContact?.phone || selectedLead.phoneDisplay || "No Phone"}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedLead(null)}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form
-              onSubmit={handleSaveCall}
-              className="flex flex-col flex-1 min-h-0 overflow-hidden"
-            >
-              <div className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-2">
-                    What happened on this call? *
-                  </label>
-                  <CallOutcomePicker value={outcome} onChange={setOutcome} />
-                </div>
-
-                <div>
-                  <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
-                    <label className="block text-xs font-semibold text-zinc-300">
-                      Next Follow-Up (Optional)
-                    </label>
-                    <div className="flex flex-wrap items-center gap-1">
-                      {[
-                        { label: "Later Today", preset: "LATER_TODAY" as const },
-                        { label: "Tomorrow", preset: "TOMORROW" as const },
-                        { label: "+2 Days", preset: "TWO_DAYS" as const },
-                        { label: "Next Week", preset: "NEXT_WEEK" as const },
-                      ].map((p) => (
-                        <button
-                          key={p.preset}
-                          type="button"
-                          onClick={() => setFollowUpDate(buildPresetFollowUpIso(p.preset))}
-                          className="rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-amber-300 transition"
-                        >
-                          {p.label}
-                        </button>
-                      ))}
-                      {followUpDate && (
-                        <button
-                          type="button"
-                          onClick={() => setFollowUpDate("")}
-                          className="rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-400 hover:text-white transition"
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <input
-                    type="datetime-local"
-                    value={followUpDate}
-                    onChange={(e) => setFollowUpDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:outline-none focus:border-zinc-600"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
-                    <label className="block text-xs font-semibold text-zinc-300">
-                      Call Notes (Optional summary)
-                    </label>
-                    <span className="text-[10px] text-zinc-500">
-                      Leave blank to auto-record standard outcome note
-                    </span>
-                  </div>
-                  <textarea
-                    rows={2}
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Write a quick summary of the call or objections (leave empty for auto note)..."
-                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
-                  />
-                </div>
-              </div>
-
-              <div className="px-4 sm:px-6 py-3.5 border-t border-zinc-800 bg-[#0c0c0f] flex items-center justify-end gap-2 shrink-0">
-                <button
-                  type="button"
-                  disabled={isPending}
-                  onClick={() => setSelectedLead(null)}
-                  className="px-4 py-2 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white text-xs font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isPending || !outcome}
-                  title={!outcome ? "Pick what happened on the call first" : undefined}
-                  className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black font-bold text-xs transition disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
-                >
-                  {isPending ? "Saving..." : outcome ? "Save Call Outcome" : "Pick an outcome to save"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <CallLogModal
+          lead={selectedLead}
+          activeActorName={actor.trim() || activeActorName}
+          isSubmitting={isPending}
+          onClose={() => setSelectedLead(null)}
+          onSubmit={handleSaveCall}
+        />
       )}
 
       {/* Call History & Notes History Modal */}

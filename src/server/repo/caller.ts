@@ -96,6 +96,7 @@ export interface CallerLeadView {
   marketName?: string;
   createdAt?: string | null;
   approvedAt?: string | null;
+  updatedAt?: string | null;
 }
 
 export function getDefaultCallNote(outcome: string): string {
@@ -241,6 +242,7 @@ export async function getCallerQueue(
       marketName: options?.marketNames?.[c.marketId] || undefined,
       createdAt: c.createdAt ? (c.createdAt instanceof Date ? c.createdAt.toISOString() : String(c.createdAt)) : null,
       approvedAt: c.approvedAt ? (c.approvedAt instanceof Date ? c.approvedAt.toISOString() : String(c.approvedAt)) : null,
+      updatedAt: c.updatedAt ? (c.updatedAt instanceof Date ? c.updatedAt.toISOString() : String(c.updatedAt)) : null,
     });
   }
 
@@ -251,8 +253,8 @@ export async function getCallerQueue(
       const bMatch = b.marketId === marketId ? 1 : 0;
       if (aMatch !== bMatch) return bMatch - aMatch;
     }
-    const aTime = a.approvedAt ? new Date(a.approvedAt).getTime() : a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const bTime = b.approvedAt ? new Date(b.approvedAt).getTime() : b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    const aTime = a.approvedAt ? new Date(a.approvedAt).getTime() : a.createdAt ? new Date(a.createdAt).getTime() : a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const bTime = b.approvedAt ? new Date(b.approvedAt).getTime() : b.createdAt ? new Date(b.createdAt).getTime() : b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
     const aDay = aTime ? new Date(aTime).toISOString().slice(0, 10) : "";
     const bDay = bTime ? new Date(bTime).toISOString().slice(0, 10) : "";
     if (aDay !== bDay) {
@@ -266,7 +268,7 @@ export async function getCallerQueue(
 export async function recordCallFeedback(
   db: Db,
   input: CallFeedbackInput
-): Promise<{ ok: true; nextStatus: LifecycleStatus; updatedNotes: string; nextFollowUp: string | null }> {
+): Promise<{ ok: true; nextStatus: LifecycleStatus; updatedNotes: string; nextFollowUp: string | null; updatedAt: string }> {
   const [company] = await db
     .select()
     .from(companies)
@@ -392,7 +394,7 @@ export async function recordCallFeedback(
     },
   });
 
-  return { ok: true, nextStatus, updatedNotes: finalNotes, nextFollowUp: effectiveFollowUp };
+  return { ok: true, nextStatus, updatedNotes: finalNotes, nextFollowUp: effectiveFollowUp, updatedAt: new Date().toISOString() };
 }
 
 export interface UpdateLeadCrmInput {

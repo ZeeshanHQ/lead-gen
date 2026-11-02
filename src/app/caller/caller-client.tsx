@@ -34,6 +34,7 @@ import {
   buildPresetFollowUpIso,
   stripFollowUpTagFromNotes,
 } from "@/components/crm-lead-sheet";
+import { CallLogModal, type CallLogSubmitData } from "@/components/call-log-modal";
 import { classifyLeadDate, parseLatestCallerNote, type LeadDateCategory } from "@/components/crm-date-utils";
 import {
   CALL_STATUS_DEFS,
@@ -411,26 +412,51 @@ export function CallerClient({
   };
 
   React.useEffect(() => {
-    const savedView = localStorage.getItem("astraventa_caller_default_view");
-    if (savedView === "SHEET" || savedView === "CARDS") {
-      setViewMode(savedView);
-    }
-  }, []);
+    try {
+      const savedView = localStorage.getItem("astraventa_caller_default_view");
+      if (savedView === "SHEET" || savedView === "CARDS") {
+        setViewMode(savedView);
+      }
+      const savedStatus = localStorage.getItem("astraventa_caller_status_filter");
+      if (savedStatus && initialStatusFilter === "ALL") {
+        setStatusFilter(savedStatus);
+      }
+      const savedDate = localStorage.getItem("astraventa_caller_date_filter");
+      if (savedDate && ["ALL", "TODAY", "YESTERDAY", "OLDER"].includes(savedDate)) {
+        setDateFilter(savedDate as any);
+      }
+      const savedCaller = localStorage.getItem("astraventa_caller_selected_caller");
+      if (savedCaller && initialCallerFilter === "ALL") {
+        setCallerFilter(savedCaller);
+      }
+    } catch {}
+  }, [initialStatusFilter, initialCallerFilter]);
 
-  // Form state for Log Call modal
+  const setStatusFilterAndPersist = (tabKey: string) => {
+    setStatusFilter(tabKey);
+    try {
+      localStorage.setItem("astraventa_caller_status_filter", tabKey);
+    } catch {}
+  };
+
+  const setDateFilterAndPersist = (df: "ALL" | "TODAY" | "YESTERDAY" | "OLDER") => {
+    setDateFilter(df);
+    try {
+      localStorage.setItem("astraventa_caller_date_filter", df);
+    } catch {}
+  };
+
+  const setCallerFilterAndPersist = (callerId: string) => {
+    setCallerFilter(callerId);
+    try {
+      localStorage.setItem("astraventa_caller_selected_caller", callerId);
+    } catch {}
+  };
+
+  // State for Log Call modal
   const [isPending, startTransition] = useTransition();
-  // No default outcome: the caller must pick what actually happened (prevents false "Connected" logs).
-  const [outcome, setOutcome] = useState<CallOutcomeKey | null>(null);
-  const [notes, setNotes] = useState("");
-  const [followUpDate, setFollowUpDate] = useState("");
   const [actor] = useState(activeActorName);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [confirmedSoftware, setConfirmedSoftware] = useState("");
-  const [confirmedFleet, setConfirmedFleet] = useState<string>("");
-  const [feedbackMessage, setFeedbackMessage] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
+  const [recentlyDialedIds, setRecentlyDialedIds] = useState<Set<string>>(new Set());
 
   // Follow-Up Quick Scheduler Modal State
   const [followUpTarget, setFollowUpTarget] = useState<CallerLeadView | null>(null);
@@ -740,6 +766,13 @@ export function CallerClient({
         return false;
     } else if (statusFilter === "OVERDUE") {
       if (!lead.nextFollowUp || new Date(lead.nextFollowUp).getTime() >= Date.now()) return false;
+    } else if (statusFilter === "TO_CALL") {
+      // Keep leads dialed in the current session in view so callers can verify notes and don't panic
+      const isRecentlyDialed = recentlyDialedIds.has(lead.companyId);
+      if (!isRecentlyDialed) {
+        const wanted = STATUS_FILTER_TO_KEY["TO_CALL"];
+        if (deriveCallStatus(lead).key !== wanted) return false;
+      }
     } else if (statusFilter !== "ALL") {
       const wanted = STATUS_FILTER_TO_KEY[statusFilter];
       if (wanted) {
@@ -778,26 +811,17 @@ export function CallerClient({
 
   const openLogCallModal = (lead: CallerLeadView) => {
     setSelectedLead(lead);
-    setOutcome(null);
-    setNotes("");
-    setFollowUpDate(lead.nextFollowUp || "");
-    const detectedSoft = lead.software && lead.software !== "UNKNOWN" ? lead.software : "";
-    setConfirmedSoftware(detectedSoft);
-    setConfirmedFleet("");
-    setShowAdvanced(false);
-    setFeedbackMessage(null);
   };
 
-  const handleLogCallSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedLead || !outcome) return;
+  const handleLogCallSubmit = (data: CallLogSubmitData) => {
+    if (!selectedLead) return;
 
     const targetLead = selectedLead;
-    const chosenOutcome = outcome;
-    const chosenFollowUp = followUpDate || null;
-    const chosenSoft = confirmedSoftware.trim() || null;
-    const fleetNum = confirmedFleet.trim() ? parseInt(confirmedFleet.trim(), 10) : null;
-    const rawNoteText = notes.trim();
+    const chosenOutcome = data.outcome;
+    const chosenFollowUp = data.followUpDate || null;
+    const chosenSoft = data.softwareConfirmed || null;
+    const fleetNum = data.fleetSizeConfirmed ?? null;
+    const rawNoteText = data.callerNotes;
     const combinedNotes = chosenFollowUp
       ? `[Next Follow-up Scheduled: ${chosenFollowUp}] ${rawNoteText}`
       : rawNoteText;
@@ -825,6 +849,11 @@ export function CallerClient({
         ? "LOST"
         : "CALLING";
 
+    const nowIso = new Date().toISOString();
+
+    // Mark as recently dialed in current session so it doesn't vanish from view
+    setRecentlyDialedIds((prev) => new Set([...prev, targetLead.companyId]));
+
     // Instant optimistic update + close modal immediately
     setQueue((prev) =>
       prev.map((item) =>
@@ -835,13 +864,13 @@ export function CallerClient({
               software: chosenSoft || item.software,
               nextFollowUp: chosenFollowUp || item.nextFollowUp,
               notes: optimisticNotes,
+              updatedAt: nowIso,
             }
           : item
       )
     );
     setSelectedLead(null);
-    setFeedbackMessage(null);
-    showToast(`Call logged for ${targetLead.name} (${outcomeLabel}).`);
+    showToast(`Call logged for ${targetLead.name} (${outcomeLabel}). Lead updated.`);
 
     startTransition(async () => {
       const res = await logCallFeedbackAction({
@@ -849,7 +878,7 @@ export function CallerClient({
         actor: actor.trim() || activeActorName,
         callOutcome: chosenOutcome,
         softwareConfirmed: chosenSoft,
-        fleetSizeConfirmed: fleetNum && !isNaN(fleetNum) ? fleetNum : null,
+        fleetSizeConfirmed: fleetNum,
         callerNotes: combinedNotes,
         followUpDate: chosenFollowUp,
       });
@@ -864,6 +893,7 @@ export function CallerClient({
                   software: chosenSoft || item.software,
                   nextFollowUp: res.nextFollowUp || chosenFollowUp || item.nextFollowUp,
                   notes: res.updatedNotes || optimisticNotes,
+                  updatedAt: res.updatedAt || nowIso,
                 }
               : item
           )
@@ -903,6 +933,7 @@ export function CallerClient({
     researchSummary: l.researchSummary,
     createdAt: l.createdAt,
     approvedAt: l.approvedAt,
+    updatedAt: l.updatedAt,
     assignedMemberId: l.assignedMemberId,
     assignedMemberName: l.assignedMemberName,
     marketName: l.marketName,
@@ -1432,7 +1463,7 @@ export function CallerClient({
           <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2.5">
             <button
               type="button"
-              onClick={() => setStatusFilter("TO_CALL")}
+              onClick={() => setStatusFilterAndPersist("TO_CALL")}
               className={`rounded-xl border p-3 text-left transition ${
                 statusFilter === "TO_CALL"
                   ? "border-white bg-zinc-800/90 shadow-sm"
@@ -1454,7 +1485,7 @@ export function CallerClient({
 
             <button
               type="button"
-              onClick={() => setStatusFilter("ALL")}
+              onClick={() => setStatusFilterAndPersist("ALL")}
               className="rounded-xl border border-zinc-800/80 bg-[#121215] hover:border-zinc-700 p-3 text-left transition"
             >
               <div className="text-[10px] font-bold uppercase tracking-wider text-sky-400">
@@ -1472,7 +1503,7 @@ export function CallerClient({
 
             <button
               type="button"
-              onClick={() => setStatusFilter("CONNECTED")}
+              onClick={() => setStatusFilterAndPersist("CONNECTED")}
               className="rounded-xl border border-zinc-800/80 bg-[#121215] hover:border-zinc-700 p-3 text-left transition"
             >
               <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">
@@ -1490,7 +1521,7 @@ export function CallerClient({
 
             <button
               type="button"
-              onClick={() => setStatusFilter("CONNECTED")}
+              onClick={() => setStatusFilterAndPersist("CONNECTED")}
               className={`rounded-xl border p-3 text-left transition ${
                 statusFilter === "CONNECTED"
                   ? "border-indigo-400 bg-indigo-500/15 shadow-sm"
@@ -1512,7 +1543,7 @@ export function CallerClient({
 
             <button
               type="button"
-              onClick={() => setStatusFilter("NO_ANSWER")}
+              onClick={() => setStatusFilterAndPersist("NO_ANSWER")}
               className={`rounded-xl border p-3 text-left transition ${
                 statusFilter === "NO_ANSWER"
                   ? "border-amber-400 bg-amber-500/15 shadow-sm"
@@ -1534,7 +1565,7 @@ export function CallerClient({
 
             <button
               type="button"
-              onClick={() => setStatusFilter("GATEKEEPER")}
+              onClick={() => setStatusFilterAndPersist("GATEKEEPER")}
               className={`rounded-xl border p-3 text-left transition ${
                 statusFilter === "GATEKEEPER"
                   ? "border-orange-400 bg-orange-500/15 shadow-sm"
@@ -1556,7 +1587,7 @@ export function CallerClient({
 
             <button
               type="button"
-              onClick={() => setStatusFilter("FOLLOW_UP")}
+              onClick={() => setStatusFilterAndPersist("FOLLOW_UP")}
               className={`rounded-xl border p-3 text-left transition ${
                 statusFilter === "FOLLOW_UP"
                   ? "border-amber-400 bg-amber-500/15 shadow-sm"
@@ -1582,7 +1613,7 @@ export function CallerClient({
 
             <button
               type="button"
-              onClick={() => setStatusFilter("MEETINGS")}
+              onClick={() => setStatusFilterAndPersist("MEETINGS")}
               className={`rounded-xl border p-3 text-left transition ${
                 statusFilter === "MEETINGS"
                   ? "border-emerald-400 bg-emerald-500/15 shadow-sm"
@@ -1611,7 +1642,7 @@ export function CallerClient({
             </span>
             <button
               type="button"
-              onClick={() => setDateFilter("ALL")}
+              onClick={() => setDateFilterAndPersist("ALL")}
               className={`px-3 py-1.5 rounded-lg transition ${
                 dateFilter === "ALL"
                   ? "bg-white text-black shadow-sm font-bold"
@@ -1622,7 +1653,7 @@ export function CallerClient({
             </button>
             <button
               type="button"
-              onClick={() => setDateFilter("TODAY")}
+              onClick={() => setDateFilterAndPersist("TODAY")}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
                 dateFilter === "TODAY"
                   ? "bg-emerald-500 text-black shadow-sm font-bold"
@@ -1634,7 +1665,7 @@ export function CallerClient({
             </button>
             <button
               type="button"
-              onClick={() => setDateFilter("YESTERDAY")}
+              onClick={() => setDateFilterAndPersist("YESTERDAY")}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
                 dateFilter === "YESTERDAY"
                   ? "bg-amber-400 text-black shadow-sm font-bold"
@@ -1646,7 +1677,7 @@ export function CallerClient({
             {olderCount > 0 && (
               <button
                 type="button"
-                onClick={() => setDateFilter("OLDER")}
+                onClick={() => setDateFilterAndPersist("OLDER")}
                 className={`px-3 py-1.5 rounded-lg transition ${
                   dateFilter === "OLDER"
                     ? "bg-zinc-800 text-white shadow-sm font-bold"
@@ -1672,7 +1703,7 @@ export function CallerClient({
                 <button
                   key={tab.key}
                   type="button"
-                  onClick={() => setStatusFilter(tab.key)}
+                  onClick={() => setStatusFilterAndPersist(tab.key)}
                   className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                     statusFilter === tab.key
                       ? "bg-white text-black shadow-sm"
@@ -1721,7 +1752,7 @@ export function CallerClient({
               {totalCount > 0 && statusFilter !== "ALL" && (
                 <button
                   type="button"
-                  onClick={() => setStatusFilter("ALL")}
+                  onClick={() => setStatusFilterAndPersist("ALL")}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-white text-black px-3.5 py-1.5 text-xs font-bold hover:bg-zinc-200 transition"
                 >
                   View All {totalCount} CRM Leads
@@ -1831,6 +1862,13 @@ export function CallerClient({
 
                           {/* Automatic Log-Derived Call Status (Unified Pipeline) */}
                           <CallStatusBadge lead={lead} showAttempts showLastCalled />
+
+                          {recentlyDialedIds.has(lead.companyId) && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-sm animate-in fade-in">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                              <span>Just Dialed</span>
+                            </span>
+                          )}
 
                           {/* Lead Intake Time Badge */}
                           {(() => {
@@ -2890,188 +2928,15 @@ export function CallerClient({
         </div>
       )}
 
-      {/* Call Outcome & Follow-Up Modal (Fully Responsive & Scrollable) */}
+      {/* Call Outcome & Follow-Up Modal (Isolated Component - Zero typing lag) */}
       {selectedLead && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setSelectedLead(null);
-          }}
-        >
-          <div className="w-full max-w-xl bg-[#121215] border border-zinc-800 rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[88vh]">
-            <div className="px-4 sm:px-6 py-3.5 border-b border-zinc-800 flex items-center justify-between gap-2 shrink-0 bg-[#121215]">
-              <div className="min-w-0">
-                <h3 className="text-sm font-bold text-white truncate">
-                  Log Call &amp; Follow-Up: {selectedLead.name}
-                </h3>
-                <p className="text-xs text-zinc-400 mt-0.5 truncate">
-                  {selectedLead.bestContact.name || "Owner/Manager"} &bull;{" "}
-                  {selectedLead.bestContact.phone || selectedLead.phone || "No phone"}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedLead(null)}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {feedbackMessage && (
-              <div
-                className={`px-4 sm:px-6 py-2.5 text-xs flex items-center gap-2 border-b shrink-0 ${
-                  feedbackMessage.type === "success"
-                    ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
-                    : "bg-rose-500/10 text-rose-300 border-rose-500/30"
-                }`}
-              >
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>{feedbackMessage.text}</span>
-              </div>
-            )}
-
-            <form
-              onSubmit={handleLogCallSubmit}
-              className="flex flex-col flex-1 min-h-0 overflow-hidden"
-            >
-              <div className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-2">
-                    Call Outcome *
-                  </label>
-                  <CallOutcomePicker
-                    value={outcome}
-                    onChange={(k) => setOutcome(k)}
-                    disabled={isPending}
-                  />
-                </div>
-
-                <div>
-                  <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
-                    <label className="block text-xs font-semibold text-zinc-300">
-                      Schedule Next Follow-Up (Optional)
-                    </label>
-                    <div className="flex flex-wrap items-center gap-1">
-                      {[
-                        { label: "Later Today", preset: "LATER_TODAY" as const },
-                        { label: "Tomorrow", preset: "TOMORROW" as const },
-                        { label: "+2 Days", preset: "TWO_DAYS" as const },
-                        { label: "Next Week", preset: "NEXT_WEEK" as const },
-                      ].map((p) => (
-                        <button
-                          key={p.preset}
-                          type="button"
-                          onClick={() => setFollowUpDate(buildPresetFollowUpIso(p.preset))}
-                          className="rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-amber-300 transition"
-                        >
-                          {p.label}
-                        </button>
-                      ))}
-                      {followUpDate && (
-                        <button
-                          type="button"
-                          onClick={() => setFollowUpDate("")}
-                          className="rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-400 hover:text-white transition"
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <input
-                    type="datetime-local"
-                    value={followUpDate}
-                    onChange={(e) => setFollowUpDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:outline-none focus:border-zinc-600"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                    Call Notes (Optional summary)
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Summary of conversation (leave blank to auto-record standard outcome note)..."
-                    className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
-                  />
-                </div>
-
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setShowAdvanced(!showAdvanced)}
-                    className="text-xs text-zinc-400 hover:text-white flex items-center gap-1"
-                  >
-                    {showAdvanced ? (
-                      <ChevronUp className="w-3.5 h-3.5" />
-                    ) : (
-                      <ChevronDown className="w-3.5 h-3.5" />
-                    )}
-                    <span>
-                      {showAdvanced
-                        ? "Hide extra fields"
-                        : "Add current CRM/software or team size"}
-                    </span>
-                  </button>
-
-                  {showAdvanced && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2.5 p-3 rounded-lg bg-[#09090b] border border-zinc-800">
-                      <div>
-                        <label className="block text-[11px] font-medium text-zinc-300 mb-1">
-                          Software / Tools Used
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. HubSpot, Salesforce, Follow Up Boss"
-                          value={confirmedSoftware}
-                          onChange={(e) => setConfirmedSoftware(e.target.value)}
-                          className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-zinc-300 mb-1">
-                          Team Size / Agents
-                        </label>
-                        <input
-                          type="number"
-                          min="1"
-                          max="500"
-                          placeholder="e.g. 15"
-                          value={confirmedFleet}
-                          onChange={(e) => setConfirmedFleet(e.target.value)}
-                          className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-white"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="px-4 sm:px-6 py-3.5 border-t border-zinc-800 bg-[#0c0c0f] flex items-center justify-end gap-2 shrink-0">
-                <button
-                  type="button"
-                  disabled={isPending}
-                  onClick={() => setSelectedLead(null)}
-                  className="px-4 py-2 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white text-xs font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isPending || !outcome}
-                  title={!outcome ? "Pick what happened on the call first" : undefined}
-                  className="px-4 py-2 rounded-lg bg-white hover:bg-zinc-200 text-black font-bold text-xs transition disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
-                >
-                  {isPending ? "Saving..." : outcome ? "Save Call Outcome" : "Pick an outcome to save"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <CallLogModal
+          lead={selectedLead}
+          activeActorName={actor.trim() || activeActorName}
+          isSubmitting={isPending}
+          onClose={() => setSelectedLead(null)}
+          onSubmit={handleLogCallSubmit}
+        />
       )}
 
       {/* Add Custom CRM Column Modal */}

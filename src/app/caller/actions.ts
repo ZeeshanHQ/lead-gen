@@ -30,11 +30,6 @@ function revalidateCrmAndAnalytics(companyId?: string) {
   revalidatePath("/caller");
   revalidatePath("/leads");
   revalidatePath("/analytics");
-  revalidatePath("/usage");
-  revalidatePath("/approved");
-  revalidatePath("/review");
-  revalidatePath("/sheets");
-  revalidatePath("/");
   if (companyId) {
     revalidatePath(`/company/${companyId}`);
   }
@@ -56,6 +51,7 @@ export async function logCallFeedbackAction(input: CallFeedbackInput) {
       nextStatus: result.nextStatus,
       updatedNotes: result.updatedNotes,
       nextFollowUp: result.nextFollowUp,
+      updatedAt: result.updatedAt,
     };
   } catch (error: any) {
     console.error("Failed to record call feedback:", error);
