@@ -11,6 +11,7 @@ import { defaultHvacRuleConfig, type RuleConfig } from "../domain/rules";
 import { createCandidate, createCandidatesBatch } from "../repo/companies";
 import { audit } from "../repo/audit";
 import { executeDiscovery } from "../providers/registry";
+import type { DiscoveredCandidate } from "../providers/types";
 import { researchCompany, type ResearchResult } from "./engine";
 import { getStaleDays } from "../repo/settings";
 import { recordRunTelemetry } from "./telemetry";
@@ -396,7 +397,7 @@ export interface ExecuteBatchOptions {
 export async function executeQueuedBatch(
   db: Db,
   runId: string,
-  batchSize = 3,
+  batchSize = 2,
   batchOpts?: ExecuteBatchOptions
 ): Promise<{ processed: number; approvedCount: number; isFinished: boolean }> {
   const [run] = await db
@@ -423,8 +424,8 @@ export async function executeQueuedBatch(
     ...((run.counters as any) || {}),
   };
 
-  // Reap stale zombie jobs running longer than 15 seconds (e.g. from severed serverless requests)
-  const staleCutoff = new Date(Date.now() - 15_000);
+  // Reap stale zombie jobs running longer than 35 seconds (e.g. from severed serverless requests)
+  const staleCutoff = new Date(Date.now() - 35_000);
   const reaped = await db
     .update(researchJobs)
     .set({
@@ -477,6 +478,11 @@ export async function executeQueuedBatch(
 
     // Try dynamic replenishment if approved < target and mode is search discovery
     const currentReplenish = Number((run.counters as any)?.replenishRound || 0);
+    const isCurrentlyReplenishing = Boolean((run.counters as any)?.isReplenishing);
+    if (isCurrentlyReplenishing) {
+      return { processed: 0, approvedCount: currentCounters.approvedCount || 0, isFinished: false };
+    }
+
     if (
       (currentCounters.approvedCount || 0) < maxCandidates &&
       currentReplenish < 5 &&
@@ -489,21 +495,18 @@ export async function executeQueuedBatch(
       const needed = maxCandidates - (currentCounters.approvedCount || 0);
       const replenishLimit = Math.min(Math.max(Math.ceil(needed * 3.5), 30), 100);
 
-      let ruleConfig: RuleConfig = defaultHvacRuleConfig();
-      if (run.ruleId) {
-        const [r] = await db
-          .select()
-          .from(researchRules)
-          .where(eq(researchRules.id, run.ruleId))
-          .limit(1);
-        if (r?.config) ruleConfig = r.config as RuleConfig;
-      }
-
-      const freshDomainRows = await db
-        .select({ domain: companies.domain })
-        .from(companies)
-        .where(run.marketId ? eq(companies.marketId, run.marketId) : undefined);
-      const freshExcludes = freshDomainRows.map((r) => r.domain?.toLowerCase()).filter(Boolean) as string[];
+      // Lock replenishment immediately in DB to prevent duplicate calls from parallel status pollers
+      await db
+        .update(researchRuns)
+        .set({
+          counters: {
+            ...currentCounters,
+            replenishRound: nextRound,
+            isReplenishing: true,
+          } as any,
+          updatedAt: new Date(),
+        })
+        .where(eq(researchRuns.id, runId));
 
       recordRunTelemetry(runId, {
         stage: "REPLENISH",
@@ -511,20 +514,41 @@ export async function executeQueuedBatch(
         message: `Dynamic Replenishment Round ${nextRound}: Have ${currentCounters.approvedCount || 0}/${maxCandidates} leads. Fetching next pool of up to ${replenishLimit} candidates...`,
       });
 
-      const replenishDiscovered = await executeDiscovery(
-        db,
-        {
-          rule: ruleConfig,
-          keywords: ruleConfig.discovery.keywords,
-          states: ruleConfig.geography.states,
-          cities: ruleConfig.geography.cities,
-          zips: ruleConfig.geography.zips,
-          limit: replenishLimit,
-          excludeDomains: freshExcludes,
-          queryOffset: nextRound * 6,
-        },
-        limits.providerFilter
-      );
+      let replenishDiscovered: DiscoveredCandidate[] = [];
+      try {
+        let ruleConfig: RuleConfig = defaultHvacRuleConfig();
+        if (run.ruleId) {
+          const [r] = await db
+            .select()
+            .from(researchRules)
+            .where(eq(researchRules.id, run.ruleId))
+            .limit(1);
+          if (r?.config) ruleConfig = r.config as RuleConfig;
+        }
+
+        const freshDomainRows = await db
+          .select({ domain: companies.domain })
+          .from(companies)
+          .where(run.marketId ? eq(companies.marketId, run.marketId) : undefined);
+        const freshExcludes = freshDomainRows.map((r) => r.domain?.toLowerCase()).filter(Boolean) as string[];
+
+        replenishDiscovered = await executeDiscovery(
+          db,
+          {
+            rule: ruleConfig,
+            keywords: ruleConfig.discovery.keywords,
+            states: ruleConfig.geography.states,
+            cities: ruleConfig.geography.cities,
+            zips: ruleConfig.geography.zips,
+            limit: replenishLimit,
+            excludeDomains: freshExcludes,
+            queryOffset: nextRound * 6,
+          },
+          limits.providerFilter
+        );
+      } catch (replenishErr) {
+        console.error("Dynamic replenishment search error:", replenishErr);
+      }
 
       if (replenishDiscovered.length > 0) {
         const replenishIntake = await createCandidatesBatch(
@@ -564,6 +588,7 @@ export async function executeQueuedBatch(
                 duplicatesMerged: (currentCounters.duplicatesMerged || 0) + replenishIntake.duplicateCount,
                 excludedCount: (currentCounters.excludedCount || 0) + replenishIntake.excludedCount,
                 replenishRound: nextRound,
+                isReplenishing: false,
               } as any,
               updatedAt: new Date(),
             })
@@ -572,6 +597,19 @@ export async function executeQueuedBatch(
           return executeQueuedBatch(db, runId, batchSize, batchOpts);
         }
       }
+
+      // If replenishment discovered nothing or no new targets, clear the isReplenishing flag
+      await db
+        .update(researchRuns)
+        .set({
+          counters: {
+            ...currentCounters,
+            replenishRound: nextRound,
+            isReplenishing: false,
+          } as any,
+          updatedAt: new Date(),
+        })
+        .where(eq(researchRuns.id, runId));
     }
 
     // No more jobs and cannot replenish
@@ -605,8 +643,8 @@ export async function executeQueuedBatch(
     if (r?.config) ruleConfig = r.config as RuleConfig;
   }
 
-  const pagesPerCompany = Math.min(limits.pagesPerCompany || 4, 6);
-  const timeoutMs = limits.timeoutMs || 2800;
+  const pagesPerCompany = Math.min(limits.pagesPerCompany || 3, 3);
+  const timeoutMs = limits.timeoutMs || 6000;
   const runActor = run.actor || "Discovery Runner";
   const minScoreTarget = Math.min(ruleConfig?.scoring?.minScore ?? 60, 65);
 
@@ -622,7 +660,7 @@ export async function executeQueuedBatch(
       if (!job.companyId) return;
       try {
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Job execution timeout (3200ms exceeded)")), 3200)
+          setTimeout(() => reject(new Error("Job execution timeout (12000ms exceeded)")), 12000)
         );
 
         const result: ResearchResult = await Promise.race([

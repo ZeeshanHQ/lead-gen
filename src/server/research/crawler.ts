@@ -143,8 +143,8 @@ export async function crawlWebsite(
   options: CrawlOptions = {}
 ): Promise<CrawlResult> {
   const start = Date.now();
-  const maxPages = Math.min(Math.max(options.maxPages ?? 4, 1), 20);
-  const timeoutMs = options.timeoutMs ?? 2500;
+  const maxPages = Math.min(Math.max(options.maxPages ?? 3, 1), 20);
+  const timeoutMs = options.timeoutMs ?? 5000;
   const userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
   const respectRobots = options.respectRobotsTxt ?? true;
 

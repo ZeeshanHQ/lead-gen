@@ -143,7 +143,7 @@ export async function getDiscoveryProgressAction(runId: string, sinceIso?: strin
     // Serverless Driver: If run is RUNNING, execute the next batch of queued jobs in this cycle
     if (runRow.status === "RUNNING") {
       try {
-        await executeQueuedBatch(db, runId, 3);
+        await executeQueuedBatch(db, runId, 2);
         const [refreshed] = await db
           .select()
           .from(researchRuns)
@@ -451,7 +451,7 @@ export async function startLeadDiscoveryAction(
     // Immediately prepare candidates in DB and run first batch synchronously
     try {
       await prepareRunCandidates(db, runId);
-      await executeQueuedBatch(db, runId, 3);
+      await executeQueuedBatch(db, runId, 2);
     } catch (prepErr) {
       console.error("Initial candidate preparation/batch error:", prepErr);
     }
@@ -460,7 +460,7 @@ export async function startLeadDiscoveryAction(
     (async () => {
       try {
         const counters = await executeRun(db, runId, {
-          timeoutMs: 2800,
+          timeoutMs: 6000,
           maxWallClockMs: targetCount <= 25 ? 110000 : targetCount <= 50 ? 180000 : 260000,
           autoEnrich: true,
         });
@@ -707,7 +707,7 @@ export async function runLeadDiscoveryAction(
     });
 
     const counters = await executeRun(db, runId, {
-      timeoutMs: 2800,
+      timeoutMs: 6000,
       maxWallClockMs: targetCount <= 25 ? 75000 : targetCount <= 50 ? 130000 : 240000,
       autoEnrich: true,
     });

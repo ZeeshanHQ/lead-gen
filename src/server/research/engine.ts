@@ -258,8 +258,8 @@ export async function researchCompany(
     pages = options.mockPages;
   } else if (company.website) {
     const crawl = await crawlWebsite(company.website, {
-      maxPages: options.maxPages ?? 4,
-      timeoutMs: options.timeoutMs ?? 2800,
+      maxPages: options.maxPages ?? 3,
+      timeoutMs: options.timeoutMs ?? 5000,
       respectRobotsTxt: true,
     });
     pages = crawl.pages;
