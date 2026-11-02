@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb, type Db } from "@/server/db/client";
-import { companies, contacts, leadScores, researchRuns } from "@/server/db/schema";
+import { companies, contacts, leadScores, researchRuns, sources } from "@/server/db/schema";
 import { createCandidate, type CandidateInput } from "@/server/repo/companies";
 import { getActor } from "@/server/repo/settings";
 import { getActiveContext } from "@/server/repo/markets";
@@ -1068,3 +1068,36 @@ export async function updateRuleTargetingAction(params: {
 }
 
 export const runTavilyTestDiscoveryAction = runLeadDiscoveryAction;
+
+export async function saveSearchApiKeyAction(apiKey: string) {
+  try {
+    const trimmed = apiKey.trim();
+    if (!trimmed || trimmed.length < 5) {
+      return { ok: false, error: "Please enter a valid API key." };
+    }
+
+    const db = await getDb();
+    const [existing] = await db
+      .select()
+      .from(sources)
+      .where(eq(sources.key, "tavily_search"))
+      .limit(1);
+
+    const prevConfig = (existing?.config as Record<string, unknown>) || {};
+    await db
+      .update(sources)
+      .set({
+        config: { ...prevConfig, apiKey: trimmed },
+        enabled: true,
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(sources.key, "tavily_search"));
+
+    revalidatePath("/discover");
+    revalidatePath("/sources");
+    return { ok: true, message: "Tavily API key updated successfully! You can now run lead discovery." };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to update API key." };
+  }
+}

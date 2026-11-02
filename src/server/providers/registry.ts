@@ -75,7 +75,8 @@ export async function listProviders(db: Db): Promise<Array<ProviderMetadata & { 
 export async function executeDiscovery(
   db: Db,
   query: DiscoveryQuery,
-  providerFilter?: string[]
+  providerFilter?: string[],
+  runId?: string
 ): Promise<DiscoveredCandidate[]> {
   await ensureDefaultSources(db);
   const sourceRows = await db.select().from(sources);
@@ -124,6 +125,18 @@ export async function executeDiscovery(
       allCandidates.push(...candidates);
     } catch (err: any) {
       const errMsg = err.message || String(err);
+      if (runId) {
+        try {
+          const { recordRunTelemetry } = await import("../research/telemetry");
+          recordRunTelemetry(runId, {
+            stage: "SEARCH",
+            level: "rejection",
+            message: `[SEARCH ERROR] ${adapter.metadata.name}: ${errMsg}`,
+          });
+        } catch {
+          // non-blocking
+        }
+      }
       await db
         .update(sources)
         .set({

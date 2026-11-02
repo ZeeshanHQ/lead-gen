@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   companies,
@@ -6,6 +6,7 @@ import {
   researchJobs,
   researchRules,
   researchRuns,
+  sources,
 } from "../db/schema";
 import { defaultHvacRuleConfig, type RuleConfig } from "../domain/rules";
 import { createCandidate, createCandidatesBatch } from "../repo/companies";
@@ -312,10 +313,48 @@ export async function prepareRunCandidates(
         excludeDomains,
         queryOffset: baseQueryOffset,
       },
-      limits.providerFilter
+      limits.providerFilter,
+      runId
     );
 
     totalDiscoveredCount = discovered.length;
+
+    if (discovered.length === 0) {
+      const failedSources = await db
+        .select({ key: sources.key, name: sources.name, lastError: sources.lastError })
+        .from(sources)
+        .where(and(eq(sources.enabled, true), isNotNull(sources.lastError)));
+
+      const fatalSource = failedSources.find(
+        (s) =>
+          s.lastError?.includes("limit") ||
+          s.lastError?.includes("quota") ||
+          s.lastError?.includes("432") ||
+          s.lastError?.includes("429") ||
+          s.lastError?.includes("rejected") ||
+          s.lastError?.includes("API key")
+      );
+
+      if (fatalSource && fatalSource.lastError) {
+        const fatalMsg = `${fatalSource.name}: ${fatalSource.lastError}`;
+        recordRunTelemetry(runId, {
+          stage: "GATE",
+          level: "rejection",
+          message: `[FATAL] ${fatalMsg}`,
+        });
+        await db
+          .update(researchRuns)
+          .set({
+            status: "FAILED",
+            lastError: fatalMsg,
+            finishedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(researchRuns.id, runId));
+
+        return { candidatesCount: 0, jobsCount: 0 };
+      }
+    }
 
     recordRunTelemetry(runId, {
       stage: "SEARCH",
@@ -407,6 +446,13 @@ export async function executeQueuedBatch(
     .limit(1);
 
   if (!run) return { processed: 0, approvedCount: 0, isFinished: true };
+  if (run.status === "FAILED" || run.status === "COMPLETED" || run.lastError) {
+    return {
+      processed: 0,
+      approvedCount: (run.counters as any)?.approvedCount || 0,
+      isFinished: true,
+    };
+  }
 
   const limits = (run.limits as Record<string, any>) || {};
   const maxCandidates = limits.maxCandidates || 25;
@@ -544,10 +590,44 @@ export async function executeQueuedBatch(
             excludeDomains: freshExcludes,
             queryOffset: nextRound * 6,
           },
-          limits.providerFilter
+          limits.providerFilter,
+          runId
         );
       } catch (replenishErr) {
         console.error("Dynamic replenishment search error:", replenishErr);
+      }
+
+      if (replenishDiscovered.length === 0) {
+        const failedSources = await db
+          .select({ key: sources.key, name: sources.name, lastError: sources.lastError })
+          .from(sources)
+          .where(and(eq(sources.enabled, true), isNotNull(sources.lastError)));
+
+        const fatalSource = failedSources.find(
+          (s) =>
+            s.lastError?.includes("limit") ||
+            s.lastError?.includes("quota") ||
+            s.lastError?.includes("432") ||
+            s.lastError?.includes("429") ||
+            s.lastError?.includes("rejected") ||
+            s.lastError?.includes("API key")
+        );
+
+        if (fatalSource && fatalSource.lastError) {
+          const fatalMsg = `${fatalSource.name}: ${fatalSource.lastError}`;
+          await db
+            .update(researchRuns)
+            .set({
+              status: "FAILED",
+              lastError: fatalMsg,
+              finishedAt: new Date(),
+              updatedAt: new Date(),
+              counters: { ...currentCounters, replenishRound: nextRound, isReplenishing: false } as any,
+            })
+            .where(eq(researchRuns.id, runId));
+
+          return { processed: 0, approvedCount: currentCounters.approvedCount || 0, isFinished: true };
+        }
       }
 
       if (replenishDiscovered.length > 0) {

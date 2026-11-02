@@ -39,6 +39,7 @@ import {
   quickRejectLeadAction,
   updateRuleTargetingAction,
   getActiveRulesForDiscoveryAction,
+  saveSearchApiKeyAction,
 } from "./actions";
 import { switchMarketAction } from "@/app/actions/tenant";
 import { autoDistributeLeadsAction } from "@/app/caller/actions";
@@ -214,6 +215,30 @@ export function LeadProspector({
 
   // Manual URL accordion toggle
   const [showManualIntake, setShowManualIntake] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [isSavingKey, setIsSavingKey] = useState(false);
+  const [keySaveSuccess, setKeySaveSuccess] = useState<string | null>(null);
+
+  const handleSaveApiKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!apiKeyInput.trim()) return;
+    setIsSavingKey(true);
+    setKeySaveSuccess(null);
+    try {
+      const res = await saveSearchApiKeyAction(apiKeyInput);
+      if (res.ok) {
+        setKeySaveSuccess("Tavily API key updated successfully! You can now launch lead discovery.");
+        setErrorMsg(null);
+        setApiKeyInput("");
+      } else {
+        setErrorMsg(res.error || "Failed to save API key.");
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to save API key.");
+    } finally {
+      setIsSavingKey(false);
+    }
+  };
 
   // Sync only when activeMarket.id actually changes (switching workspaces/niches)
   // so background revalidatePath calls never overwrite user's clicked preset or filter edits
@@ -656,6 +681,10 @@ export function LeadProspector({
                 if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
                 setIsRunningDiscovery(false);
 
+                if (data.status === "FAILED" || data.lastError) {
+                  setErrorMsg(data.lastError || "Discovery stopped: Search provider limit reached or run failed.");
+                }
+
                 if (data.leads && data.leads.length > 0) {
                   setLeads(data.leads);
                 } else {
@@ -680,7 +709,7 @@ export function LeadProspector({
                   setSuccessBanner(
                     `Discovery complete for ${nicheInfo?.name || "Active Niche"}: ${approved} qualified leads verified and staged for review!`
                   );
-                } else {
+                } else if (!data.lastError && data.status !== "FAILED") {
                   setSuccessBanner(
                     `Discovery completed. Scanned ${scanned} web candidates. Anti-dump filters rejected off-niche results to keep your CRM clean.`
                   );
@@ -1592,12 +1621,70 @@ export function LeadProspector({
           </div>
         )}
 
-        {/* Error Banner */}
+        {/* Error / Provider Quota Alert Banner */}
         {errorMsg && (
-          <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-800/80 text-xs text-rose-200 flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
-            <div className="flex-1">{errorMsg}</div>
-            <button onClick={() => setErrorMsg(null)} className="text-rose-400 hover:text-white">
+          <div className="p-5 rounded-2xl bg-rose-950/40 border border-rose-800/80 text-xs text-rose-200 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-bold text-sm text-white">
+                    {errorMsg.includes("limit") || errorMsg.includes("quota") || errorMsg.includes("432")
+                      ? "⚠️ Search API Quota Exceeded (Plan Limit Reached)"
+                      : "Lead Discovery Stopped"}
+                  </div>
+                  <p className="text-zinc-300 leading-relaxed">{errorMsg}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setErrorMsg(null)}
+                className="text-rose-400 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {(errorMsg.includes("limit") ||
+              errorMsg.includes("quota") ||
+              errorMsg.includes("432") ||
+              errorMsg.includes("API key")) && (
+              <form onSubmit={handleSaveApiKey} className="pt-2 border-t border-rose-900/40 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Paste fresh Tavily API Key (tvly-...)"
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  className="flex-1 bg-black/60 border border-rose-900/80 rounded-xl px-3.5 py-2 text-xs font-mono text-white placeholder-zinc-500 focus:outline-none focus:border-rose-400"
+                />
+                <button
+                  type="submit"
+                  disabled={isSavingKey || !apiKeyInput.trim()}
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow transition-all disabled:opacity-50"
+                >
+                  {isSavingKey ? "Saving..." : "Update Key & Clear Limit"}
+                </button>
+                <a
+                  href="https://tavily.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-2 text-center text-xs text-cyan-400 hover:text-cyan-300 underline font-medium"
+                >
+                  Get free key (1,000 searches/mo) →
+                </a>
+              </form>
+            )}
+          </div>
+        )}
+
+        {/* API Key Update Success Banner */}
+        {keySaveSuccess && (
+          <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-800/80 text-xs text-emerald-200 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{keySaveSuccess}</span>
+            </div>
+            <button onClick={() => setKeySaveSuccess(null)} className="text-emerald-400 hover:text-white">
               <X className="w-4 h-4" />
             </button>
           </div>
