@@ -839,14 +839,24 @@ export async function executeQueuedBatch(
 
   const isFinished = updatedApprovedCount >= maxCandidates;
 
+  const updateSet: {
+    counters: any;
+    status: "COMPLETED" | "RUNNING";
+    updatedAt: Date;
+    finishedAt?: Date;
+  } = {
+    counters: updatedCounters as any,
+    status: isFinished ? "COMPLETED" : "RUNNING",
+    updatedAt: new Date(),
+  };
+
+  if (isFinished) {
+    updateSet.finishedAt = new Date();
+  }
+
   await db
     .update(researchRuns)
-    .set({
-      counters: updatedCounters as any,
-      status: isFinished ? "COMPLETED" : "RUNNING",
-      finishedAt: isFinished ? new Date() : null,
-      updatedAt: new Date(),
-    })
+    .set(updateSet)
     .where(eq(researchRuns.id, runId));
 
   if (isFinished) {

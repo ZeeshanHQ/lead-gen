@@ -277,18 +277,31 @@ export async function recordCallFeedback(
 
   if (!company) throw new Error(`Company ${input.companyId} not found`);
 
+  // Deep note analysis: check if caller's written notes contain explicit honest intent
+  // (e.g. if caller selected "Connected" but wrote "Meeting booked with owner" or "Secretary refused transfer")
+  const noteInferredOutcome = inferOutcomeFromText(input.callerNotes);
+  const effectiveOutcome: CallOutcomeKey =
+    noteInferredOutcome &&
+    (noteInferredOutcome === "MEETING_BOOKED" ||
+      noteInferredOutcome === "NOT_INTERESTED" ||
+      noteInferredOutcome === "WRONG_NUMBER" ||
+      noteInferredOutcome === "GATEKEEPER_BLOCKED" ||
+      noteInferredOutcome === "CALL_COMPLETED")
+      ? noteInferredOutcome
+      : input.callOutcome;
+
   let nextStatus: LifecycleStatus = "CALLING";
 
-  if (input.callOutcome === "MEETING_BOOKED") {
+  if (effectiveOutcome === "MEETING_BOOKED") {
     nextStatus = "MEETING_BOOKED";
-  } else if (input.callOutcome === "NOT_INTERESTED") {
+  } else if (effectiveOutcome === "NOT_INTERESTED") {
     // Owner declined: keep the lead visible in the CRM as a closed-lost lead (not archived).
     nextStatus = "LOST";
   } else if (input.painIdentified && input.painIdentified.trim().length > 0) {
     nextStatus = "PAIN_FOUND";
-  } else if (input.callOutcome === "CONNECTED") {
+  } else if (effectiveOutcome === "CONNECTED") {
     nextStatus = "CONNECTED";
-  } else if (input.callOutcome === "WRONG_NUMBER") {
+  } else if (effectiveOutcome === "WRONG_NUMBER") {
     nextStatus = "NURTURE";
   }
 
@@ -329,7 +342,7 @@ export async function recordCallFeedback(
     extractLatestFollowUp(company.notes);
 
   const cleanUserNote = stripFollowUpTags(input.callerNotes).trim();
-  const noteBody = cleanUserNote || getDefaultCallNote(input.callOutcome);
+  const noteBody = cleanUserNote || getDefaultCallNote(effectiveOutcome);
 
   const timeStr = new Date().toLocaleString("en-US", {
     timeZone: CALLER_TIMEZONE,
@@ -339,19 +352,20 @@ export async function recordCallFeedback(
     minute: "2-digit",
   });
   const outcomeLabel =
-    input.callOutcome === "CONNECTED"
+    CALL_STATUS_DEFS[effectiveOutcome]?.noteLabel ||
+    (effectiveOutcome === "CONNECTED"
       ? "Connected / Spoke"
-      : input.callOutcome === "MEETING_BOOKED"
+      : effectiveOutcome === "MEETING_BOOKED"
       ? "Meeting Booked"
-      : input.callOutcome === "GATEKEEPER_BLOCKED"
+      : effectiveOutcome === "GATEKEEPER_BLOCKED"
       ? "Gatekeeper"
-      : input.callOutcome === "NO_ANSWER"
+      : effectiveOutcome === "NO_ANSWER"
       ? "No Answer"
-      : input.callOutcome === "WRONG_NUMBER"
+      : effectiveOutcome === "WRONG_NUMBER"
       ? "Wrong Number"
-      : input.callOutcome === "NOT_INTERESTED"
+      : effectiveOutcome === "NOT_INTERESTED"
       ? "Not Interested"
-      : "Left Voicemail";
+      : "Left Voicemail");
 
   const newCallLogEntry = `[${timeStr} • ${input.actor || "Caller"} (${outcomeLabel})]: ${noteBody}`;
 
@@ -382,7 +396,7 @@ export async function recordCallFeedback(
     entityId: input.companyId,
     companyId: input.companyId,
     details: {
-      callOutcome: input.callOutcome,
+      callOutcome: effectiveOutcome,
       nextStatus,
       previousStatus: company.status,
       attemptNumber: parseCallLog(company.notes).length + 1,

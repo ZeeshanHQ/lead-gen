@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { X, CheckCircle2, ChevronDown, ChevronUp, Phone, PhoneCall } from "lucide-react";
 import { CallOutcomePicker } from "@/components/call-status-ui";
-import { type CallOutcomeKey } from "@/server/domain/call-outcomes";
+import { type CallOutcomeKey, inferOutcomeFromText } from "@/server/domain/call-outcomes";
 import { buildPresetFollowUpIso } from "@/components/crm-lead-sheet";
 
 export interface CallLogLeadTarget {
@@ -184,18 +184,32 @@ export const CallLogModal = React.memo(function CallLogModal({
               />
             </div>
 
-            {/* Call Notes Textarea (Local state - zero typing lag!) */}
+            {/* Call Notes Textarea (Local state - zero typing lag + real-time outcome detection) */}
             <div>
-              <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                Call Notes (Optional summary)
-              </label>
+              <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
+                <label className="block text-xs font-semibold text-zinc-300">
+                  Call Notes (Summary or objections)
+                </label>
+                <span className="text-[10px] text-zinc-500">
+                  Honest intent auto-detected
+                </span>
+              </div>
               <textarea
                 rows={3}
                 value={notes}
                 disabled={isSubmitting}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Summary of conversation (leave blank to auto-record standard outcome note)..."
-                className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600 resize-y"
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setNotes(val);
+                  // Real-time honest outcome detection: if caller types "meeting booked", "gatekeeper", "voicemail", etc.
+                  const detected = inferOutcomeFromText(val);
+                  if (detected && (!outcome || outcome === "CONNECTED" || outcome === "NO_ANSWER")) {
+                    setOutcome(detected);
+                    if (validationError) setValidationError(null);
+                  }
+                }}
+                placeholder="Summary of conversation (auto-detects meeting booked, gatekeeper blocked, voicemail, wrong number, not interested)..."
+                className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600 resize-y transition"
               />
             </div>
 

@@ -49,6 +49,28 @@ describe("call outcome parsing", () => {
     expect(outcomeKeyFromLabel("???")).toBeNull();
   });
 
+  it("prioritizes honest specific note text over generic labels", () => {
+    // If caller clicked 'Connected' but wrote they only reached a gatekeeper:
+    const gkNote = "[Oct 28, 3:05 PM • Hamda (Connected / Spoke)]: Receptionist picked up, refused to transfer to the owner.";
+    const parsedGk = parseCallLog(gkNote);
+    expect(parsedGk[0]?.outcome).toBe("GATEKEEPER_BLOCKED");
+
+    // If caller clicked 'Connected' but booked a meeting:
+    const meetingNote = "[Oct 28, 3:10 PM • Hamda (Connected / Spoke)]: Meeting booked with owner John for Thursday at 2pm!";
+    const parsedMeeting = parseCallLog(meetingNote);
+    expect(parsedMeeting[0]?.outcome).toBe("MEETING_BOOKED");
+
+    // If caller clicked 'Connected' but lead was not interested / hung up:
+    const declineNote = "[Oct 28, 3:15 PM • Hamda (Connected / Spoke)]: Not interested, told me to remove their number from list.";
+    const parsedDecline = parseCallLog(declineNote);
+    expect(parsedDecline[0]?.outcome).toBe("NOT_INTERESTED");
+
+    // If caller clicked 'Connected' but left a voicemail:
+    const vmNote = "[Oct 28, 3:20 PM • Hamda (Connected / Spoke)]: Left a voicemail on their answering machine.";
+    const parsedVm = parseCallLog(vmNote);
+    expect(parsedVm[0]?.outcome).toBe("CALL_COMPLETED");
+  });
+
   it("derives one exclusive status per lead from the newest log line", () => {
     const notes =
       "[Oct 28, 3:05 PM • Hamda (Gatekeeper)]: receptionist\n[Oct 27, 1:00 PM • Hamda (No Answer)]: rang out";

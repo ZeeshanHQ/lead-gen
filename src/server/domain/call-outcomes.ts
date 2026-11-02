@@ -216,36 +216,45 @@ export function inferOutcomeFromText(text: string | null | undefined): CallOutco
   const direct = outcomeKeyFromLabel(t);
   if (direct) return direct;
 
+  // 1. Meeting Booked (Highest intent milestone)
   if (
-    /\b((meeting|demo|call|appointment)\s*(booked|scheduled|set|confirmed)|booked\s*(a\s*)?(meeting|demo|call|appointment)|scheduled\s*(a\s*)?(meeting|demo|call|appointment)|calendar\s*invite)\b/i.test(
+    /\b((meeting|demo|call|appointment|zoom)\s*(booked|scheduled|set|confirmed|fixed)|booked\s*(a\s*)?(meeting|demo|call|appointment|zoom)|scheduled\s*(a\s*)?(meeting|demo|call|appointment|zoom)|calendar\s*invite|agreed\s*to\s*(meet|demo|chat)|closed\s*deal|pitch\s*meeting|intro\s*call\s*booked|discovery\s*call\s*booked|booked\s*for\s*(mon|tue|wed|thu|fri|sat|sun|today|tomorrow|next\s*week|\d{1,2}))\b/i.test(
       t
     )
   ) {
     return "MEETING_BOOKED";
   }
+
+  // 2. Not Interested / DNC (Explicit refusal)
   if (
-    /\b(not\s*interested|no\s*interest|declined|hung\s*up|do\s*not\s*call|dnc|remove\s*me|stop\s*calling|don't\s*need|no\s*need|already\s*have\s*a\s*system)\b/i.test(
+    /\b(not\s*interested|no\s*interest|declined|hung\s*up|do\s*not\s*call|dnc|remove\s*(me|from\s*list|number)|stop\s*calling|don't\s*need|no\s*need|already\s*(have|satisfied|got|using)|said\s*no|mana\s*kar\s*diya|not\s*looking|rejected|spam|uninterested)\b/i.test(
       t
     )
   ) {
     return "NOT_INTERESTED";
   }
+
+  // 3. Wrong / Dead / Disconnected Number
   if (
-    /\b(wrong\s*number|invalid\s*number|disconnected|not\s*in\s*service|bad\s*number|out\s*of\s*service|fax\s*line|dead\s*line)\b/i.test(
+    /\b(wrong\s*number|invalid\s*number|disconnected|not\s*in\s*service|bad\s*number|out\s*of\s*service|fax\s*line|dead\s*line|changed\s*number|wrong\s*person|wrong\s*company|galat\s*number|number\s*band|no\s*longer\s*(works|in\s*business|there))\b/i.test(
       t
     )
   ) {
     return "WRONG_NUMBER";
   }
+
+  // 4. Voicemail / Answering Machine
   if (
-    /\b(left\s*(a\s*)?voicemail|voicemail|voice\s*mail|left\s*(a\s*)?message|vm\s*left|sent\s*to\s*voicemail|mailbox\s*full|answering\s*machine)\b/i.test(
+    /\b(left\s*(a\s*)?voicemail|left\s*(a\s*)?vm|voicemail|voice\s*mail|left\s*(a\s*)?message|vm\s*left|sent\s*to\s*voicemail|mailbox\s*full|answering\s*machine|automated\s*(message|greeting)|recorded\s*greeting|vm\s*dropped|audio\s*mail)\b/i.test(
       t
     )
   ) {
     return "CALL_COMPLETED";
   }
+
+  // 5. No Answer / Rang Out / Busy Signal
   if (
-    /\b(no\s*answer|didn't\s*answer|did\s*not\s*answer|rang\s*out|no\s*pick\s*up|didn't\s*pick\s*up|did\s*not\s*pick\s*up|busy\s*signal|line\s*busy|unanswered|no\s*response)\b/i.test(
+    /\b(no\s*answer|didn't\s*answer|did\s*not\s*answer|rang\s*out|no\s*pick\s*up|didn't\s*pick\s*up|did\s*not\s*pick\s*up|not\s*picking|busy\s*signal|line\s*busy|busy\s*tone|unanswered|no\s*response|call\s*(dropped|disconnect)|cut\s*the\s*call)\b/i.test(
       t
     ) ||
     t === "na" ||
@@ -255,15 +264,19 @@ export function inferOutcomeFromText(text: string | null | undefined): CallOutco
   ) {
     return "NO_ANSWER";
   }
+
+  // 6. Gatekeeper / Receptionist Blocked
   if (
-    /\b(gatekeeper|receptionist|front\s*desk|secretary|assistant|office\s*manager\s*blocked|wouldn't\s*transfer|refused\s*transfer|in\s*a\s*meeting|not\s*available|busy\s*right\s*now|out\s*of\s*office|took\s*a\s*message|send\s*an?\s*email)\b/i.test(
+    /\b(gatekeeper|receptionist|front\s*desk|secretary|assistant|office\s*manager|wouldn't\s*transfer|refused\s*(to\s*)?(transfer|put\s*through)|not\s*putting\s*through|in\s*a\s*meeting|not\s*available|busy\s*right\s*now|out\s*of\s*office|took\s*a\s*message|send\s*email\s*to\s*(info|office)|boss\s*(is\s*)?busy|owner\s*(is\s*)?(unavailable|not\s*in|away|out)|manager\s*not\s*in)\b/i.test(
       t
     )
   ) {
     return "GATEKEEPER_BLOCKED";
   }
+
+  // 7. Spoke / Connected / Conversation
   if (
-    /\b(connected|spoke\s*(with|to)?|talked\s*(with|to)?|answered|picked\s*up|owner\s*said|decision\s*maker|interested|call\s*back|callback|follow\s*up|send\s*info|confirmed|qualified)\b/i.test(
+    /\b(connected|spoke\s*(with|to)?|talked\s*(with|to)?|answered|picked\s*up|owner\s*(said|answered)|decision\s*maker\s*(answered|spoke)|discussed|interested|call\s*back|callback|follow\s*up|send\s*(info|details|proposal|pricing)|confirmed|qualified|pitch\s*delivered)\b/i.test(
       t
     )
   ) {
@@ -325,16 +338,27 @@ export function parseCallLog(notes: string | null | undefined): ParsedCallLogEnt
     if (line.startsWith("[")) {
       const m = line.match(CALL_LOG_LINE);
       if (m) {
+        const labelOutcome = outcomeKeyFromLabel(m[3]) || inferOutcomeFromText(m[3]);
+        const noteText = (m[4] || "").trim();
+        const textOutcome = inferOutcomeFromText(noteText);
+        // If the caller typed a specific note text with clear intent (like meeting booked, not interested, gatekeeper, voicemail, wrong number),
+        // prioritize the note text over a generic label to ensure 100% honest sales funnel telemetry!
         const outcome =
-          outcomeKeyFromLabel(m[3]) ||
-          inferOutcomeFromText(m[3]) ||
-          inferOutcomeFromText(m[4]);
+          textOutcome &&
+          (textOutcome === "MEETING_BOOKED" ||
+            textOutcome === "NOT_INTERESTED" ||
+            textOutcome === "WRONG_NUMBER" ||
+            textOutcome === "GATEKEEPER_BLOCKED" ||
+            textOutcome === "CALL_COMPLETED")
+            ? textOutcome
+            : labelOutcome || textOutcome;
+
         if (outcome) {
           out.push({
             timestampRaw: (m[1] || "").trim(),
             author: (m[2] || "").trim(),
             outcome,
-            text: (m[4] || "").trim(),
+            text: noteText,
           });
           continue;
         }

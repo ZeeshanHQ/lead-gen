@@ -937,6 +937,7 @@ export function CallerClient({
     assignedMemberId: l.assignedMemberId,
     assignedMemberName: l.assignedMemberName,
     marketName: l.marketName,
+    marketId: l.marketId,
   }));
 
   
@@ -1181,8 +1182,8 @@ export function CallerClient({
         </div>
       )}
 
-      {/* Owner Team Callers Overview & Lead Assignment Command Bar */}
-      {canManageSettings && teamCallers.length > 0 ? (
+      {/* Owner Team Callers Overview & Lead Assignment Command Bar (Cards View) */}
+      {viewMode === "CARDS" && canManageSettings && teamCallers.length > 0 ? (
         <div className="rounded-xl border border-zinc-800/80 bg-[#121215] p-4 space-y-3.5">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-zinc-800/80 pb-3">
             <div className="flex items-center gap-2">
@@ -1343,7 +1344,7 @@ export function CallerClient({
             })}
           </div>
         </div>
-      ) : activeMember?.role === "CALLER" ? (
+      ) : viewMode === "CARDS" && activeMember?.role === "CALLER" ? (
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/15 p-4 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
@@ -1403,6 +1404,7 @@ export function CallerClient({
       {viewMode === "SHEET" ? (
         <CrmLeadSheet
           initialLeads={crmLeadsFromQueue}
+          marketId={marketId}
           nicheName={nicheName}
           nicheCategory={nicheCategory}
           customColumns={customColumns}

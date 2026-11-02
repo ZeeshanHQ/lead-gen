@@ -108,10 +108,12 @@ export interface CrmLeadItem {
   assignedMemberId?: string | null;
   assignedMemberName?: string | null;
   marketName?: string | null;
+  marketId?: string | null;
 }
 
 interface CrmLeadSheetProps {
   initialLeads: CrmLeadItem[];
+  marketId?: string;
   nicheName?: string;
   nicheCategory?: string;
   customColumns?: CustomCrmColumn[];
@@ -324,6 +326,7 @@ const InlineCellTextarea = React.memo(function InlineCellTextarea({
 
 export function CrmLeadSheet({
   initialLeads,
+  marketId,
   nicheName,
   nicheCategory,
   customColumns = [],
@@ -1319,7 +1322,38 @@ export function CrmLeadSheet({
                 <span className="text-orange-300 font-medium">{callerStats.teamTotals.gatekeeper} GK</span>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {callerFilter !== "ALL" && callerFilter !== "UNASSIGNED" && (() => {
+                const target = teamCallers.find((c) => c.id === callerFilter);
+                const assignedCount = leads.filter((l) => l.assignedMemberId === callerFilter && l.status !== "REJECTED").length;
+                if (!target || assignedCount === 0) return null;
+                return (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!confirm(`Unassign all ${assignedCount} leads from ${target.name} and return to Unassigned Pool?`)) return;
+                      setLeads((prev) =>
+                        prev.map((l) =>
+                          l.assignedMemberId === callerFilter
+                            ? { ...l, assignedMemberId: null, assignedMemberName: null }
+                            : l
+                        )
+                      );
+                      setSyncFeedback(`Unassigned all leads from ${target.name}.`);
+                      setTimeout(() => setSyncFeedback(null), 3000);
+                      const { unassignCallerLeadsAction } = await import("@/app/caller/actions");
+                      await unassignCallerLeadsAction({
+                        marketId: leads[0]?.marketId || "",
+                        memberId: callerFilter,
+                      });
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-semibold px-2.5 py-1 text-xs transition"
+                    title={`Unassign all ${assignedCount} leads from ${target.name}`}
+                  >
+                    <span>Unassign All ({assignedCount}) Leads</span>
+                  </button>
+                );
+              })()}
               <button
                 type="button"
                 onClick={() => setIsPermissionsModalOpen(true)}
@@ -1435,12 +1469,12 @@ export function CrmLeadSheet({
       )}
 
       {/* Filter and Search Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 bg-[#09090b]/60 p-3 text-xs">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-zinc-800/80 bg-[#09090b]/60 p-2.5 sm:p-3 text-xs">
+        <div className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1 sm:pb-0 sm:flex-wrap no-scrollbar">
           <button
             type="button"
             onClick={() => setStatusFilterAndPersist("ALL")}
-            className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+            className={`shrink-0 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
               statusFilter === "ALL"
                 ? "border-white bg-white text-black"
                 : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-600"
@@ -1459,7 +1493,7 @@ export function CrmLeadSheet({
                 type="button"
                 onClick={() => setStatusFilterAndPersist(chip.filter)}
                 title={`${def.meaning} ${def.whenToUse}`}
-                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+                className={`shrink-0 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
                   active
                     ? `${def.selected} text-white`
                     : count === 0
@@ -1474,13 +1508,13 @@ export function CrmLeadSheet({
             );
           })}
 
-          <span className="mx-1 hidden h-5 w-px bg-zinc-800 sm:block" />
+          <span className="mx-1 hidden h-5 w-px bg-zinc-800 sm:block shrink-0" />
 
           <button
             type="button"
             onClick={() => setStatusFilterAndPersist("FOLLOW_UP")}
             title="Leads with a scheduled follow-up date"
-            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+            className={`shrink-0 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
               statusFilter === "FOLLOW_UP"
                 ? "border-indigo-300 bg-indigo-500/20 text-white ring-1 ring-indigo-300/60"
                 : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-600"
@@ -1494,7 +1528,7 @@ export function CrmLeadSheet({
             type="button"
             onClick={() => setStatusFilterAndPersist("OVERDUE")}
             title="Follow-up date has passed. Call these first."
-            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+            className={`shrink-0 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
               statusFilter === "OVERDUE"
                 ? "border-rose-300 bg-rose-500/25 text-white ring-1 ring-rose-300/60"
                 : overdueCount > 0
@@ -1508,13 +1542,13 @@ export function CrmLeadSheet({
           </button>
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto mt-1 sm:mt-0">
           <div className="flex items-center gap-1.5 text-zinc-400">
             <ArrowUpDown className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
             <select
               value={sortBy}
               onChange={(e) => setSortByAndPersist(e.target.value as any)}
-              className="rounded-lg border border-zinc-800 bg-[#09090b] px-2.5 py-1.5 text-xs text-zinc-200 focus:border-zinc-600 focus:outline-none cursor-pointer"
+              className="w-full sm:w-auto rounded-lg border border-zinc-800 bg-[#09090b] px-2.5 py-1.5 text-xs text-zinc-200 focus:border-zinc-600 focus:outline-none cursor-pointer"
               title="Sort lead sequence"
             >
               <option value="RECENTLY_CONTACTED">Sort: Recently Contacted / Dialed First</option>
@@ -1539,8 +1573,8 @@ export function CrmLeadSheet({
       </div>
 
       {/* Date Batch Filter Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/60 bg-[#0c0c0f] px-3 py-2 text-xs">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/60 bg-[#0c0c0f] px-2.5 sm:px-3 py-2 text-xs">
+        <div className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1 sm:pb-0 sm:flex-wrap no-scrollbar">
           <span className="text-[11px] font-semibold text-zinc-400 mr-1 flex items-center gap-1">
             <Clock className="w-3 h-3 text-zinc-500" />
             <span>Intake Day:</span>
@@ -1632,7 +1666,7 @@ export function CrmLeadSheet({
           )}
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto touch-pan-x">
           <table className="w-full text-left text-xs text-zinc-300 divide-y divide-zinc-800/70">
             <thead className="bg-[#09090b] text-[11px] font-medium text-zinc-400">
               <tr>

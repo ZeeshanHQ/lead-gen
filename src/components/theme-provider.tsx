@@ -22,16 +22,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("astraventa_theme") as Theme | null;
-      if (saved === "light" || saved === "dark") {
-        setThemeState(saved);
-        document.documentElement.setAttribute("data-theme", saved);
-      } else {
-        document.documentElement.setAttribute("data-theme", "dark");
-      }
+      localStorage.setItem("astraventa_theme", "dark");
+      document.documentElement.setAttribute("data-theme", "dark");
     } catch {
       document.documentElement.setAttribute("data-theme", "dark");
     }
+    setThemeState("dark");
     setMounted(true);
   }, []);
 
