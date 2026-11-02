@@ -41,7 +41,10 @@ export async function inviteTeamMemberAction(input: InviteMemberInput) {
     let emailSent = false;
     let emailError: string | null = null;
     try {
-      const emailResult = await sendTeamInviteEmailAction({ memberId: member.id });
+      const emailResult = await sendTeamInviteEmailAction({
+        memberId: member.id,
+        origin: input.origin,
+      });
       emailSent = Boolean(emailResult.directSent);
       if (!emailResult.ok) emailError = emailResult.error || null;
     } catch (e: any) {

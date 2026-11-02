@@ -971,7 +971,7 @@ export function CallerClient({
   }, [filteredQueue]);
 
   const teamCallers = React.useMemo(
-    () => allMembers.filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER"),
+    () => allMembers.filter((m) => m.status !== "SUSPENDED" && m.role !== "VIEWER"),
     [allMembers]
   );
 
@@ -1950,10 +1950,11 @@ export function CallerClient({
                                 >
                                   <option value="">Unassigned</option>
                                   {allMembers
-                                    .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+                                    .filter((m) => m.status !== "SUSPENDED" && m.role !== "VIEWER")
                                     .map((m) => (
                                       <option key={m.id} value={m.id}>
                                         {m.name} ({ROLE_PRESETS[m.role]?.shortLabel || m.role})
+                                        {m.status === "INVITED" ? " (Invited)" : ""}
                                       </option>
                                     ))}
                                 </select>
@@ -2654,10 +2655,11 @@ export function CallerClient({
                     >
                       <option value="">Unassigned</option>
                       {allMembers
-                        .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+                        .filter((m) => m.status !== "SUSPENDED" && m.role !== "VIEWER")
                         .map((m) => (
                           <option key={m.id} value={m.id}>
                             {m.name} ({ROLE_PRESETS[m.role]?.shortLabel || m.role})
+                            {m.status === "INVITED" ? " (Invited)" : ""}
                           </option>
                         ))}
                     </select>

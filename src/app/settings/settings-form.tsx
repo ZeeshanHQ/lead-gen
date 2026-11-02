@@ -219,6 +219,9 @@ export function SettingsForm({
       return;
     }
 
+    const origin =
+      typeof window !== "undefined" ? window.location.origin : "https://leads.astraventa.com";
+
     startTransition(async () => {
       const res = await inviteTeamMemberAction({
         name: inviteName,
@@ -229,6 +232,7 @@ export function SettingsForm({
         allowedNicheIds: inviteNicheIds,
         permissions: invitePerms,
         activateImmediately: inviteAutoActive,
+        origin,
       });
 
       if (!res.ok || !res.member) {
@@ -236,8 +240,6 @@ export function SettingsForm({
         return;
       }
 
-      const origin =
-        typeof window !== "undefined" ? window.location.origin : "https://leads.astraventa.com";
       const inviteUrl = `${origin}/invite/${res.member.inviteToken || res.member.id}`;
       setCreatedInviteLink({
         memberId: res.member.id,
@@ -302,14 +304,18 @@ export function SettingsForm({
 
   function handleCopyInviteLink(member: TeamMember) {
     startTransition(async () => {
-      const res = await regenerateInviteTokenAction(member.id);
-      if (!res.ok || !res.inviteToken) {
-        showToast(res.error || "Could not generate link");
-        return;
-      }
       const origin =
         typeof window !== "undefined" ? window.location.origin : "https://leads.astraventa.com";
-      const url = `${origin}/invite/${res.inviteToken}`;
+      let tokenToUse = member.inviteToken;
+      if (!tokenToUse) {
+        const res = await regenerateInviteTokenAction(member.id);
+        if (!res.ok || !res.inviteToken) {
+          showToast(res.error || "Could not generate link");
+          return;
+        }
+        tokenToUse = res.inviteToken;
+      }
+      const url = `${origin}/invite/${tokenToUse}`;
       if (typeof navigator !== "undefined" && navigator.clipboard) {
         await navigator.clipboard.writeText(url);
       }

@@ -56,7 +56,7 @@ export default async function AnalyticsPage() {
   }
 
   const teamCallers = isOwnerOrManager
-    ? allMembers.filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+    ? allMembers.filter((m) => m.status !== "SUSPENDED" && m.role !== "VIEWER")
     : [activeMember];
 
   const myLeadIdSet = new Set(leadsToUse.map((l) => l.id));

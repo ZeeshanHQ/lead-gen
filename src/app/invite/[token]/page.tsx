@@ -62,6 +62,9 @@ export default async function InviteTokenPage({
     (p) => member.permissions[p.key]
   );
 
+  const { hasCredential } = await import("@/server/auth");
+  const isAlreadyActive = member.status === "ACTIVE" || (await hasCredential(db, member.id));
+
   return (
     <InviteAcceptClient
       token={token}
@@ -70,6 +73,7 @@ export default async function InviteTokenPage({
       roleLabel={roleMeta.label}
       assignedNiches={assignedNiches}
       enabledPermissions={enabledPerms.map((p) => p.label)}
+      isAlreadyActive={isAlreadyActive}
     />
   );
 }

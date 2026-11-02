@@ -74,12 +74,19 @@ async function getMemberCookieId(): Promise<string | undefined> {
 }
 
 export async function listTeamMembers(db: Db): Promise<TeamMember[]> {
-  const raw = await readSettingRaw<TeamMember[]>(db, "team_members_registry", []);
+  const [raw, credsRow] = await Promise.all([
+    readSettingRaw<TeamMember[]>(db, "team_members_registry", []),
+    db.select().from(systemSettings).where(eq(systemSettings.key, "auth_credentials")).limit(1),
+  ]);
+  const activeCreds = (credsRow[0]?.value as Record<string, unknown>) || {};
+
   if (!Array.isArray(raw) || raw.length === 0) {
     await writeSettingRaw(db, "team_members_registry", DEFAULT_TEAM_MEMBERS);
     return DEFAULT_TEAM_MEMBERS;
   }
-  return raw.map((m, idx) => {
+
+  let needsSync = false;
+  const mapped = raw.map((m, idx) => {
     const isPrimaryOwner = m.id === "member_owner" || m.role === "OWNER" || idx === 0;
     const roleDefaults = getPermissionsForRole(isPrimaryOwner ? "OWNER" : m.role);
     const mergedPermissions: TeamPermissions = isPrimaryOwner
@@ -92,10 +99,24 @@ export async function listTeamMembers(db: Db): Promise<TeamMember[]> {
               ? Boolean(m.permissions.salesAnalytics)
               : m.role !== "VIEWER",
         };
+
+    const hasPassword = Boolean(activeCreds[m.id]);
+    let resolvedStatus: MemberStatus = isPrimaryOwner ? "ACTIVE" : m.status;
+    let resolvedInviteToken = m.inviteToken;
+
+    // Self-healing: If an invited member has registered their password in auth_credentials,
+    // their invitation is accepted and their account is ACTIVE.
+    if (!isPrimaryOwner && hasPassword && m.status === "INVITED") {
+      resolvedStatus = "ACTIVE";
+      resolvedInviteToken = undefined;
+      needsSync = true;
+    }
+
     return {
       ...m,
       role: isPrimaryOwner ? "OWNER" : m.role,
-      status: isPrimaryOwner ? "ACTIVE" : m.status,
+      status: resolvedStatus,
+      inviteToken: resolvedInviteToken,
       nicheScope: isPrimaryOwner ? "ALL" : m.nicheScope,
       permissions: mergedPermissions,
       title:
@@ -112,19 +133,34 @@ export async function listTeamMembers(db: Db): Promise<TeamMember[]> {
           : m.avatarColor,
     };
   });
+
+  if (needsSync) {
+    // Cleanly persist the self-healed state so future reads and background jobs stay in sync
+    writeSettingRaw(
+      db,
+      "team_members_registry",
+      mapped.map((m) => {
+        const item: any = { ...m };
+        if (!item.inviteToken) delete item.inviteToken;
+        return item;
+      })
+    ).catch(() => {});
+  }
+
+  return mapped;
 }
 
 export async function touchMemberActivity(db: Db, memberId: string): Promise<void> {
   if (!memberId || memberId === "guest") return;
-  const allMembers = await listTeamMembers(db);
-  const target = allMembers.find((m) => m.id === memberId);
+  const raw = await readSettingRaw<TeamMember[]>(db, "team_members_registry", []);
+  const target = raw.find((m) => m.id === memberId);
   if (!target || target.status === "SUSPENDED") return;
 
   const lastMs = target.lastActiveAt ? new Date(target.lastActiveAt).getTime() : 0;
   // Throttle updates: write at most once per 60 seconds
   if (Date.now() - lastMs < 60 * 1000) return;
 
-  const nextList = allMembers.map((m) =>
+  const nextList = raw.map((m) =>
     m.id === memberId ? { ...m, lastActiveAt: new Date().toISOString() } : m
   );
   await writeSettingRaw(db, "team_members_registry", nextList);
@@ -169,6 +205,7 @@ export interface InviteMemberInput {
   allowedNicheIds?: string[];
   permissions?: Partial<TeamPermissions>;
   activateImmediately?: boolean;
+  origin?: string;
 }
 
 export async function inviteTeamMember(
@@ -422,16 +459,30 @@ export async function getMemberByInviteToken(
   token: string
 ): Promise<TeamMember | null> {
   if (!token || !token.trim()) return null;
+  const clean = decodeURIComponent(token).trim();
   const allMembers = await listTeamMembers(db);
-  return allMembers.find((m) => m.inviteToken === token.trim()) ?? null;
+  return (
+    allMembers.find(
+      (m) =>
+        m.inviteToken === clean ||
+        m.id === clean ||
+        m.email.toLowerCase() === clean.toLowerCase()
+    ) ?? null
+  );
 }
 
 export async function acceptTeamInvite(
   db: Db,
   token: string
 ): Promise<TeamMember> {
+  const clean = decodeURIComponent(token).trim();
   const allMembers = await listTeamMembers(db);
-  const target = allMembers.find((m) => m.inviteToken === token.trim());
+  const target = allMembers.find(
+    (m) =>
+      m.inviteToken === clean ||
+      m.id === clean ||
+      m.email.toLowerCase() === clean.toLowerCase()
+  );
   if (!target) {
     throw new Error("This invitation link is invalid or has expired.");
   }
@@ -442,10 +493,18 @@ export async function acceptTeamInvite(
   const updatedMember: TeamMember = {
     ...target,
     status: "ACTIVE",
+    inviteToken: undefined,
     lastActiveAt: new Date().toISOString(),
   };
 
-  const nextList = allMembers.map((m) => (m.id === target.id ? updatedMember : m));
+  const nextList = allMembers.map((m) => {
+    if (m.id === target.id) {
+      const item: any = { ...updatedMember };
+      delete item.inviteToken;
+      return item;
+    }
+    return m;
+  });
   await writeSettingRaw(db, "team_members_registry", nextList);
   await writeSettingRaw(db, "active_member_id", updatedMember.id);
   await writeSettingRaw(db, "actor_name", `${updatedMember.name} (${updatedMember.role})`);
@@ -511,7 +570,15 @@ export async function activateMember(db: Db, memberId: string): Promise<TeamMemb
   const target = all.find((m) => m.id === memberId);
   if (!target) throw new Error("Team member not found.");
   const updated: TeamMember = { ...target, status: "ACTIVE", inviteToken: undefined, lastActiveAt: new Date().toISOString() };
-  await writeSettingRaw(db, "team_members_registry", all.map((m) => (m.id === memberId ? updated : m)));
+  const nextList = all.map((m) => {
+    if (m.id === memberId) {
+      const item: any = { ...updated };
+      delete item.inviteToken;
+      return item;
+    }
+    return m;
+  });
+  await writeSettingRaw(db, "team_members_registry", nextList);
   return updated;
 }
 

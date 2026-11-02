@@ -221,11 +221,11 @@ export async function autoDistributeLeadsAction(input: { marketId: string }) {
     const { listTeamMembers } = await import("@/server/repo/team");
     const { autoDistributeLeads } = await import("@/server/repo/caller");
     const allMembers = await listTeamMembers(db);
-    const callerOnly = allMembers.filter((m) => m.status === "ACTIVE" && m.role === "CALLER");
+    const callerOnly = allMembers.filter((m) => m.status !== "SUSPENDED" && m.role === "CALLER");
     const targetPool =
       callerOnly.length > 0
         ? callerOnly
-        : allMembers.filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER");
+        : allMembers.filter((m) => m.status !== "SUSPENDED" && m.role !== "VIEWER");
     const activeMembers = targetPool.map((m) => ({ id: m.id, name: m.name }));
 
     if (activeMembers.length === 0) {

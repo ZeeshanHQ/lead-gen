@@ -52,7 +52,7 @@ export default async function OverviewPage() {
 
   const marketNameById = new Map(allMarkets.map((m) => [m.id, m.name]));
   const activeCallers = allMembers.filter(
-    (m) => m.role !== "OWNER" && m.status === "ACTIVE"
+    (m) => m.role !== "OWNER" && m.status !== "SUSPENDED"
   );
 
   // For Owner / Manager:

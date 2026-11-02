@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { acceptInviteWithPasswordAction } from "./actions";
 import { getDefaultRouteForMember, type TeamMember } from "@/server/domain/team";
-import { CheckCircle2, UserCheck, Layers, ArrowRight, ShieldCheck, Lock } from "lucide-react";
+import { CheckCircle2, UserCheck, Layers, ArrowRight, ShieldCheck, Lock, LogIn } from "lucide-react";
 
 interface InviteAcceptClientProps {
   token: string;
@@ -13,6 +14,7 @@ interface InviteAcceptClientProps {
   roleLabel: string;
   assignedNiches: string[];
   enabledPermissions: string[];
+  isAlreadyActive?: boolean;
 }
 
 export function InviteAcceptClient({
@@ -22,6 +24,7 @@ export function InviteAcceptClient({
   roleLabel,
   assignedNiches,
   enabledPermissions,
+  isAlreadyActive = false,
 }: InviteAcceptClientProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -30,6 +33,10 @@ export function InviteAcceptClient({
 
   const handleAccept = () => {
     setError(null);
+    if (password.length < 8) {
+      setError("Please enter a password with at least 8 characters.");
+      return;
+    }
     startTransition(async () => {
       const res = await acceptInviteWithPasswordAction(token, password);
       if (!res.ok) {
@@ -71,96 +78,129 @@ export function InviteAcceptClient({
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300">
             <span
               className={`w-1.5 h-1.5 rounded-full ${
-                member.status === "ACTIVE" ? "bg-emerald-400" : "bg-amber-400"
+                isAlreadyActive || member.status === "ACTIVE" ? "bg-emerald-400" : "bg-amber-400"
               }`}
             />
-            {member.status === "ACTIVE" ? "Active" : "Ready to Activate"}
+            {isAlreadyActive || member.status === "ACTIVE" ? "Active" : "Ready to Activate"}
           </span>
         </div>
 
-        {/* Assigned Niches */}
-        <div className="space-y-2">
-          <div className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-zinc-400" />
-            <span>Assigned Vertical Access ({member.nicheScope === "ALL" ? "All Niches" : assignedNiches.length})</span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {assignedNiches.length > 0 ? (
-              assignedNiches.map((niche) => (
-                <span
-                  key={niche}
-                  className="px-2.5 py-1 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-zinc-300 font-medium"
-                >
-                  {niche}
-                </span>
-              ))
-            ) : (
-              <span className="text-xs text-zinc-500">Full workspace access</span>
-            )}
-          </div>
-        </div>
-
-        {/* Permissions */}
-        <div className="space-y-2">
-          <div className="text-xs font-medium text-zinc-300">
-            Included Capabilities
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {enabledPermissions.map((label) => (
-              <div
-                key={label}
-                className="px-3 py-2 rounded-xl bg-[#09090b] border border-zinc-800/80 flex items-center gap-2 text-xs text-zinc-300"
+        {/* If Already Active, Show Direct Launch / Sign In Options */}
+        {isAlreadyActive ? (
+          <div className="p-5 rounded-xl bg-emerald-950/20 border border-emerald-800/40 text-center space-y-4">
+            <div className="w-10 h-10 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-white">Account Already Activated</h2>
+              <p className="text-xs text-zinc-400">
+                You have already accepted your invitation and your account is active on <strong>{workspaceName}</strong>.
+              </p>
+            </div>
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
+              <Link
+                href={getDefaultRouteForMember(member)}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-xl bg-white hover:bg-zinc-200 text-black font-bold text-xs transition"
               >
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>{label}</span>
+                <span>Launch CRM Dashboard</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+              <Link
+                href="/login"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#09090b] hover:bg-zinc-900 border border-zinc-800 text-zinc-300 text-xs font-medium transition"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Sign In Page</span>
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Assigned Niches */}
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-zinc-400" />
+                <span>Assigned Vertical Access ({member.nicheScope === "ALL" ? "All Niches" : assignedNiches.length})</span>
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="flex flex-wrap gap-1.5">
+                {assignedNiches.length > 0 ? (
+                  assignedNiches.map((niche) => (
+                    <span
+                      key={niche}
+                      className="px-2.5 py-1 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-zinc-300 font-medium"
+                    >
+                      {niche}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-xs text-zinc-500">Full workspace access</span>
+                )}
+              </div>
+            </div>
 
-        {error && (
-          <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-900/60 text-xs text-rose-200">
-            {error}
-          </div>
+            {/* Permissions */}
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-zinc-300">
+                Included Capabilities
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {enabledPermissions.map((label) => (
+                  <div
+                    key={label}
+                    className="px-3 py-2 rounded-xl bg-[#09090b] border border-zinc-800/80 flex items-center gap-2 text-xs text-zinc-300"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {error && (
+              <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-900/60 text-xs text-rose-200">
+                {error}
+              </div>
+            )}
+
+            {/* Password Setup */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-300 flex items-center justify-between">
+                <span>Create Account Password</span>
+                <span className="text-zinc-500 text-[11px]">8+ characters</span>
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-zinc-500 absolute left-3.5 top-3" />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="new-password"
+                  placeholder="••••••••"
+                  className="w-full rounded-xl border border-zinc-800 bg-[#09090b] pl-10 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-600 focus:border-zinc-500 focus:outline-none transition"
+                />
+              </div>
+              <p className="text-[11px] text-zinc-500">
+                Sign in with <strong className="text-zinc-400">{member.email}</strong> and this password.
+              </p>
+            </div>
+
+            {/* Action Button */}
+            <div className="pt-3 border-t border-zinc-800/80 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={handleAccept}
+                disabled={isPending}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-white hover:bg-zinc-200 disabled:opacity-50 text-black font-bold text-xs transition shadow-sm cursor-pointer"
+              >
+                <UserCheck className="w-4 h-4" />
+                <span>
+                  {isPending ? "Activating Account..." : "Accept & Launch CRM"}
+                </span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </>
         )}
-
-        {/* Password Setup */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-zinc-300 flex items-center justify-between">
-            <span>Create Account Password</span>
-            <span className="text-zinc-500 text-[11px]">8+ characters</span>
-          </label>
-          <div className="relative">
-            <Lock className="w-4 h-4 text-zinc-500 absolute left-3.5 top-3" />
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-              placeholder="••••••••"
-              className="w-full rounded-xl border border-zinc-800 bg-[#09090b] pl-10 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-600 focus:border-zinc-500 focus:outline-none transition"
-            />
-          </div>
-          <p className="text-[11px] text-zinc-500">
-            Sign in with <strong className="text-zinc-400">{member.email}</strong> and this password.
-          </p>
-        </div>
-
-        {/* Action Button */}
-        <div className="pt-3 border-t border-zinc-800/80 flex items-center justify-end">
-          <button
-            type="button"
-            onClick={handleAccept}
-            disabled={isPending || password.length < 8}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-white hover:bg-zinc-200 disabled:opacity-50 text-black font-bold text-xs transition shadow-sm"
-          >
-            <UserCheck className="w-4 h-4" />
-            <span>
-              {isPending ? "Activating Account..." : "Accept & Launch CRM"}
-            </span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
       </div>
     </div>
   );
