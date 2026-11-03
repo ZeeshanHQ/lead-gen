@@ -330,11 +330,18 @@ export function CallerFocusCockpit({
   // Space: Copy clean raw phone number (no brackets, no hyphens)
   // 1–7: Select outcome button
   // Enter: Confirm selected outcome and advance to next lead
+  // / or f: Open Callbacks & Search drawer
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (!activeLead) return;
+
+      if (e.key === "/" || e.key === "f") {
+        e.preventDefault();
+        setActiveDrawer("LOOKUP");
+        return;
+      }
 
       if (e.code === "Space") {
         if (cleanDialPhone) {
@@ -571,7 +578,8 @@ export function CallerFocusCockpit({
             onClick={() =>
               setActiveDrawer(activeDrawer === "LOOKUP" ? "NONE" : "LOOKUP")
             }
-            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
+            title="Search any lead or view scheduled callbacks (Press / to search)"
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
               activeDrawer === "LOOKUP"
                 ? "border-amber-400 bg-amber-500/20 text-amber-200"
                 : mandatoryDueCount > 0
@@ -580,12 +588,15 @@ export function CallerFocusCockpit({
             }`}
           >
             <Search className="w-3 h-3 text-amber-400" />
-            <span>Callbacks</span>
+            <span>Callbacks &amp; Search</span>
             {Math.max(dynamicFollowUpsCount, telemetry.followUpsScheduled) > 0 && (
               <span className="rounded-full bg-amber-500/30 border border-amber-400/40 px-1.5 text-[9px] font-bold text-amber-200">
                 {Math.max(dynamicFollowUpsCount, telemetry.followUpsScheduled)}
               </span>
             )}
+            <kbd className="hidden sm:inline-block rounded bg-white/10 border border-white/15 px-1 text-[9px] font-mono text-zinc-400">
+              /
+            </kbd>
           </button>
 
           <button
@@ -646,6 +657,7 @@ export function CallerFocusCockpit({
                 <Search className="w-3 h-3 text-zinc-500 absolute left-2.5 top-2" />
                 <input
                   type="text"
+                  autoFocus
                   value={lookupQuery}
                   onChange={(e) => setLookupQuery(e.target.value)}
                   placeholder="Find company, owner, phone..."
