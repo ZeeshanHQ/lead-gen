@@ -151,3 +151,87 @@ export function parseLatestCallerNote(notes: string | null | undefined): ParsedC
     cleanText: logLine || "",
   };
 }
+
+/**
+ * Exhaustive Lead Matcher for CRM search.
+ * Searches across:
+ * - Company Name & Website / Domain
+ * - Decision Maker / Best Contact Name, Title, Email, and Phone
+ * - Raw and Formatted Phone Numbers (matches exact digits or partial numbers >= 3 digits)
+ * - City, State, and Full Street Address
+ * - Call Notes, Logs, and Follow-up History
+ * - Assigned Team Member Name (e.g. Hamda, AV, Haider)
+ * - Tech Stack / Facts (e.g. AppFolio, Buildium, Yardi, etc.)
+ * - Call Status / Stage
+ * - Multi-token / space-separated search phrases (e.g. "MasterKey Cary" or "Hamda Spoke")
+ */
+export function matchLeadSearchQuery(lead: any, rawQuery: string): boolean {
+  if (!lead) return false;
+  const query = (rawQuery || "").trim().toLowerCase();
+  if (!query) return true;
+
+  // Extract digits for dedicated phone search
+  const queryDigits = query.replace(/\D/g, "");
+
+  // Collect phone representations from all potential phone fields
+  const leadPhones: string[] = [
+    lead.phone,
+    lead.phoneDisplay,
+    lead.bestContact?.phone,
+  ].filter(Boolean);
+
+  const leadDigits: string[] = leadPhones.map((p) => p.replace(/\D/g, ""));
+
+  // If query is an obvious phone search (at least 3 digits), check phone digits directly
+  if (queryDigits.length >= 3) {
+    if (leadDigits.some((d) => d.includes(queryDigits))) {
+      return true;
+    }
+  }
+
+  // Extract facts / metadata keys and values
+  let factsText = "";
+  if (lead.facts && typeof lead.facts === "object") {
+    factsText = Object.entries(lead.facts)
+      .map(([k, v]) => `${k} ${v}`)
+      .join(" ");
+  }
+
+  // Build aggregate corpus for text search
+  const corpus = [
+    lead.name,
+    lead.website,
+    lead.city,
+    lead.state,
+    lead.address,
+    lead.bestContact?.name,
+    lead.bestContact?.title,
+    lead.bestContact?.email,
+    lead.bestContact?.linkedinUrl,
+    lead.email,
+    lead.notes,
+    lead.assignedMemberName,
+    lead.status,
+    lead.replacement,
+    lead.software,
+    lead.financing,
+    factsText,
+    ...leadPhones,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  // Split query into tokens (e.g. "MasterKey Cary" -> ["masterkey", "cary"])
+  const tokens = query.split(/\s+/).filter(Boolean);
+
+  // Every token must match somewhere in the lead's aggregate profile
+  return tokens.every((token) => {
+    if (corpus.includes(token)) return true;
+    const tokenClean = token.replace(/\D/g, "");
+    if (tokenClean.length >= 3 && leadDigits.some((d) => d.includes(tokenClean))) {
+      return true;
+    }
+    return false;
+  });
+}

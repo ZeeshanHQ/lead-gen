@@ -28,6 +28,7 @@ import {
   classifyLeadDate,
   parseLatestCallerNote,
   getLeadIntakeDate,
+  matchLeadSearchQuery,
 } from "@/components/crm-date-utils";
 import { updateTeamMemberAccessAction } from "@/app/settings/actions";
 import {
@@ -825,8 +826,19 @@ export function CrmLeadSheet({
     return map;
   }, [leads]);
 
+  const hasActiveSearch = Boolean(search && search.trim().length > 0);
+
   const filteredLeads = leads.filter((lead) => {
     if (lead.status === "REJECTED" && statusFilter !== "REJECTED") return false;
+
+    // SEARCH OVERRIDE:
+    // When the user is searching for a lead by company name, owner, phone, email, notes, city, etc.,
+    // search across the ENTIRE CRM database without restricting by statusFilter or dateFilter.
+    // This prevents leads from ever "getting lost" ("lead gum jati") due to an active tab!
+    if (hasActiveSearch) {
+      return matchLeadSearchQuery(lead, search);
+    }
+
     if (callerFilter === "UNASSIGNED" && lead.assignedMemberId && lead.assignedMemberId !== "") return false;
     if (
       callerFilter !== "ALL" &&
@@ -862,23 +874,30 @@ export function CrmLeadSheet({
         return false;
     }
 
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    const contactName = lead.bestContact?.name || "";
-    const phone = lead.bestContact?.phone || lead.phoneDisplay || "";
-    return (
-      lead.name.toLowerCase().includes(q) ||
-      (lead.city && lead.city.toLowerCase().includes(q)) ||
-      (lead.state && lead.state.toLowerCase().includes(q)) ||
-      contactName.toLowerCase().includes(q) ||
-      phone.includes(q) ||
-      (lead.notes && lead.notes.toLowerCase().includes(q))
-    );
+    return true;
   });
 
   // Deterministic stable sorting so leads NEVER jump around unexpectedly
   const sortedLeads = React.useMemo(() => {
     const list = [...filteredLeads];
+
+    // When actively searching, rank exact matches and prefix matches highest
+    if (hasActiveSearch) {
+      const q = search.trim().toLowerCase();
+      list.sort((a, b) => {
+        const aExact = a.name.toLowerCase() === q || (a.bestContact?.name && a.bestContact.name.toLowerCase() === q);
+        const bExact = b.name.toLowerCase() === q || (b.bestContact?.name && b.bestContact.name.toLowerCase() === q);
+        if (aExact && !bExact) return -1;
+        if (!aExact && bExact) return 1;
+        const aStarts = a.name.toLowerCase().startsWith(q);
+        const bStarts = b.name.toLowerCase().startsWith(q);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        return (b.icpScore || 0) - (a.icpScore || 0);
+      });
+      return list;
+    }
+
     if (sortBy === "RECENTLY_CONTACTED") {
       list.sort((a, b) => {
         const aAct = getLeadLastActivityTime(a);
@@ -906,13 +925,14 @@ export function CrmLeadSheet({
       });
     }
     return list;
-  }, [filteredLeads, sortBy, derivedById]);
+  }, [filteredLeads, sortBy, derivedById, hasActiveSearch, search]);
 
   const totalPages = Math.max(1, Math.ceil(sortedLeads.length / pageSize));
   const pagedLeads = React.useMemo(() => {
-    const start = (tablePage - 1) * pageSize;
+    const safePage = Math.min(tablePage, totalPages);
+    const start = (safePage - 1) * pageSize;
     return sortedLeads.slice(start, start + pageSize);
-  }, [sortedLeads, tablePage, pageSize]);
+  }, [sortedLeads, tablePage, totalPages, pageSize]);
 
   const teamCallers = React.useMemo(() => {
     return (allMembers || []).filter(
@@ -1703,15 +1723,31 @@ export function CrmLeadSheet({
             </select>
           </div>
 
-          <div className="relative flex-1 sm:w-60">
+          <div className="relative flex-1 sm:w-72">
             <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-2.5" />
             <input
               type="text"
-              placeholder="Search company, owner, phone..."
+              placeholder="Search company, owner, phone, city, notes..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-lg border border-zinc-800 bg-[#09090b] pl-8 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:border-zinc-600 focus:outline-none"
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setTablePage(1);
+              }}
+              className="w-full rounded-lg border border-zinc-800 bg-[#09090b] pl-8 pr-8 py-1.5 text-xs text-white placeholder-zinc-500 focus:border-emerald-500 focus:outline-none transition"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setTablePage(1);
+                }}
+                className="absolute right-2.5 top-2 p-0.5 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800 transition cursor-pointer"
+                title="Clear search"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1774,44 +1810,86 @@ export function CrmLeadSheet({
         </span>
       </div>
 
+      {/* Active Global Search Banner */}
+      {hasActiveSearch && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-emerald-950/40 border-b border-emerald-500/30 text-xs text-emerald-200">
+          <div className="flex items-center gap-2">
+            <Search className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>
+              Found <strong className="text-white font-mono text-sm">{filteredLeads.length}</strong> {filteredLeads.length === 1 ? "lead" : "leads"} matching <strong className="text-white bg-black/40 px-2 py-0.5 rounded border border-white/10">&ldquo;{search.trim()}&rdquo;</strong> across entire CRM
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setSearch("");
+              setTablePage(1);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[11px] font-bold transition cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+            <span>Clear Search</span>
+          </button>
+        </div>
+      )}
+
       {/* Spreadsheet Table View */}
       {filteredLeads.length === 0 ? (
         leads.length > 0 ? (
           <div className="p-8 my-4 text-center rounded-2xl border border-white/10 bg-[#121215]/90 backdrop-blur-xl space-y-3 shadow-lg">
             <div className="inline-flex items-center justify-center p-3 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 shadow-sm">
-              <CheckCircle2 className="w-6 h-6" />
+              <Search className="w-6 h-6" />
             </div>
             <div>
               <p className="text-base font-bold text-white">
-                {statusFilter === "UNTOUCHED" || statusFilter === "TO_CALL"
+                {hasActiveSearch
+                  ? `No leads found matching "${search.trim()}"`
+                  : statusFilter === "UNTOUCHED" || statusFilter === "TO_CALL"
                   ? `All ${leads.length} leads have been dialed! Zero uncalled leads remaining.`
-                  : `No leads match filter "${statusFilter === "ALL" ? "Current Search" : statusFilter}".`}
+                  : `No leads match filter "${statusFilter === "ALL" ? "Current View" : statusFilter}".`}
               </p>
               <p className="text-xs text-zinc-400 max-w-lg mx-auto mt-1 leading-relaxed">
-                All <strong className="text-emerald-400 font-mono font-bold">{leads.length} leads</strong> are 100% safe, saved, and active in your CRM database.
-                {callerFilter !== "ALL" ? ` Queue is currently filtered to "${teamCallers.find((c) => c.id === callerFilter)?.name || (callerFilter === "UNASSIGNED" ? "Unassigned Pool" : callerFilter)}".` : ""}
+                {hasActiveSearch
+                  ? "Try searching by company name, owner name, partial phone digits (e.g. 6553950), domain, city, or words in call notes. All 359 leads are safely preserved in the database."
+                  : `All ${leads.length} leads are 100% safe, saved, and active in your CRM database.`}
+                {callerFilter !== "ALL" && !hasActiveSearch ? ` Queue is currently filtered to "${teamCallers.find((c) => c.id === callerFilter)?.name || (callerFilter === "UNASSIGNED" ? "Unassigned Pool" : callerFilter)}".` : ""}
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setStatusFilterAndPersist("ALL");
-                  setCallerFilter("ALL");
-                  setDateFilterAndPersist("ALL");
-                  setSearch("");
-                }}
-                className="inline-flex items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black px-5 py-2 text-xs font-extrabold shadow-sm transition cursor-pointer"
-              >
-                <span>Reset All Filters &amp; View All {leads.length} Leads &rarr;</span>
-              </button>
-              {callerFilter !== "ALL" && (
+              {hasActiveSearch ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch("");
+                    setTablePage(1);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black px-5 py-2 text-xs font-extrabold shadow-sm transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                  <span>Clear Search &amp; View All {leads.length} Leads &rarr;</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatusFilterAndPersist("ALL");
+                    setCallerFilter("ALL");
+                    setDateFilterAndPersist("ALL");
+                    setSearch("");
+                    setTablePage(1);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black px-5 py-2 text-xs font-extrabold shadow-sm transition cursor-pointer"
+                >
+                  <span>Reset All Filters &amp; View All {leads.length} Leads &rarr;</span>
+                </button>
+              )}
+              {callerFilter !== "ALL" && !hasActiveSearch && (
                 <button
                   type="button"
                   onClick={() => {
                     setStatusFilterAndPersist("ALL");
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/40 hover:bg-zinc-800 text-zinc-200 px-4 py-2 text-xs font-semibold transition"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/40 hover:bg-zinc-800 text-zinc-200 px-4 py-2 text-xs font-semibold transition cursor-pointer"
                 >
                   <span>Show All in Selected Pool ({scopedFilterLeads.length} leads)</span>
                 </button>

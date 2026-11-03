@@ -22,6 +22,7 @@ import {
   buildPresetFollowUpIso,
   formatFollowUpLabel,
 } from "@/components/crm-lead-sheet";
+import { matchLeadSearchQuery } from "@/components/crm-date-utils";
 import { CallStatusBadge } from "@/components/call-status-ui";
 import { US_TZ_GROUPS, wallClock } from "@/server/domain/call-time";
 import {
@@ -375,27 +376,37 @@ export function CallerFocusCockpit({
 
   // Lookup drawer filtered leads
   const lookupLeads = useMemo(() => {
-    const q = lookupQuery.trim().toLowerCase();
+    const q = lookupQuery.trim();
+    const isSearching = q.length > 0;
     return leads
       .filter((l) => {
         if (l.status === "REJECTED") return false;
-        if (lookupTab === "FOLLOW_UPS") {
-          const fu = l.nextFollowUp || extractFollowUp(l.notes);
-          if (!fu) return false;
-        } else if (lookupTab === "MEETINGS") {
-          if (l.status !== "MEETING_BOOKED" && deriveCallStatus(l).key !== "MEETING_BOOKED")
-            return false;
+        // When searching, bypass sub-tabs so caller can find ANY lead in their pool immediately!
+        if (!isSearching) {
+          if (lookupTab === "FOLLOW_UPS") {
+            const fu = l.nextFollowUp || extractFollowUp(l.notes);
+            if (!fu) return false;
+          } else if (lookupTab === "MEETINGS") {
+            if (l.status !== "MEETING_BOOKED" && deriveCallStatus(l).key !== "MEETING_BOOKED")
+              return false;
+          }
         }
-        if (!q) return true;
-        return (
-          l.name.toLowerCase().includes(q) ||
-          (l.bestContact.name && l.bestContact.name.toLowerCase().includes(q)) ||
-          (l.phone && l.phone.includes(q)) ||
-          (l.bestContact.phone && l.bestContact.phone.includes(q)) ||
-          (l.city && l.city.toLowerCase().includes(q))
-        );
+        if (!isSearching) return true;
+        return matchLeadSearchQuery(l, q);
       })
       .sort((a, b) => {
+        if (isSearching) {
+          const lq = q.toLowerCase();
+          const aExact = a.name.toLowerCase() === lq || (a.bestContact?.name && a.bestContact.name.toLowerCase() === lq);
+          const bExact = b.name.toLowerCase() === lq || (b.bestContact?.name && b.bestContact.name.toLowerCase() === lq);
+          if (aExact && !bExact) return -1;
+          if (!aExact && bExact) return 1;
+          const aStarts = a.name.toLowerCase().startsWith(lq);
+          const bStarts = b.name.toLowerCase().startsWith(lq);
+          if (aStarts && !bStarts) return -1;
+          if (!aStarts && bStarts) return 1;
+          return (b.icpScore || 0) - (a.icpScore || 0);
+        }
         if (lookupTab === "FOLLOW_UPS") {
           const fuA = a.nextFollowUp || extractFollowUp(a.notes) || "";
           const fuB = b.nextFollowUp || extractFollowUp(b.notes) || "";
@@ -631,15 +642,25 @@ export function CallerFocusCockpit({
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="relative w-44">
-                <Search className="w-3 h-3 text-zinc-500 absolute left-2 top-2" />
+              <div className="relative w-48 sm:w-56">
+                <Search className="w-3 h-3 text-zinc-500 absolute left-2.5 top-2" />
                 <input
                   type="text"
                   value={lookupQuery}
                   onChange={(e) => setLookupQuery(e.target.value)}
-                  placeholder="Find company..."
-                  className="w-full rounded-full border border-white/10 bg-black/50 pl-7 pr-2 py-1 text-[11px] text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  placeholder="Find company, owner, phone..."
+                  className="w-full rounded-full border border-white/10 bg-black/50 pl-7 pr-7 py-1 text-[11px] text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400 transition"
                 />
+                {lookupQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setLookupQuery("")}
+                    className="absolute right-2 top-1.5 p-0.5 rounded-full text-zinc-400 hover:text-white transition cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
               </div>
               <button
                 type="button"
@@ -652,8 +673,15 @@ export function CallerFocusCockpit({
           </div>
 
           {lookupLeads.length === 0 ? (
-            <div className="py-4 text-center text-xs text-zinc-500">
-              No matching leads found.
+            <div className="py-4 text-center text-xs text-zinc-400 space-y-1">
+              <p className="font-semibold text-zinc-300">
+                {lookupQuery ? `No matching leads found for "${lookupQuery}"` : "No matching leads found."}
+              </p>
+              {lookupQuery && (
+                <p className="text-[10px] text-zinc-500">
+                  Try searching by owner name, clean phone digits, domain, or notes.
+                </p>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
