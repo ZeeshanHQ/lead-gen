@@ -90,7 +90,7 @@ export default async function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('astraventa_theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t);}else{document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})()`,
+            __html: `(function(){try{var t=localStorage.getItem('astraventa_theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t);}else{document.documentElement.setAttribute('data-theme','dark');}var z=localStorage.getItem('astraventa_zoom');if(z){document.documentElement.style.zoom=z;}else{document.documentElement.style.zoom='0.8';}}catch(e){}})()`,
           }}
         />
       </head>
