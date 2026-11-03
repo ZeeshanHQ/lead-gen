@@ -378,21 +378,9 @@ export function rankLeadsForFocusStream<
       continue;
     }
 
-    // If a lead has a future follow-up > 45 mins away, hold it back until its scheduled time
-    // UNLESS all untouched leads are exhausted (gives it a low score at the back of the deck)
+    // If a lead has a future follow-up > 45 mins away, hold it back for its scheduled time!
+    // It remains safely preserved and accessible in the Callbacks drawer, but does not clutter the active to-call stream.
     if (hasValidFollowUp && followUpMs > nowMs + 45 * 60_000) {
-      ranked.push({
-        lead,
-        priorityScore: 100 + icp - Math.min(90, Math.round((followUpMs - nowMs) / 3600_000)),
-        tier: "STANDARD_QUEUE",
-        reasonBadge: "📅 Scheduled for Later",
-        isMandatoryFollowUpLock: false,
-        overdueMinutes: 0,
-        followUpIso: followUpRaw,
-        derivedStatus: derived.key,
-        attempts: derived.attempts,
-        localTime,
-      });
       continue;
     }
 

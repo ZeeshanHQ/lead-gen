@@ -454,9 +454,10 @@ export function CallerFocusCockpit({
     `${activeLead.name} ${activeLead.address || ""} ${activeLead.city || ""} ${activeLead.state || ""}`
   )}`;
 
-  const totalDeckCount = leads.length;
+  // Total actionable leads waiting to be called in this active stream
+  const totalToCall = rankedStream.length;
   const completedInSession = sessionCompletedIds.size;
-  const currentLeadPosition = Math.min(completedInSession + 1, totalDeckCount);
+  const currentLeadPosition = Math.min(completedInSession + 1, Math.max(1, totalToCall));
 
   return (
     <div className="space-y-2">
@@ -469,7 +470,7 @@ export function CallerFocusCockpit({
           <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-950/30 px-3 py-1 text-xs font-bold text-emerald-300 shadow-sm">
             <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
             <span>
-              Lead {pinnedLeadId ? "(Callback)" : `${currentLeadPosition} of ${totalDeckCount}`}
+              Lead {pinnedLeadId ? "(Callback)" : `${currentLeadPosition} of ${totalToCall}`}
             </span>
           </div>
 
@@ -813,7 +814,7 @@ export function CallerFocusCockpit({
                 </button>
               )}
               <span className="text-[10px] font-mono text-zinc-400 px-1">
-                Lead #{pinnedLeadId ? "Callback" : `${currentLeadPosition} of ${totalDeckCount}`}
+                Lead #{pinnedLeadId ? "Callback" : `${currentLeadPosition} of ${totalToCall}`}
               </span>
             </div>
           </div>
