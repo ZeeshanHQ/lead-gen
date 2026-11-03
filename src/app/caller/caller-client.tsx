@@ -1165,153 +1165,178 @@ export function CallerClient({
   const unassignedCount = fullQueueTelemetry.unassignedCount;
 
   return (
-    <div className={viewMode === "FOCUS" ? "space-y-2.5" : "space-y-5"}>
+    <div className={viewMode === "FOCUS" ? "space-y-2" : "space-y-5"}>
       {/* Top Header */}
-      <div className={`rounded-xl border border-zinc-800/80 bg-[#121215] flex flex-wrap items-center justify-between gap-3 ${viewMode === "FOCUS" ? "px-3.5 py-2" : "p-5"}`}>
-        <div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-[#09090b] px-2.5 py-0.5 text-[11px] text-zinc-200 font-medium">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              {nicheName}
-            </span>
-            <span className="inline-flex items-center rounded-md border border-zinc-800 bg-[#09090b] px-2 py-0.5 text-[11px] font-semibold text-emerald-400">
-              {totalCount} Leads
-            </span>
+      {viewMode === "FOCUS" ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+          {/* iOS Bubble Group: Niche + Live Total Counter */}
+          <div className="flex items-center gap-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#121215]/90 px-3 py-1 shadow-sm">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+              <span className="text-xs font-semibold text-zinc-200">{nicheName}</span>
+              <span className="text-zinc-600">|</span>
+              <span className="text-xs font-mono font-bold text-emerald-400">{totalCount} Leads</span>
+            </div>
           </div>
-          <h1 className={`font-bold text-white tracking-tight ${viewMode === "FOCUS" ? "text-base mt-1" : "text-xl mt-1.5"}`}>
-            Leads CRM &amp; Calling Pipeline
-          </h1>
-          {viewMode !== "FOCUS" && (
-            <p className="text-xs text-zinc-400 mt-0.5">
-            Click any stage, qualification field, follow-up button, or edit icon to update records in real time.
-            </p>
-          )}
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* View Mode Toggle (3 Modes: Focus Cockpit ⚡, Cards, Table) */}
-          <div className="flex items-center p-0.5 rounded-lg bg-[#09090b] border border-zinc-800 text-xs font-medium">
+          {/* View Mode Switcher Pills */}
+          <div className="inline-flex items-center p-0.5 rounded-full bg-[#121215] border border-white/10 text-xs shadow-sm">
             <button
               type="button"
               onClick={() => setViewModeAndPersist("FOCUS")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition ${
-                viewMode === "FOCUS"
-                  ? "bg-emerald-500 text-black font-bold shadow-sm"
-                  : "text-emerald-400 hover:text-emerald-300"
-              }`}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500 text-black font-extrabold shadow-sm transition"
               title="Focus Cockpit: 1 Lead at a Time distraction-free stream"
             >
-              <Zap className="w-3.5 h-3.5" />
-              <span>Focus Cockpit ⚡</span>
+              <Zap className="w-3 h-3 fill-black" />
+              <span>Focus ⚡</span>
             </button>
             <button
               type="button"
               onClick={() => setViewModeAndPersist("CARDS")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition ${
-                viewMode === "CARDS"
-                  ? "bg-zinc-800 text-white font-semibold"
-                  : "text-zinc-400 hover:text-white"
-              }`}
+              className="flex items-center gap-1 px-3 py-1 rounded-full text-zinc-400 hover:text-white transition"
             >
-              <PhoneCall className="w-3.5 h-3.5" />
+              <PhoneCall className="w-3 h-3" />
               <span>Cards</span>
             </button>
             <button
               type="button"
               onClick={() => setViewModeAndPersist("SHEET")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition ${
-                viewMode === "SHEET"
-                  ? "bg-zinc-800 text-white font-semibold"
-                  : "text-zinc-400 hover:text-white"
-              }`}
+              className="flex items-center gap-1 px-3 py-1 rounded-full text-zinc-400 hover:text-white transition"
             >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <FileSpreadsheet className="w-3 h-3" />
               <span>Table</span>
             </button>
           </div>
-
-          {isOwner && viewMode !== "FOCUS" && marketId && (
-            <button
-              type="button"
-              onClick={() => setIsAddingColumn(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 px-3 py-2 text-xs font-semibold transition shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Column</span>
-            </button>
-          )}
-
-          {isOwner && viewMode !== "FOCUS" && marketId && (
-            <button
-              type="button"
-              onClick={() => setIsAddingLead(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-white px-3 py-2 text-xs font-semibold transition shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Add Lead</span>
-            </button>
-          )}
-
-          {canImport && viewMode !== "FOCUS" && (
-            <button
-              type="button"
-              onClick={() => setImportModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 hover:text-white px-3 py-2 text-xs font-semibold transition shadow-sm"
-            >
-              <Upload className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Import Sheet</span>
-            </button>
-          )}
-
-          {canManageSettings && viewMode !== "FOCUS" && unassignedCount > 0 && (
-            <button
-              type="button"
-              onClick={handleAutoDistribute}
-              disabled={distributePending}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black px-3.5 py-2 text-xs font-bold transition disabled:opacity-50 shadow-sm"
-              title={`Distribute ${unassignedCount} unassigned leads evenly among active callers`}
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>
-                {distributePending
-                  ? "Distributing..."
-                  : `Auto-Assign (${unassignedCount})`}
-              </span>
-            </button>
-          )}
-
-          {canDiscover && viewMode !== "FOCUS" && (
-            <Link
-              href="/discover"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-white hover:bg-zinc-200 text-black px-3.5 py-2 text-xs font-bold transition shadow-sm"
-            >
-              <Search className="w-3.5 h-3.5" />
-              <span>Find Leads</span>
-            </Link>
-          )}
-
-          {canExport && viewMode !== "FOCUS" && (
-            <a
-              href="/api/export/csv"
-              download
-              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800 hover:text-white"
-            >
-              <Download className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Export CSV</span>
-            </a>
-          )}
-
-          {canEditRules && marketId && viewMode !== "FOCUS" && (
-            <ActiveQualityGateCard
-              marketId={marketId}
-              marketName={nicheName}
-              initialRuleConfig={initialRuleConfig}
-              canEditRules={canEditRules}
-              compactTriggerOnly={true}
-            />
-          )}
         </div>
-      </div>
+      ) : (
+        <div className="rounded-xl border border-zinc-800/80 bg-[#121215] p-5 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-[#09090b] px-2.5 py-0.5 text-[11px] text-zinc-200 font-medium">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                {nicheName}
+              </span>
+              <span className="inline-flex items-center rounded-md border border-zinc-800 bg-[#09090b] px-2 py-0.5 text-[11px] font-semibold text-emerald-400">
+                {totalCount} Leads
+              </span>
+            </div>
+            <h1 className="mt-1.5 text-xl font-bold text-white tracking-tight">
+              Leads CRM &amp; Calling Pipeline
+            </h1>
+            <p className="text-xs text-zinc-400 mt-0.5">
+              Click any stage, qualification field, follow-up button, or edit icon to update records in real time.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center p-0.5 rounded-lg bg-[#09090b] border border-zinc-800 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setViewModeAndPersist("FOCUS")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-emerald-400 hover:text-emerald-300 transition"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>Focus Cockpit ⚡</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewModeAndPersist("CARDS")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-zinc-800 text-white font-semibold transition"
+              >
+                <PhoneCall className="w-3.5 h-3.5" />
+                <span>Cards</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewModeAndPersist("SHEET")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-zinc-400 hover:text-white transition"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Table</span>
+              </button>
+            </div>
+
+            {isOwner && marketId && (
+              <button
+                type="button"
+                onClick={() => setIsAddingColumn(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 px-3 py-2 text-xs font-semibold transition shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Column</span>
+              </button>
+            )}
+
+            {isOwner && marketId && (
+              <button
+                type="button"
+                onClick={() => setIsAddingLead(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-white px-3 py-2 text-xs font-semibold transition shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Add Lead</span>
+              </button>
+            )}
+
+            {canImport && (
+              <button
+                type="button"
+                onClick={() => setImportModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 hover:text-white px-3 py-2 text-xs font-semibold transition shadow-sm"
+              >
+                <Upload className="w-3.5 h-3.5 text-zinc-400" />
+                <span>Import Sheet</span>
+              </button>
+            )}
+
+            {canManageSettings && unassignedCount > 0 && (
+              <button
+                type="button"
+                onClick={handleAutoDistribute}
+                disabled={distributePending}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black px-3.5 py-2 text-xs font-bold transition disabled:opacity-50 shadow-sm"
+                title="Distribute leads evenly among active callers"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>
+                  {distributePending ? "Distributing..." : "Auto-Assign"}
+                </span>
+              </button>
+            )}
+
+            {canDiscover && (
+              <Link
+                href="/discover"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-white hover:bg-zinc-200 text-black px-3.5 py-2 text-xs font-bold transition shadow-sm"
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>Find Leads</span>
+              </Link>
+            )}
+
+            {canExport && (
+              <a
+                href="/api/export/csv"
+                download
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800 hover:text-white"
+              >
+                <Download className="w-3.5 h-3.5 text-zinc-400" />
+                <span>Export CSV</span>
+              </a>
+            )}
+
+            {canEditRules && marketId && (
+              <ActiveQualityGateCard
+                marketId={marketId}
+                marketName={nicheName}
+                initialRuleConfig={initialRuleConfig}
+                canEditRules={canEditRules}
+                compactTriggerOnly={true}
+              />
+            )}
+          </div>
+        </div>
+      )}
 
       {/* CRM Toast */}
       {crmToast && (

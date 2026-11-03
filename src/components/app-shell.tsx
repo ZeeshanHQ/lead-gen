@@ -528,12 +528,12 @@ function AppShellInner({
       <aside
         className={cn(
           "fixed inset-y-0 left-0 z-50 flex flex-col bg-[#0c0c0e] border-r border-[#1f1f23] backdrop-blur-xl transition-all duration-200 ease-in-out lg:static",
-          collapsed ? "w-20" : "w-64 xl:w-68",
+          collapsed ? "w-16" : "w-52",
           mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
         {/* Brand Header */}
-        <div className="flex h-16 shrink-0 items-center justify-between border-b border-[#1f1f23] px-4">
+        <div className="flex h-12 shrink-0 items-center justify-between border-b border-[#1f1f23] px-3">
           <Link
             href={fallbackRoute}
             onClick={() => setOptimisticPath(fallbackRoute)}
@@ -794,7 +794,7 @@ function AppShellInner({
       {/* ============================================================ */}
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         {/* Top Header Bar */}
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#1f1f23] bg-[#09090b]/90 px-4 sm:px-6 backdrop-blur-xl z-30">
+        <header className="flex h-12 shrink-0 items-center justify-between border-b border-[#1f1f23] bg-[#09090b]/90 px-3 sm:px-4 backdrop-blur-xl z-30">
           <div className="flex items-center gap-3.5 min-w-0">
             <button
               type="button"
@@ -804,13 +804,15 @@ function AppShellInner({
               <Menu className="h-5 w-5" />
             </button>
 
-            <div>
-              <div className="flex items-center gap-2 text-[11px] text-zinc-400">
-                <span className="text-zinc-300 font-medium truncate">{currentNicheName}</span>
-              </div>
-              <h1 className="text-sm sm:text-base font-bold text-white tracking-tight truncate">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#121215]/80 backdrop-blur-md px-3 py-1 shadow-sm">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+              <span className="text-xs font-semibold text-white truncate max-w-[130px] sm:max-w-[200px]">
+                {currentNicheName}
+              </span>
+              <span className="text-zinc-600">/</span>
+              <span className="text-xs font-bold text-zinc-300 tracking-tight">
                 {getPageTitle()}
-              </h1>
+              </span>
             </div>
           </div>
 
@@ -825,7 +827,7 @@ function AppShellInner({
                     setSidebarNicheOpen(false);
                     setMemberDropdownOpen(false);
                   }}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#141418] hover:bg-[#1a1a20] border border-zinc-800 text-xs text-zinc-300 hover:text-white transition shadow-sm"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#141418] hover:bg-[#1a1a20] border border-white/10 text-xs text-zinc-300 hover:text-white transition shadow-sm"
                   title="Active niche"
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
@@ -882,10 +884,10 @@ function AppShellInner({
                     setHeaderNicheOpen(false);
                     setSidebarNicheOpen(false);
                   }}
-                  className="flex items-center gap-2 rounded-full pl-1 pr-2.5 py-1 bg-[#141418] hover:bg-[#1a1a20] border border-zinc-800 text-xs transition shadow-sm"
+                  className="inline-flex items-center gap-1.5 rounded-full p-0.5 pr-2.5 bg-[#141418] hover:bg-[#1a1a20] border border-white/10 text-xs transition shadow-sm"
                   title="Account profile"
                 >
-                  <div className="w-6 h-6 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-[11px] font-bold text-white shrink-0">
+                  <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 text-black font-extrabold flex items-center justify-center text-[10px] shadow-sm shrink-0">
                     {liveMember.name?.charAt(0).toUpperCase() || "U"}
                   </div>
                   <span className="font-semibold text-white max-w-[110px] truncate hidden sm:inline">
@@ -940,7 +942,7 @@ function AppShellInner({
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 transition-all bg-[#09090b]">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-3 transition-all bg-[#09090b]">
           <div className="w-full max-w-[1700px] mx-auto space-y-5">
             {!isAllowedOnCurrentPath && liveMember ? (
               <div className="mx-auto max-w-md rounded-xl border border-zinc-800 bg-[#121215] p-8 text-center space-y-4 mt-10">

@@ -218,9 +218,9 @@ describe("getQuickNoteChipsForOutcome", () => {
     expect(chipsNoAns).toContain("Rang 5x, no pickup");
 
     const chipsGatekeeper = getQuickNoteChipsForOutcome("GATEKEEPER_BLOCKED");
-    expect(chipsGatekeeper).toContain("Owner in the field — call back afternoon");
+    expect(chipsGatekeeper).toContain("Owner in the field, call back afternoon");
 
     const chipsConnected = getQuickNoteChipsForOutcome("CONNECTED");
-    expect(chipsConnected).toContain("Spoke with owner — interested, call back tomorrow");
+    expect(chipsConnected).toContain("Spoke with owner, interested, call back tomorrow");
   });
 });

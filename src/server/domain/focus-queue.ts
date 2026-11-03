@@ -487,13 +487,13 @@ export function buildFlashBattlecard(input: {
   const facts = input.facts || {};
 
   // 1. Pain Trigger Bullet
-  let painTrigger = `Inbound inquiries & after-hours calls in ${location} wait hours for follow-up.`;
+  let painTrigger = `Inbound inquiries and after-hours calls in ${location} wait hours for follow-up.`;
   if (facts["google_ads"] === "YES" && facts["zillow_advertiser"] === "YES") {
-    painTrigger = "🔥 Spending heavily on Google Ads + Zillow Premier — losing unreturned after-hours leads.";
+    painTrigger = "🔥 Active Google Ads and Zillow spend: uncalled after-hours inquiries leak high-value deals.";
   } else if (facts["google_ads"] === "YES" || facts["bleeding_ads"] === "YES") {
-    painTrigger = "🔥 Active paid ad traffic detected — slow speed-to-lead leaks high-ticket conversions.";
+    painTrigger = "🔥 Active paid ad traffic detected: slow speed to lead costs high-ticket appointments.";
   } else if (input.financing === "YES" || input.replacement === "YES") {
-    painTrigger = "High-ticket replacement & financing offers active — open estimates need instant 24/7 follow-up.";
+    painTrigger = "High-ticket replacement and financing active: open bids require instant 24/7 follow-up.";
   }
 
   // 2. Scale & Tech Bullet
@@ -518,7 +518,7 @@ export function buildFlashBattlecard(input: {
   // 3. Gatekeeper Strategy Bullet
   const gatekeeperTip = firstName
     ? `Say casually: "Hey, is ${firstName} around? It's regarding the ${input.companyName} client intake setup."`
-    : `Ask casually: "Hey, who handles new client intake & operations over there—is the owner in?"`;
+    : `Ask casually: "Hey, who handles new client intake over there? Is the owner in?"`;
 
   return {
     painTrigger,
@@ -527,14 +527,14 @@ export function buildFlashBattlecard(input: {
     scripts: {
       OPENING: input.openingScript,
       GATEKEEPER: firstName
-        ? `"Hey there—is ${firstName} available for 30 seconds? Tell them it's ${
+        ? `"Hey there, is ${firstName} available for 30 seconds? Tell them it is ${
             input.nicheName ? "regarding their after-hours inquiry pipeline" : "a quick operations question"
           } for ${input.companyName}."`
-        : `"Hey there—who's the best person to speak with regarding ${input.companyName}'s inbound client scheduling? Are they in right now?"`,
-      OBJ_BUSY: `"Totally get it, ${dmDisplay}—I caught you mid-day. Give me 20 seconds: we install a 24/7 AI intake engine that replies to missed calls & web leads in 10 seconds and books them onto your calendar. Worth a 10-minute look this Thursday, or is Friday better?"`,
-      OBJ_CURRENT_SYSTEM: `"That's actually why I called—our engine plugs right alongside your existing CRM/team specifically to catch the after-hours and weekend leads that slip through when staff are busy. If we could add 3–5 extra booked jobs a month without extra ad spend, would you be open to a 10-minute walkthrough?"`,
-      OBJ_SEND_EMAIL: `"Happy to shoot that over right now. Just so I don't send you generic fluff—are you guys currently more focused on catching missed after-hours phone calls, or following up on open estimates automatically?"`,
-      OBJ_PRICE: `"It's a fraction of a single closed job—and if it doesn't book qualified appointments onto your calendar in the first 30 days, you don't pay. Let's do a quick 10-minute screen share on Thursday so you can see it live on ${input.companyName}—morning or afternoon?"`,
+        : `"Hey there, who is the best person to speak with regarding ${input.companyName}'s client scheduling? Are they in right now?"`,
+      OBJ_BUSY: `"Totally get it, ${dmDisplay}, caught you right mid-day. Give me 15 seconds: we install a 24/7 AI intake engine that replies to missed calls and web leads in 10 seconds and books them on your calendar. Worth a 5-minute look this Thursday, or is Friday better?"`,
+      OBJ_CURRENT_SYSTEM: `"That is actually why I called. Our engine plugs right alongside your existing CRM to catch the after-hours and weekend leads that slip through. If we could add 3 to 5 extra booked jobs a month without extra ad spend, would you be open to a quick walkthrough?"`,
+      OBJ_SEND_EMAIL: `"Happy to shoot that over right now. Just so it is tailored: are you guys currently more focused on catching missed after-hours calls, or following up on open estimates automatically?"`,
+      OBJ_PRICE: `"It is a fraction of a single closed job, and if it does not book qualified appointments in the first 30 days, you do not pay. Let us do a quick screen share on Thursday so you can see it live: morning or afternoon?"`,
     },
   };
 }
@@ -547,7 +547,7 @@ export function getQuickNoteChipsForOutcome(outcome: CallOutcomeKey): string[] {
     case "NO_ANSWER":
       return [
         "Rang 5x, no pickup",
-        "Line busy — retry afternoon",
+        "Line busy, retry afternoon",
         "No voicemail setup",
         "Rang out on main line",
       ];
@@ -555,27 +555,27 @@ export function getQuickNoteChipsForOutcome(outcome: CallOutcomeKey): string[] {
       return [
         "Left 20s voicemail for owner",
         "Left VM with callback number",
-        "Automated greeting — left message",
+        "Automated greeting, left message",
       ];
     case "GATEKEEPER_BLOCKED":
       return [
-        "Owner in the field — call back afternoon",
+        "Owner in the field, call back afternoon",
         "Receptionist took message",
-        "Owner in a meeting — try tomorrow morning",
+        "Owner in a meeting, try tomorrow morning",
         "Front desk asked to email info@",
       ];
     case "CONNECTED":
       return [
-        "Spoke with owner — interested, call back tomorrow",
-        "Owner on job site — asked to call later today",
+        "Spoke with owner, interested, call back tomorrow",
+        "Owner on job site, asked to call later today",
         "Confirmed pain with missed after-hours calls",
-        "Reviewing with partner — follow up in 2 days",
+        "Reviewing with partner, follow up in 2 days",
       ];
     case "MEETING_BOOKED":
       return [
         "15-min Zoom Demo booked with Owner!",
         "Calendar invite sent & confirmed on call",
-        "High intent — wants 24/7 AI intake setup",
+        "High intent: wants 24/7 AI intake setup",
       ];
     case "NOT_INTERESTED":
       return [
