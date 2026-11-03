@@ -421,13 +421,8 @@ export function CallerClient({
   React.useEffect(() => {
     try {
       const savedView = localStorage.getItem("astraventa_caller_default_view");
-      if (activeMember?.role === "CALLER") {
-        setViewMode("FOCUS");
-      } else if (savedView === "SHEET") {
-        setViewMode("SHEET");
-      } else {
-        setViewMode("FOCUS");
-      }
+      // Always default to Calling Console on mount so users land straight in the dialing deck
+      setViewMode("FOCUS");
       const savedStatus = localStorage.getItem("astraventa_caller_status_filter");
       if (savedStatus && initialStatusFilter === "ALL") {
         if (savedStatus === "TO_CALL" || savedStatus === "UNTOUCHED") {

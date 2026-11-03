@@ -321,13 +321,15 @@ describe("live CRM inline notes, smart fields, and telemetry sync", () => {
       invitedAt: new Date().toISOString(),
     };
 
-    expect(callerMember.permissions.salesAnalytics).toBe(true);
-    expect(canViewSalesAnalytics(callerMember)).toBe(true);
+    // Callers default to zero-distraction Calling Console (salesAnalytics: false)
+    expect(callerMember.permissions.salesAnalytics).toBe(false);
+    expect(canViewSalesAnalytics(callerMember)).toBe(false);
 
-    const disabledCaller: TeamMember = {
+    // If manager explicitly grants salesAnalytics permission, caller can access it
+    const enabledCaller: TeamMember = {
       ...callerMember,
-      permissions: { ...callerMember.permissions, salesAnalytics: false },
+      permissions: { ...callerMember.permissions, salesAnalytics: true },
     };
-    expect(canViewSalesAnalytics(disabledCaller)).toBe(false);
+    expect(canViewSalesAnalytics(enabledCaller)).toBe(true);
   });
 });
