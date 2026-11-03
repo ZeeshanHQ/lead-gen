@@ -1165,9 +1165,9 @@ export function CallerClient({
   const unassignedCount = fullQueueTelemetry.unassignedCount;
 
   return (
-    <div className="space-y-5">
+    <div className={viewMode === "FOCUS" ? "space-y-2.5" : "space-y-5"}>
       {/* Top Header */}
-      <div className="rounded-xl border border-zinc-800/80 bg-[#121215] p-5 flex flex-wrap items-center justify-between gap-4">
+      <div className={`rounded-xl border border-zinc-800/80 bg-[#121215] flex flex-wrap items-center justify-between gap-3 ${viewMode === "FOCUS" ? "px-3.5 py-2" : "p-5"}`}>
         <div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
             <span className="inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-[#09090b] px-2.5 py-0.5 text-[11px] text-zinc-200 font-medium">
@@ -1178,12 +1178,14 @@ export function CallerClient({
               {totalCount} Leads
             </span>
           </div>
-          <h1 className="mt-1.5 text-xl font-bold text-white tracking-tight">
+          <h1 className={`font-bold text-white tracking-tight ${viewMode === "FOCUS" ? "text-base mt-1" : "text-xl mt-1.5"}`}>
             Leads CRM &amp; Calling Pipeline
           </h1>
-          <p className="text-xs text-zinc-400 mt-0.5">
+          {viewMode !== "FOCUS" && (
+            <p className="text-xs text-zinc-400 mt-0.5">
             Click any stage, qualification field, follow-up button, or edit icon to update records in real time.
-          </p>
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -1228,7 +1230,7 @@ export function CallerClient({
             </button>
           </div>
 
-          {canEditContacts && marketId && (
+          {isOwner && viewMode !== "FOCUS" && marketId && (
             <button
               type="button"
               onClick={() => setIsAddingColumn(true)}
@@ -1239,7 +1241,7 @@ export function CallerClient({
             </button>
           )}
 
-          {canEditContacts && marketId && (
+          {isOwner && viewMode !== "FOCUS" && marketId && (
             <button
               type="button"
               onClick={() => setIsAddingLead(true)}
@@ -1250,7 +1252,7 @@ export function CallerClient({
             </button>
           )}
 
-          {canImport && (
+          {canImport && viewMode !== "FOCUS" && (
             <button
               type="button"
               onClick={() => setImportModalOpen(true)}
@@ -1261,7 +1263,7 @@ export function CallerClient({
             </button>
           )}
 
-          {canManageSettings && unassignedCount > 0 && (
+          {canManageSettings && viewMode !== "FOCUS" && unassignedCount > 0 && (
             <button
               type="button"
               onClick={handleAutoDistribute}
@@ -1278,7 +1280,7 @@ export function CallerClient({
             </button>
           )}
 
-          {canDiscover && (
+          {canDiscover && viewMode !== "FOCUS" && (
             <Link
               href="/discover"
               className="inline-flex items-center gap-1.5 rounded-lg bg-white hover:bg-zinc-200 text-black px-3.5 py-2 text-xs font-bold transition shadow-sm"
@@ -1288,7 +1290,7 @@ export function CallerClient({
             </Link>
           )}
 
-          {canExport && (
+          {canExport && viewMode !== "FOCUS" && (
             <a
               href="/api/export/csv"
               download
@@ -1299,7 +1301,7 @@ export function CallerClient({
             </a>
           )}
 
-          {canEditRules && marketId && (
+          {canEditRules && marketId && viewMode !== "FOCUS" && (
             <ActiveQualityGateCard
               marketId={marketId}
               marketName={nicheName}
@@ -1550,6 +1552,7 @@ export function CallerClient({
       {viewMode === "FOCUS" ? (
         <CallerFocusCockpit
           leads={callerScopedQueue}
+          isOwner={isOwner}
           telemetry={scopedTelemetry}
           nicheName={nicheName}
           smartFields={smartFields}
