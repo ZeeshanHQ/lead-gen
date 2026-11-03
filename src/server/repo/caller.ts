@@ -24,15 +24,15 @@ import { computeAutoFollowUpCadence } from "../domain/focus-queue";
 
 export function extractLatestFollowUp(notes: string | null | undefined): string | null {
   if (!notes) return null;
-  const matches = [...notes.matchAll(/\[Next Follow-up Scheduled:\s*([^\]]+)\]/gi)];
+  const matches = [...notes.matchAll(/\[(?:Next )?Follow-?up Scheduled:\s*([^\]]+)\]/gi)];
   if (matches.length === 0) return null;
-  return matches[matches.length - 1]?.[1]?.trim() || null;
+  return matches[0]?.[1]?.trim() || null;
 }
 
 export function stripFollowUpTags(notes: string | null | undefined): string {
   if (!notes) return "";
   return notes
-    .replace(/\[Next Follow-up Scheduled:\s*[^\]]+\]\s*/gi, "")
+    .replace(/\[(?:Next )?Follow-?up Scheduled:\s*([^\]]+)\]\s*/gi, "")
     .trim();
 }
 

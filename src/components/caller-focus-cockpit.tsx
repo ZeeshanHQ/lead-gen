@@ -165,6 +165,7 @@ export function CallerFocusCockpit({
   const [cursorIndex, setCursorIndex] = useState<number>(0);
   const [pinnedLeadId, setPinnedLeadId] = useState<string | null>(null);
   const [sessionStreak, setSessionStreak] = useState<number>(0);
+  const [sessionCompletedIds, setSessionCompletedIds] = useState<Set<string>>(() => new Set());
 
   // Active Disposition State
   const [selectedOutcome, setSelectedOutcome] = useState<CallOutcomeKey | null>(null);
@@ -197,19 +198,25 @@ export function CallerFocusCockpit({
     [rankedStream]
   );
 
-  // Resolve current active item in stream
+  // Stream of uncontacted leads for this active calling session
+  const uncontactedStream = useMemo(
+    () => rankedStream.filter((r) => !sessionCompletedIds.has(r.lead.companyId)),
+    [rankedStream, sessionCompletedIds]
+  );
+
+  // Resolve current active item in stream (advances automatically to next uncontacted lead)
   const activeRankedItem = useMemo(() => {
-    if (rankedStream.length === 0) return null;
-    if (rankedStream[0]?.isMandatoryFollowUpLock && !pinnedLeadId) {
-      return rankedStream[0];
-    }
     if (pinnedLeadId) {
       const found = rankedStream.find((r) => r.lead.companyId === pinnedLeadId);
       if (found) return found;
     }
-    const safeIdx = Math.min(Math.max(0, cursorIndex), rankedStream.length - 1);
-    return rankedStream[safeIdx] || rankedStream[0]!;
-  }, [rankedStream, cursorIndex, pinnedLeadId]);
+    if (uncontactedStream.length === 0) return null;
+    if (uncontactedStream[0]?.isMandatoryFollowUpLock) {
+      return uncontactedStream[0];
+    }
+    const safeIdx = Math.min(Math.max(0, cursorIndex), uncontactedStream.length - 1);
+    return uncontactedStream[safeIdx] || uncontactedStream[0]!;
+  }, [rankedStream, uncontactedStream, cursorIndex, pinnedLeadId]);
 
   const activeLead = activeRankedItem?.lead ?? null;
   const activeLeadId = activeLead?.companyId ?? null;
@@ -242,6 +249,7 @@ export function CallerFocusCockpit({
   ) => {
     if (!activeLead) return;
 
+    const dialedId = activeLead.companyId;
     const finalNotes = (overrideNotes !== undefined ? overrideNotes : noteText).trim();
     const rawExplicitFollowUp =
       overrideFollowUp !== undefined ? overrideFollowUp : followUpDate.trim() || null;
@@ -256,6 +264,11 @@ export function CallerFocusCockpit({
     const finalFollowUp = autoCadence.nextFollowUpIso;
 
     setSessionStreak((s) => s + 1);
+    setSessionCompletedIds((prev) => {
+      const next = new Set(prev);
+      next.add(dialedId);
+      return next;
+    });
     setPinnedLeadId(null);
     setCursorIndex(0);
 
@@ -357,27 +370,59 @@ export function CallerFocusCockpit({
 
   // Empty State when all leads in stream are completed
   if (!activeLead || !activeRankedItem) {
+    const hasCompletedSome = sessionCompletedIds.size > 0;
     return (
-      <div className="rounded-2xl border border-white/10 bg-[#121215]/80 backdrop-blur-xl p-8 text-center space-y-3 shadow-xl">
-        <div className="w-10 h-10 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
-          <CheckCircle2 className="w-5 h-5" />
+      <div className="rounded-2xl border border-white/10 bg-[#121215]/85 backdrop-blur-xl p-8 text-center space-y-4 shadow-xl max-w-xl mx-auto my-6">
+        <div className="w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
+          <CheckCircle2 className="w-6 h-6" />
         </div>
-        <h2 className="text-base font-bold text-white">
-          Active Calling Stream is Clear!
-        </h2>
-        <p className="text-xs text-zinc-400 max-w-md mx-auto leading-relaxed">
-          All assigned leads in your stream have been called or scheduled.
-        </p>
-        {onSwitchToFullCrm && (
-          <button
-            type="button"
-            onClick={() => onSwitchToFullCrm("ALL")}
-            className="inline-flex items-center gap-1.5 rounded-full bg-white hover:bg-zinc-200 text-black font-extrabold px-4 py-2 text-xs transition shadow-sm"
-          >
-            <span>View Full Pipeline ({leads.length} Leads)</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
+        <div className="space-y-1">
+          <h2 className="text-lg font-extrabold text-white">
+            {hasCompletedSome ? "Calling Round Complete 🎉" : "Active Calling Stream is Clear!"}
+          </h2>
+          <p className="text-xs text-zinc-400 max-w-md mx-auto leading-relaxed">
+            {hasCompletedSome
+              ? `Great session! You have dialed all ${sessionCompletedIds.size} leads in your active assigned pool.`
+              : "All assigned leads in your stream have been called or scheduled."}
+          </p>
+        </div>
+
+        {hasCompletedSome && (
+          <div className="inline-flex items-center gap-2 rounded-full bg-black/50 border border-white/10 px-4 py-1.5 text-xs text-zinc-300">
+            <span>Session Dials: <strong className="text-emerald-400 font-mono">{sessionStreak}</strong></span>
+            <span>•</span>
+            <span>Answered: <strong className="text-sky-300 font-mono">{telemetry.answeredLeads}</strong></span>
+            <span>•</span>
+            <span>Meetings: <strong className="text-emerald-400 font-mono">{telemetry.meetingsBooked}</strong></span>
+          </div>
         )}
+
+        <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+          {hasCompletedSome && (
+            <button
+              type="button"
+              onClick={() => {
+                setSessionCompletedIds(new Set());
+                setCursorIndex(0);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold px-4 py-2 text-xs transition shadow-sm"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>Start Next Dialing Round</span>
+            </button>
+          )}
+
+          {onSwitchToFullCrm && (
+            <button
+              type="button"
+              onClick={() => onSwitchToFullCrm("ALL")}
+              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold px-4 py-2 text-xs transition border border-white/10 shadow-sm"
+            >
+              <span>View Full Pipeline ({leads.length} Leads)</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -409,7 +454,9 @@ export function CallerFocusCockpit({
     `${activeLead.name} ${activeLead.address || ""} ${activeLead.city || ""} ${activeLead.state || ""}`
   )}`;
 
-  const currentLeadPosition = Math.min(cursorIndex + 1, rankedStream.length);
+  const totalDeckCount = leads.length;
+  const completedInSession = sessionCompletedIds.size;
+  const currentLeadPosition = Math.min(completedInSession + 1, totalDeckCount);
 
   return (
     <div className="space-y-2">
@@ -422,7 +469,7 @@ export function CallerFocusCockpit({
           <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-950/30 px-3 py-1 text-xs font-bold text-emerald-300 shadow-sm">
             <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
             <span>
-              Lead {pinnedLeadId ? "(Callback)" : `${currentLeadPosition} of ${rankedStream.length}`}
+              Lead {pinnedLeadId ? "(Callback)" : `${currentLeadPosition} of ${totalDeckCount}`}
             </span>
           </div>
 
@@ -431,6 +478,20 @@ export function CallerFocusCockpit({
               <Flame className="w-3 h-3 text-amber-400" />
               <span>{sessionStreak} Streak</span>
             </div>
+          )}
+
+          {sessionCompletedIds.size > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setSessionCompletedIds(new Set());
+                setCursorIndex(0);
+              }}
+              className="text-[10px] text-zinc-400 hover:text-white underline underline-offset-2 ml-0.5 font-medium"
+              title="Reset active dialing round to start over from lead 1"
+            >
+              Restart Round ({sessionCompletedIds.size} dialed)
+            </button>
           )}
 
           {/* Compact Live Telemetry Bubbles */}
@@ -681,12 +742,25 @@ export function CallerFocusCockpit({
             </div>
           </div>
 
-          {callHistory[0] && (
-            <div className="rounded-lg bg-black/70 border border-amber-500/30 px-2 py-1 text-[10px] text-zinc-300 max-w-sm truncate">
-              <span className="text-amber-300 font-semibold">Last Note: </span>
-              <span>{callHistory[0].text}</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {callHistory[0] && (
+              <div className="rounded-lg bg-black/70 border border-amber-500/30 px-2 py-1 text-[10px] text-zinc-300 max-w-sm truncate hidden sm:block">
+                <span className="text-amber-300 font-semibold">Last Note: </span>
+                <span>{callHistory[0].text}</span>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                const tomorrowIso = buildPresetFollowUpIso("TOMORROW");
+                commitDisposition("CALL_COMPLETED", "Rescheduled callback to tomorrow", tomorrowIso);
+              }}
+              className="rounded-full bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 px-2.5 py-1 text-[10px] font-bold text-amber-200 transition shrink-0"
+              title="Reschedule overdue callback to tomorrow and advance immediately"
+            >
+              Reschedule to Tomorrow
+            </button>
+          </div>
         </div>
       )}
 
@@ -739,7 +813,7 @@ export function CallerFocusCockpit({
                 </button>
               )}
               <span className="text-[10px] font-mono text-zinc-400 px-1">
-                Lead #{pinnedLeadId ? "Callback" : `${currentLeadPosition} of ${rankedStream.length}`}
+                Lead #{pinnedLeadId ? "Callback" : `${currentLeadPosition} of ${totalDeckCount}`}
               </span>
             </div>
           </div>
@@ -968,7 +1042,7 @@ export function CallerFocusCockpit({
                 <span>Call Log ({callHistory.length} attempts)</span>
                 {activeLead.nextFollowUp && (
                   <span className="text-amber-300 font-semibold">
-                    Callback: {formatFollowUpLabel(activeLead.nextFollowUp).text}
+                    Callback: {formatFollowUpLabel(activeLead.nextFollowUp, activeLead.state).text}
                   </span>
                 )}
               </div>

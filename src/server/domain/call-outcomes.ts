@@ -309,7 +309,7 @@ const FOLLOW_UP_NOTE_LINE = /^\[Follow-Up Note\s+([^\]]+)\]\s*(.*)$/i;
 
 function isSystemBattlecardOrTagLine(line: string): boolean {
   if (!line) return true;
-  if (/^\[Next Follow-up Scheduled:\s*[^\]]+\]$/i.test(line)) return true;
+  if (/^\[(?:Next )?Follow-?up Scheduled:\s*[^\]]+\]$/i.test(line)) return true;
   return (
     line.startsWith("BATTLECARD:") ||
     line.startsWith("15-SECOND OPENING SCRIPT:") ||
@@ -327,7 +327,7 @@ function isSystemBattlecardOrTagLine(line: string): boolean {
 /** Returns every logged call in the notes, newest first (new calls are prepended). */
 export function parseCallLog(notes: string | null | undefined): ParsedCallLogEntry[] {
   if (!notes) return [];
-  const cleanedNotes = notes.replace(/\[Next Follow-up Scheduled:\s*[^\]]+\]\s*/gi, "");
+  const cleanedNotes = notes.replace(/\[(?:Next )?Follow-?up Scheduled:\s*[^\]]+\]\s*/gi, "");
   const out: ParsedCallLogEntry[] = [];
   const freeformLines: string[] = [];
 
@@ -410,9 +410,10 @@ export function parseCallLog(notes: string | null | undefined): ParsedCallLogEnt
 
 export function extractFollowUp(notes: string | null | undefined): string | null {
   if (!notes) return null;
-  const matches = [...notes.matchAll(/\[Next Follow-up Scheduled:\s*([^\]]+)\]/gi)];
+  const matches = [...notes.matchAll(/\[(?:Next )?Follow-?up Scheduled:\s*([^\]]+)\]/gi)];
   if (matches.length === 0) return null;
-  return matches[matches.length - 1]?.[1]?.trim() || null;
+  // Always pick matches[0] because new follow-up tags are prepended at the top of notes
+  return matches[0]?.[1]?.trim() || null;
 }
 
 /**

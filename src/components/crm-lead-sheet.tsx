@@ -45,6 +45,7 @@ import {
 import { CallOutcomePicker, CallStatusBadge, CallStatusLegend } from "@/components/call-status-ui";
 import { CallLogModal, type CallLogSubmitData } from "@/components/call-log-modal";
 import { computeAutoFollowUpCadence } from "@/server/domain/focus-queue";
+import { zoneForState } from "@/server/domain/call-time";
 import {
   Sheet,
   Phone,
@@ -178,7 +179,10 @@ export const CRM_STAGE_OPTIONS: Array<{
   },
 ];
 
-export function formatFollowUpLabel(raw: string | null | undefined): {
+export function formatFollowUpLabel(
+  raw: string | null | undefined,
+  state?: string | null
+): {
   text: string;
   isOverdue: boolean;
 } {
@@ -194,7 +198,21 @@ export function formatFollowUpLabel(raw: string | null | undefined): {
     hour: "numeric",
     minute: "2-digit",
   });
-  return { text: formatted, isOverdue };
+
+  let tzSuffix = "";
+  if (state) {
+    const zone = zoneForState(state);
+    if (zone) {
+      const prospectTime = d.toLocaleString("en-US", {
+        timeZone: zone.iana,
+        hour: "numeric",
+        minute: "2-digit",
+      });
+      tzSuffix = ` (${prospectTime} ${zone.groupId})`;
+    }
+  }
+
+  return { text: `${formatted}${tzSuffix}`, isOverdue };
 }
 
 export function buildPresetFollowUpIso(preset: "LATER_TODAY" | "TOMORROW" | "TWO_DAYS" | "NEXT_WEEK"): string {
@@ -220,7 +238,7 @@ export function buildPresetFollowUpIso(preset: "LATER_TODAY" | "TOMORROW" | "TWO
 
 export function stripFollowUpTagFromNotes(notes: string | null | undefined): string {
   if (!notes) return "";
-  return notes.replace(/\[Next Follow-up Scheduled:\s*[^\]]+\]\s*/gi, "").trim();
+  return notes.replace(/\[(?:Next )?Follow-?up Scheduled:\s*([^\]]+)\]\s*/gi, "").trim();
 }
 
 export function getLeadLastActivityTime(lead: {
