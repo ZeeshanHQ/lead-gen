@@ -868,8 +868,36 @@ export function CrmLeadSheet({
     );
   }, [allMembers]);
 
+  // Leads scoped to active callerFilter and dateFilter (excluding REJECTED)
+  const scopedFilterLeads = React.useMemo(() => {
+    return leads.filter((lead) => {
+      if (lead.status === "REJECTED") return false;
+      if (callerFilter === "UNASSIGNED" && lead.assignedMemberId && lead.assignedMemberId !== "") return false;
+      if (
+        callerFilter !== "ALL" &&
+        callerFilter !== "UNASSIGNED" &&
+        lead.assignedMemberId !== callerFilter
+      ) {
+        return false;
+      }
+
+      if (dateFilter !== "ALL") {
+        const dateInfo = classifyLeadDate(lead);
+        if (dateFilter === "TODAY" && dateInfo.category !== "TODAY") return false;
+        if (dateFilter === "YESTERDAY" && dateInfo.category !== "YESTERDAY") return false;
+        if (dateFilter === "OLDER" && (dateInfo.category === "TODAY" || dateInfo.category === "YESTERDAY"))
+          return false;
+      }
+      return true;
+    });
+  }, [leads, callerFilter, dateFilter]);
+
   const liveTelemetry = React.useMemo(() => {
-    return computeLiveCrmTelemetry(leads, teamCallers);
+    return computeLiveCrmTelemetry(scopedFilterLeads, teamCallers);
+  }, [scopedFilterLeads, teamCallers]);
+
+  const allTimeTelemetry = React.useMemo(() => {
+    return computeLiveCrmTelemetry(leads.filter((l) => l.status !== "REJECTED"), teamCallers);
   }, [leads, teamCallers]);
 
   const callerStats = liveTelemetry;
@@ -955,7 +983,8 @@ export function CrmLeadSheet({
   const activeLeads = leads.filter((l) => l.status !== "REJECTED");
   const totalCount = activeLeads.length;
 
-  // One exclusive status per lead (the chips add up to the total), plus date based overlays.
+  // Status counts scoped to active caller and date filter so the filter chips
+  // always match exactly the leads available in the current view!
   const { statusCounts, followUpCount, overdueCount } = React.useMemo(() => {
     const counts: Record<CallStatusKey, number> = {
       UNTOUCHED: 0,
@@ -970,7 +999,7 @@ export function CrmLeadSheet({
     let followUp = 0;
     let overdue = 0;
     const now = Date.now();
-    for (const lead of activeLeads) {
+    for (const lead of scopedFilterLeads) {
       const derived = derivedById.get(lead.id) ?? deriveCallStatus(lead);
       counts[derived.key]++;
       const fu = lead.nextFollowUp || extractFollowUp(lead.notes);
@@ -980,21 +1009,28 @@ export function CrmLeadSheet({
       }
     }
     return { statusCounts: counts, followUpCount: followUp, overdueCount: overdue };
-  }, [activeLeads, derivedById]);
+  }, [scopedFilterLeads, derivedById]);
 
 
   const { todayCount, yesterdayCount, olderCount } = React.useMemo(() => {
     let today = 0;
     let yesterday = 0;
     let older = 0;
-    for (const lead of activeLeads) {
+    const callerScoped = activeLeads.filter((lead) => {
+      if (callerFilter === "UNASSIGNED" && lead.assignedMemberId && lead.assignedMemberId !== "") return false;
+      if (callerFilter !== "ALL" && callerFilter !== "UNASSIGNED" && lead.assignedMemberId !== callerFilter) {
+        return false;
+      }
+      return true;
+    });
+    for (const lead of callerScoped) {
       const info = classifyLeadDate(lead);
       if (info.category === "TODAY") today++;
       else if (info.category === "YESTERDAY") yesterday++;
       else older++;
     }
     return { todayCount: today, yesterdayCount: yesterday, olderCount: older };
-  }, [activeLeads]);
+  }, [activeLeads, callerFilter]);
 
   return (
     <div className="overflow-hidden rounded-xl border border-zinc-800/80 bg-[#121215]">
@@ -1113,9 +1149,33 @@ export function CrmLeadSheet({
             <span className="font-bold text-white text-xs">
               Live Calling &amp; CRM Telemetry
             </span>
-            <span className="text-[10px] text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
-              Updates instantaneously on every call, note &amp; field update
+            <span className="text-[10px] text-zinc-300 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800 font-mono">
+              {dateFilter === "TODAY"
+                ? "Today's Intake"
+                : dateFilter === "YESTERDAY"
+                ? "Yesterday's Intake"
+                : dateFilter === "OLDER"
+                ? "Older Leads"
+                : "All-Time"}
+              {callerFilter !== "ALL" && (
+                <span className="text-emerald-400 font-semibold ml-1">
+                  • {teamCallers.find((c) => c.id === callerFilter)?.name || (callerFilter === "UNASSIGNED" ? "Unassigned Pool" : callerFilter)}
+                </span>
+              )}
+              {" "}({scopedFilterLeads.length} of {leads.length} leads)
             </span>
+            {(dateFilter !== "ALL" || callerFilter !== "ALL") && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDateFilterAndPersist("ALL");
+                  setCallerFilter("ALL");
+                }}
+                className="text-[10px] text-indigo-400 hover:text-indigo-300 underline font-semibold ml-1"
+              >
+                Reset to All-Time
+              </button>
+            )}
           </div>
           {isOwner && (
             <Link
@@ -1145,7 +1205,7 @@ export function CrmLeadSheet({
               {liveTelemetry.untouchedLeads}
             </div>
             <div className="text-[10px] text-zinc-500 mt-0.5">
-              of {liveTelemetry.totalLeads} total leads
+              of {liveTelemetry.totalLeads} {dateFilter !== "ALL" || callerFilter !== "ALL" ? "filtered" : "total"} leads
             </div>
           </button>
 
@@ -1374,8 +1434,16 @@ export function CrmLeadSheet({
                   : "border-zinc-800 bg-[#121215] text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900"
               }`}
             >
-              <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-400">All Queue</div>
-              <div className="text-base font-extrabold text-white mt-0.5">{totalCount} leads</div>
+              <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-400">
+                {dateFilter === "TODAY"
+                  ? "Today's Queue"
+                  : dateFilter === "YESTERDAY"
+                  ? "Yesterday's Queue"
+                  : dateFilter === "OLDER"
+                  ? "Older Queue"
+                  : "All Queue"}
+              </div>
+              <div className="text-base font-extrabold text-white mt-0.5">{scopedFilterLeads.length} leads</div>
               <div className="text-[10px] text-emerald-400 mt-0.5">
                 {liveTelemetry.dialedLeads} dialed &bull; {statusCounts.MEETING_BOOKED} booked
               </div>
@@ -1480,7 +1548,7 @@ export function CrmLeadSheet({
                 : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-600"
             }`}
           >
-            All ({totalCount})
+            All ({scopedFilterLeads.length})
           </button>
 
           {CRM_FILTER_CHIPS.map((chip) => {

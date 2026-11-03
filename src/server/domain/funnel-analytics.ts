@@ -179,7 +179,39 @@ export function buildCallEvents(
           atMs: lead.updatedAtMs ?? lead.createdAtMs ?? nowMs,
           source: "note",
         });
+        hasAnyEvent.add(lead.id);
       }
+    }
+
+    // Ensure CRM milestone upgrades (Meeting Booked, Connected, Gatekeeper Blocked, etc.)
+    // are ALWAYS captured in events so Sales Funnel matches CRM 100% in real-time.
+    const derived = deriveCallStatus(lead);
+    const existingEvents = events.filter((e) => e.companyId === lead.id);
+    const maxExistingDepth = Math.max(
+      0,
+      ...existingEvents.map((e) => CALL_STATUS_DEFS[e.outcome]?.depth ?? 0)
+    );
+
+    if (derived.key !== "UNTOUCHED" && derived.def.depth > maxExistingDepth) {
+      const parsedLogs = parseCallLog(lead.notes);
+      const lastParsed = parsedLogs[parsedLogs.length - 1];
+      const parsedTs = lastParsed ? parseNoteTimestamp(lastParsed.timestampRaw, nowMs) : null;
+      const atMs = parsedTs ?? lead.updatedAtMs ?? lead.createdAtMs ?? nowMs;
+
+      const assignedMember = lead.assignedMemberId
+        ? members.find((m) => m.id === lead.assignedMemberId)
+        : undefined;
+
+      events.push({
+        id: `${lead.id}#derived_upgrade`,
+        companyId: lead.id,
+        actor: assignedMember?.name || "Caller",
+        memberId: lead.assignedMemberId,
+        outcome: derived.key,
+        atMs,
+        source: "note",
+      });
+      hasAnyEvent.add(lead.id);
     }
   }
 
@@ -402,8 +434,9 @@ export function computeFunnel(
   const poolLeads = scopedAllLeads.filter((l) => {
     if (timeframe === "ALL" || !range) return true;
     const createdInPeriod = l.createdAtMs ? l.createdAtMs >= range.from && l.createdAtMs < range.to : false;
+    const updatedInPeriod = l.updatedAtMs ? l.updatedAtMs >= range.from && l.updatedAtMs < range.to : false;
     const dialedInPeriod = dialedInPeriodIds.has(l.id);
-    return createdInPeriod || dialedInPeriod;
+    return createdInPeriod || updatedInPeriod || dialedInPeriod;
   });
   const poolIds = new Set(poolLeads.map((l) => l.id));
   const leadById = new Map(allLeads.map((l) => [l.id, l]));
@@ -421,14 +454,12 @@ export function computeFunnel(
     cur.last = e.outcome; // events are sorted ascending, so the last write is the newest
     perLead.set(e.companyId, cur);
   }
-  if (timeframe === "ALL") {
-    for (const l of poolLeads) {
-      const floor = lifecycleDepthFloor(l.status);
-      if (floor === 0) continue;
-      const cur = perLead.get(l.id) ?? { depth: 0 as FunnelDepth, attempts: 0, last: null };
-      if (floor > cur.depth) cur.depth = floor;
-      perLead.set(l.id, cur);
-    }
+  for (const l of poolLeads) {
+    const floor = lifecycleDepthFloor(l.status);
+    if (floor === 0) continue;
+    const cur = perLead.get(l.id) ?? { depth: 0 as FunnelDepth, attempts: 0, last: null };
+    if (floor > cur.depth) cur.depth = floor;
+    perLead.set(l.id, cur);
   }
 
   const pool = poolLeads.length;

@@ -46,13 +46,13 @@ export default async function AnalyticsPage() {
   let leadsToUse: LeadRow[];
   if (isOwnerOrManager) {
     leadsToUse =
-      marketLeads.length === 0 && allWorkspaceLeads.length > 0
+      allWorkspaceLeads.length > 0
         ? allWorkspaceLeads
         : marketLeads;
   } else {
     const myMarketLeads = marketLeads.filter((l) => l.assignedMemberId === activeMember.id);
     const myWorkspaceLeads = allWorkspaceLeads.filter((l) => l.assignedMemberId === activeMember.id);
-    leadsToUse = myMarketLeads.length > 0 ? myMarketLeads : myWorkspaceLeads;
+    leadsToUse = myWorkspaceLeads.length > 0 ? myWorkspaceLeads : myMarketLeads;
   }
 
   const teamCallers = isOwnerOrManager

@@ -37,6 +37,7 @@ export interface LeadRow {
   researchSummary: string | null;
   notes: string | null;
   createdAt: Date;
+  updatedAt?: Date | null;
   approvedAt: Date | null;
   assignedMemberId?: string | null;
   assignedMemberName?: string | null;
@@ -138,6 +139,7 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
       researchSummary: r.researchSummary,
       notes: r.notes,
       createdAt: r.createdAt,
+      updatedAt: r.updatedAt ?? null,
       approvedAt: r.approvedAt,
       assignedMemberId: r.assignedMemberId ?? null,
       assignedMemberName: r.assignedMemberName ?? null,

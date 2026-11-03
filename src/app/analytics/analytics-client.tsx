@@ -355,6 +355,7 @@ export function SalesFunnelClient({
       icpScore: l.icpScore,
       assignedMemberId: l.assignedMemberId || null,
       createdAtMs: l.createdAt ? new Date(l.createdAt).getTime() : null,
+      updatedAtMs: l.updatedAt ? new Date(l.updatedAt).getTime() : null,
     }));
   }, [leads]);
 
