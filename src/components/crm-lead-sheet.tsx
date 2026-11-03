@@ -44,6 +44,7 @@ import {
 } from "@/server/domain/call-outcomes";
 import { CallOutcomePicker, CallStatusBadge, CallStatusLegend } from "@/components/call-status-ui";
 import { CallLogModal, type CallLogSubmitData } from "@/components/call-log-modal";
+import { computeAutoFollowUpCadence } from "@/server/domain/focus-queue";
 import {
   Sheet,
   Phone,
@@ -351,6 +352,8 @@ export function CrmLeadSheet({
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "YESTERDAY" | "OLDER">("ALL");
   const [callerFilter, setCallerFilter] = useState<string>("ALL");
   const [sortBy, setSortBy] = useState<"INTAKE_DATE" | "RECENTLY_CONTACTED" | "ICP_SCORE" | "NAME_AZ" | "STAGE">("RECENTLY_CONTACTED");
+  const [tablePage, setTablePage] = useState<number>(1);
+  const pageSize = 50;
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState(false);
   const [viewingNotesHistoryLead, setViewingNotesHistoryLead] = useState<CrmLeadItem | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -502,6 +505,7 @@ export function CrmLeadSheet({
 
   const setStatusFilterAndPersist = (f: string) => {
     setStatusFilter(f);
+    setTablePage(1);
     try {
       localStorage.setItem("astraventa_crm_status_filter", f);
     } catch {}
@@ -509,6 +513,7 @@ export function CrmLeadSheet({
 
   const setDateFilterAndPersist = (df: "ALL" | "TODAY" | "YESTERDAY" | "OLDER") => {
     setDateFilter(df);
+    setTablePage(1);
     try {
       localStorage.setItem("astraventa_crm_date_filter", df);
     } catch {}
@@ -518,6 +523,7 @@ export function CrmLeadSheet({
     s: "INTAKE_DATE" | "RECENTLY_CONTACTED" | "ICP_SCORE" | "NAME_AZ" | "STAGE"
   ) => {
     setSortBy(s);
+    setTablePage(1);
     try {
       localStorage.setItem("astraventa_crm_sort_by", s);
     } catch {}
@@ -862,6 +868,12 @@ export function CrmLeadSheet({
     return list;
   }, [filteredLeads, sortBy, derivedById]);
 
+  const totalPages = Math.max(1, Math.ceil(sortedLeads.length / pageSize));
+  const pagedLeads = React.useMemo(() => {
+    const start = (tablePage - 1) * pageSize;
+    return sortedLeads.slice(start, start + pageSize);
+  }, [sortedLeads, tablePage, pageSize]);
+
   const teamCallers = React.useMemo(() => {
     return (allMembers || []).filter(
       (m) => m.status === "ACTIVE" && m.role !== "VIEWER"
@@ -911,7 +923,13 @@ export function CrmLeadSheet({
 
     const targetLead = selectedLead;
     const chosenOutcome = data.outcome;
-    const chosenFollowUp = data.followUpDate || null;
+    const derived = derivedById.get(targetLead.id) ?? deriveCallStatus(targetLead);
+    const autoCadence = computeAutoFollowUpCadence({
+      outcome: chosenOutcome,
+      previousAttempts: derived.attempts,
+      explicitFollowUpDate: data.followUpDate || null,
+    });
+    const chosenFollowUp = autoCadence.nextFollowUpIso;
     const rawNoteText = data.callerNotes;
     const combinedNotes = chosenFollowUp
       ? `[Next Follow-up Scheduled: ${chosenFollowUp}] ${rawNoteText}`
@@ -1783,7 +1801,7 @@ export function CrmLeadSheet({
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
-              {sortedLeads.map((lead, idx) => {
+              {pagedLeads.map((lead, idx) => {
                 const phone = lead.bestContact?.phone || lead.phoneDisplay;
                 const dmName = lead.bestContact?.name;
                 const dmTitle = lead.bestContact?.title;
@@ -1794,7 +1812,7 @@ export function CrmLeadSheet({
                 const followUpInfo = formatFollowUpLabel(lead.nextFollowUp);
                 const parsedNote = parseLatestCallerNote(lead.notes);
                 const dateInfo = classifyLeadDate(lead);
-                const prevLead = idx > 0 ? sortedLeads[idx - 1] : null;
+                const prevLead = idx > 0 ? pagedLeads[idx - 1] : null;
                 const isNewBatch =
                   sortBy === "INTAKE_DATE" &&
                   (!prevLead || classifyLeadDate(prevLead).groupKey !== dateInfo.groupKey);
@@ -2247,6 +2265,37 @@ export function CrmLeadSheet({
               })}
             </tbody>
           </table>
+
+          {sortedLeads.length > pageSize && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-zinc-800 bg-[#09090b] text-xs">
+              <div className="text-zinc-400">
+                Showing <strong className="text-white">{(tablePage - 1) * pageSize + 1}</strong>–
+                <strong className="text-white">{Math.min(tablePage * pageSize, sortedLeads.length)}</strong> of{" "}
+                <strong className="text-white">{sortedLeads.length}</strong> leads
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={tablePage <= 1}
+                  onClick={() => setTablePage((p) => Math.max(1, p - 1))}
+                  className="px-3 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 disabled:opacity-40 transition font-medium"
+                >
+                  Previous
+                </button>
+                <span className="px-2 text-zinc-400 font-medium">
+                  Page {tablePage} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={tablePage >= totalPages}
+                  onClick={() => setTablePage((p) => Math.min(totalPages, p + 1))}
+                  className="px-3 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 disabled:opacity-40 transition font-medium"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

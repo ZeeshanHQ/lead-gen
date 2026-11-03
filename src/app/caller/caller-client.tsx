@@ -47,6 +47,11 @@ import {
 } from "@/server/domain/call-outcomes";
 import { CallOutcomePicker, CallStatusBadge, CallStatusLegend } from "@/components/call-status-ui";
 import {
+  CallerFocusCockpit,
+  type FocusCockpitSubmitPayload,
+} from "@/components/caller-focus-cockpit";
+import { computeAutoFollowUpCadence } from "@/server/domain/focus-queue";
+import {
   DEFAULT_DIALER_CONFIG,
   type DialerConfig,
 } from "@/server/domain/dialer";
@@ -78,6 +83,7 @@ import {
   Trash2,
   Clock,
   FileText,
+  Zap,
 } from "lucide-react";
 
 interface CallerClientProps {
@@ -403,7 +409,10 @@ export function CallerClient({
 
   const [selectedLead, setSelectedLead] = useState<CallerLeadView | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"CARDS" | "SHEET">("CARDS");
+  const [viewMode, setViewMode] = useState<"FOCUS" | "CARDS" | "SHEET">(
+    activeMember?.role === "CALLER" ? "FOCUS" : "CARDS"
+  );
+  const [visibleCardsCount, setVisibleCardsCount] = useState<number>(50);
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "YESTERDAY" | "OLDER">("ALL");
   const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
 
@@ -414,8 +423,10 @@ export function CallerClient({
   React.useEffect(() => {
     try {
       const savedView = localStorage.getItem("astraventa_caller_default_view");
-      if (savedView === "SHEET" || savedView === "CARDS") {
+      if (savedView === "FOCUS" || savedView === "SHEET" || savedView === "CARDS") {
         setViewMode(savedView);
+      } else if (activeMember?.role === "CALLER") {
+        setViewMode("FOCUS");
       }
       const savedStatus = localStorage.getItem("astraventa_caller_status_filter");
       if (savedStatus && initialStatusFilter === "ALL") {
@@ -430,10 +441,18 @@ export function CallerClient({
         setCallerFilter(savedCaller);
       }
     } catch {}
-  }, [initialStatusFilter, initialCallerFilter]);
+  }, [initialStatusFilter, initialCallerFilter, activeMember?.role]);
+
+  const setViewModeAndPersist = (mode: "FOCUS" | "CARDS" | "SHEET") => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem("astraventa_caller_default_view", mode);
+    } catch {}
+  };
 
   const setStatusFilterAndPersist = (tabKey: string) => {
     setStatusFilter(tabKey);
+    setVisibleCardsCount(50);
     try {
       localStorage.setItem("astraventa_caller_status_filter", tabKey);
     } catch {}
@@ -441,6 +460,7 @@ export function CallerClient({
 
   const setDateFilterAndPersist = (df: "ALL" | "TODAY" | "YESTERDAY" | "OLDER") => {
     setDateFilter(df);
+    setVisibleCardsCount(50);
     try {
       localStorage.setItem("astraventa_caller_date_filter", df);
     } catch {}
@@ -448,6 +468,7 @@ export function CallerClient({
 
   const setCallerFilterAndPersist = (callerId: string) => {
     setCallerFilter(callerId);
+    setVisibleCardsCount(50);
     try {
       localStorage.setItem("astraventa_caller_selected_caller", callerId);
     } catch {}
@@ -818,7 +839,13 @@ export function CallerClient({
 
     const targetLead = selectedLead;
     const chosenOutcome = data.outcome;
-    const chosenFollowUp = data.followUpDate || null;
+    const derived = deriveCallStatus(targetLead);
+    const autoCadence = computeAutoFollowUpCadence({
+      outcome: chosenOutcome,
+      previousAttempts: derived.attempts,
+      explicitFollowUpDate: data.followUpDate || null,
+    });
+    const chosenFollowUp = autoCadence.nextFollowUpIso;
     const chosenSoft = data.softwareConfirmed || null;
     const fleetNum = data.fleetSizeConfirmed ?? null;
     const rawNoteText = data.callerNotes;
@@ -862,7 +889,7 @@ export function CallerClient({
               ...item,
               status: optimisticStatus,
               software: chosenSoft || item.software,
-              nextFollowUp: chosenFollowUp || item.nextFollowUp,
+              nextFollowUp: chosenFollowUp,
               notes: optimisticNotes,
               updatedAt: nowIso,
             }
@@ -870,7 +897,11 @@ export function CallerClient({
       )
     );
     setSelectedLead(null);
-    showToast(`Call logged for ${targetLead.name} (${outcomeLabel}). Lead updated.`);
+    showToast(
+      `Call logged for ${targetLead.name} (${outcomeLabel}). ${
+        !autoCadence.isTerminal && autoCadence.nextFollowUpIso ? autoCadence.cadenceReason : "Lead updated."
+      }`
+    );
 
     startTransition(async () => {
       const res = await logCallFeedbackAction({
@@ -891,7 +922,104 @@ export function CallerClient({
                   ...item,
                   status: res.nextStatus!,
                   software: chosenSoft || item.software,
-                  nextFollowUp: res.nextFollowUp || chosenFollowUp || item.nextFollowUp,
+                  nextFollowUp:
+                    res.nextFollowUp !== undefined ? res.nextFollowUp : chosenFollowUp,
+                  notes: res.updatedNotes || optimisticNotes,
+                  updatedAt: res.updatedAt || nowIso,
+                }
+              : item
+          )
+        );
+      }
+    });
+  };
+
+  const handleFocusCockpitSubmit = (payload: FocusCockpitSubmitPayload) => {
+    const targetLead = payload.lead;
+    const chosenOutcome = payload.outcome;
+    const derived = deriveCallStatus(targetLead);
+    const autoCadence = computeAutoFollowUpCadence({
+      outcome: chosenOutcome,
+      previousAttempts: derived.attempts,
+      explicitFollowUpDate: payload.followUpDate,
+    });
+    const chosenFollowUp = autoCadence.nextFollowUpIso;
+    const chosenSoft = payload.softwareConfirmed || null;
+    const fleetNum = payload.fleetSizeConfirmed ?? null;
+    const rawNoteText = payload.callerNotes;
+    const combinedNotes = chosenFollowUp
+      ? `[Next Follow-up Scheduled: ${chosenFollowUp}] ${rawNoteText}`
+      : rawNoteText;
+
+    const outcomeLabel = CALL_STATUS_DEFS[chosenOutcome]?.noteLabel || chosenOutcome;
+    const timeStr = new Date().toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const optimisticNoteLine = `[${timeStr} • ${actor.trim() || activeActorName} (${outcomeLabel})]: ${
+      rawNoteText || `Call outcome recorded: ${outcomeLabel}`
+    }`;
+    const cleanExisting = stripFollowUpTagFromNotes(targetLead.notes);
+    const optimisticNotes = `${
+      chosenFollowUp ? `[Next Follow-up Scheduled: ${chosenFollowUp}]\n` : ""
+    }${optimisticNoteLine}${cleanExisting ? `\n${cleanExisting}` : ""}`;
+    const optimisticStatus: LifecycleStatus =
+      chosenOutcome === "MEETING_BOOKED"
+        ? "MEETING_BOOKED"
+        : chosenOutcome === "CONNECTED"
+        ? "CONNECTED"
+        : chosenOutcome === "NOT_INTERESTED" || chosenOutcome === "WRONG_NUMBER"
+        ? "LOST"
+        : "CALLING";
+
+    const nowIso = new Date().toISOString();
+
+    setRecentlyDialedIds((prev) => new Set([...prev, targetLead.companyId]));
+
+    setQueue((prev) =>
+      prev.map((item) =>
+        item.companyId === targetLead.companyId
+          ? {
+              ...item,
+              status: optimisticStatus,
+              software: chosenSoft || item.software,
+              nextFollowUp: chosenFollowUp,
+              notes: optimisticNotes,
+              updatedAt: nowIso,
+            }
+          : item
+      )
+    );
+
+    showToast(
+      `✓ ${targetLead.name}: ${outcomeLabel}${
+        chosenFollowUp ? ` • Next callback scheduled (${formatFollowUpLabel(chosenFollowUp).text})` : ""
+      }`
+    );
+
+    startTransition(async () => {
+      const res = await logCallFeedbackAction({
+        companyId: targetLead.companyId,
+        actor: actor.trim() || activeActorName,
+        callOutcome: chosenOutcome,
+        softwareConfirmed: chosenSoft,
+        fleetSizeConfirmed: fleetNum,
+        callerNotes: combinedNotes,
+        followUpDate: chosenFollowUp,
+      });
+
+      if (res.success && res.nextStatus) {
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.companyId === targetLead.companyId
+              ? {
+                  ...item,
+                  status: res.nextStatus!,
+                  software: chosenSoft || item.software,
+                  nextFollowUp:
+                    res.nextFollowUp !== undefined ? res.nextFollowUp : chosenFollowUp,
                   notes: res.updatedNotes || optimisticNotes,
                   updatedAt: res.updatedAt || nowIso,
                 }
@@ -965,10 +1093,15 @@ export function CallerClient({
     connectedCount: number;
   }
 
+  const visibleQueue = React.useMemo(
+    () => filteredQueue.slice(0, visibleCardsCount),
+    [filteredQueue, visibleCardsCount]
+  );
+
   const groupedDateBatches = React.useMemo<LeadDateBatch[]>(() => {
     const map = new Map<string, LeadDateBatch>();
 
-    for (const lead of filteredQueue) {
+    for (const lead of visibleQueue) {
       const info = classifyLeadDate(lead);
       let batch = map.get(info.groupKey);
       if (!batch) {
@@ -1000,7 +1133,7 @@ export function CallerClient({
       if (b.category === "YESTERDAY") return 1;
       return b.key.localeCompare(a.key);
     });
-  }, [filteredQueue]);
+  }, [visibleQueue]);
 
   const teamCallers = React.useMemo(
     () => allMembers.filter((m) => m.status !== "SUSPENDED" && m.role !== "VIEWER"),
@@ -1054,31 +1187,44 @@ export function CallerClient({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* View Mode Toggle */}
+          {/* View Mode Toggle (3 Modes: Focus Cockpit ⚡, Cards, Table) */}
           <div className="flex items-center p-0.5 rounded-lg bg-[#09090b] border border-zinc-800 text-xs font-medium">
             <button
               type="button"
-              onClick={() => setViewMode("CARDS")}
+              onClick={() => setViewModeAndPersist("FOCUS")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition ${
+                viewMode === "FOCUS"
+                  ? "bg-emerald-500 text-black font-bold shadow-sm"
+                  : "text-emerald-400 hover:text-emerald-300"
+              }`}
+              title="Focus Cockpit: 1 Lead at a Time distraction-free stream"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>Focus Cockpit ⚡</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewModeAndPersist("CARDS")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition ${
                 viewMode === "CARDS"
-                  ? "bg-zinc-800 text-white"
+                  ? "bg-zinc-800 text-white font-semibold"
                   : "text-zinc-400 hover:text-white"
               }`}
             >
               <PhoneCall className="w-3.5 h-3.5" />
-              <span>Caller Cards</span>
+              <span>Cards</span>
             </button>
             <button
               type="button"
-              onClick={() => setViewMode("SHEET")}
+              onClick={() => setViewModeAndPersist("SHEET")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition ${
                 viewMode === "SHEET"
-                  ? "bg-zinc-800 text-white"
+                  ? "bg-zinc-800 text-white font-semibold"
                   : "text-zinc-400 hover:text-white"
               }`}
             >
               <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span>Table View</span>
+              <span>Table</span>
             </button>
           </div>
 
@@ -1401,7 +1547,34 @@ export function CallerClient({
         </div>
       ) : null}
 
-      {viewMode === "SHEET" ? (
+      {viewMode === "FOCUS" ? (
+        <CallerFocusCockpit
+          leads={callerScopedQueue}
+          telemetry={scopedTelemetry}
+          nicheName={nicheName}
+          smartFields={smartFields}
+          activeActorName={actor.trim() || activeActorName}
+          canEditContacts={canEditContacts}
+          getOpeningScript={(leadItem) =>
+            getSmartOpeningScript({
+              companyName: leadItem.name,
+              contactName: leadItem.bestContact.name,
+              city: leadItem.city,
+              state: leadItem.state,
+              nicheName: leadItem.marketName || nicheName,
+              cleanNotes: stripFollowUpTagFromNotes(leadItem.notes),
+              researchSummary: leadItem.researchSummary,
+            })
+          }
+          onLogCallAndAdvance={handleFocusCockpitSubmit}
+          onSmartFieldChange={handleSmartFieldChange}
+          onOpenEditLead={openEditModal}
+          onSwitchToFullCrm={(filterStatus) => {
+            if (filterStatus) setStatusFilterAndPersist(filterStatus);
+            setViewModeAndPersist("CARDS");
+          }}
+        />
+      ) : viewMode === "SHEET" ? (
         <CrmLeadSheet
           initialLeads={crmLeadsFromQueue}
           marketId={marketId}
@@ -2406,6 +2579,30 @@ export function CallerClient({
                   </div>
                 );
               })}
+              {filteredQueue.length > visibleCardsCount && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 rounded-xl border border-zinc-800 bg-[#121215]">
+                  <div className="text-xs text-zinc-400">
+                    Showing <strong className="text-white">{Math.min(visibleCardsCount, filteredQueue.length)}</strong> of{" "}
+                    <strong className="text-white">{filteredQueue.length}</strong> leads
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setVisibleCardsCount((prev) => prev + 50)}
+                      className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-white transition shadow-sm"
+                    >
+                      Load Next 50 Leads
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVisibleCardsCount(filteredQueue.length)}
+                      className="px-3 py-2 rounded-lg border border-zinc-800 hover:bg-zinc-900 text-xs text-zinc-400 hover:text-white transition"
+                    >
+                      Show All ({filteredQueue.length})
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
