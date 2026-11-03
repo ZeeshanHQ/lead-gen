@@ -95,30 +95,6 @@ function AppShellInner({
   const [sidebarNicheOpen, setSidebarNicheOpen] = useState(false);
   const [headerNicheOpen, setHeaderNicheOpen] = useState(false);
   const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
-  const [currentZoom, setCurrentZoom] = useState<string>("0.8");
-  const [zoomDropdownOpen, setZoomDropdownOpen] = useState(false);
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("astraventa_zoom");
-      if (saved) {
-        setCurrentZoom(saved);
-        document.documentElement.style.zoom = saved;
-      } else {
-        setCurrentZoom("0.8");
-        document.documentElement.style.zoom = "0.8";
-      }
-    } catch {}
-  }, []);
-
-  const handleSetZoom = (val: string) => {
-    setCurrentZoom(val);
-    try {
-      localStorage.setItem("astraventa_zoom", val);
-      document.documentElement.style.zoom = val;
-    } catch {}
-    setZoomDropdownOpen(false);
-  };
 
   // Modals for Multi-Niche & Multi-Tenant Management
   const [nicheModalOpen, setNicheModalOpen] = useState(false);
@@ -895,60 +871,6 @@ function AppShellInner({
               </div>
             )}
 
-
-            {/* Display Zoom Level Controller: 80% Compact (Default) | 85% | 90% | 100% */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => {
-                  setZoomDropdownOpen(!zoomDropdownOpen);
-                  setHeaderNicheOpen(false);
-                  setMemberDropdownOpen(false);
-                }}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#141418] hover:bg-[#1a1a20] border border-white/10 text-xs transition shadow-sm"
-                title="Display Zoom / View Scale"
-              >
-                <Maximize2 className="w-3 h-3 text-emerald-400" />
-                <span className="font-mono font-bold text-emerald-400 text-[11px]">
-                  {Math.round(parseFloat(currentZoom || "0.8") * 100)}%
-                </span>
-                <ChevronDown className="w-3 h-3 text-zinc-400" />
-              </button>
-
-              {zoomDropdownOpen && (
-                <div className="absolute right-0 top-full mt-1.5 w-48 z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-1.5 space-y-1">
-                  <div className="px-2 py-1 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center justify-between">
-                    <span>Display Zoom</span>
-                    <span className="text-[9px] text-emerald-400 font-mono">80% Default</span>
-                  </div>
-                  {[
-                    { value: "0.8", label: "80% (Cockpit Fit)", badge: "Default" },
-                    { value: "0.85", label: "85% (Balanced)", badge: "" },
-                    { value: "0.9", label: "90% (Comfort)", badge: "" },
-                    { value: "1", label: "100% (Standard)", badge: "" },
-                  ].map((z) => (
-                    <button
-                      key={z.value}
-                      type="button"
-                      onClick={() => handleSetZoom(z.value)}
-                      className={cn(
-                        "w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold transition text-left",
-                        currentZoom === z.value
-                          ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
-                          : "text-zinc-300 hover:bg-zinc-800 border border-transparent"
-                      )}
-                    >
-                      <span>{z.label}</span>
-                      {z.badge && (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-bold">
-                          {z.badge}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
 
             {/* Notifications Bell Dropdown */}
             {liveMember && <NotificationsMenu />}
