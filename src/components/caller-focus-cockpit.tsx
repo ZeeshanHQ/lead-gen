@@ -5,6 +5,7 @@ import { type CallerLeadView } from "@/server/repo/caller";
 import {
   CALL_STATUS_DEFS,
   deriveCallStatus,
+  extractFollowUp,
   parseCallLog,
   type CallOutcomeKey,
   type LiveCrmTelemetry,
@@ -14,6 +15,7 @@ import {
   buildFlashBattlecard,
   getQuickNoteChipsForOutcome,
   computeAutoFollowUpCadence,
+  computeProspectLocalTimeInfo,
 } from "@/server/domain/focus-queue";
 import { type NicheSmartField } from "@/server/domain/niche-fields";
 import {
@@ -209,6 +211,25 @@ export function CallerFocusCockpit({
     if (pinnedLeadId) {
       const found = rankedStream.find((r) => r.lead.companyId === pinnedLeadId);
       if (found) return found;
+      // Fallback: when caller manually clicks a scheduled callback in drawer that is
+      // held back from the normal stream (e.g. scheduled for later), immediately load it!
+      const directLead = leads.find((l) => l.companyId === pinnedLeadId);
+      if (directLead) {
+        const derived = deriveCallStatus(directLead);
+        const fuIso = directLead.nextFollowUp || extractFollowUp(directLead.notes);
+        return {
+          lead: directLead,
+          priorityScore: 999_999,
+          tier: "MANDATORY_FOLLOW_UP_DUE" as const,
+          reasonBadge: "📌 Pinned Callback",
+          isMandatoryFollowUpLock: false,
+          overdueMinutes: 0,
+          followUpIso: fuIso,
+          derivedStatus: derived.key,
+          attempts: derived.attempts,
+          localTime: computeProspectLocalTimeInfo(directLead.state, nowMs),
+        };
+      }
     }
     if (uncontactedStream.length === 0) return null;
     if (uncontactedStream[0]?.isMandatoryFollowUpLock) {
@@ -216,7 +237,7 @@ export function CallerFocusCockpit({
     }
     const safeIdx = Math.min(Math.max(0, cursorIndex), uncontactedStream.length - 1);
     return uncontactedStream[safeIdx] || uncontactedStream[0]!;
-  }, [rankedStream, uncontactedStream, cursorIndex, pinnedLeadId]);
+  }, [leads, rankedStream, uncontactedStream, cursorIndex, pinnedLeadId]);
 
   const activeLead = activeRankedItem?.lead ?? null;
   const activeLeadId = activeLead?.companyId ?? null;
@@ -344,6 +365,14 @@ export function CallerFocusCockpit({
     return () => window.removeEventListener("keydown", handleKeyDown);
   });
 
+  // Dynamic count of scheduled callbacks from current lead pool
+  const dynamicFollowUpsCount = useMemo(() => {
+    return leads.filter((l) => {
+      if (l.status === "REJECTED") return false;
+      return Boolean(l.nextFollowUp || extractFollowUp(l.notes));
+    }).length;
+  }, [leads]);
+
   // Lookup drawer filtered leads
   const lookupLeads = useMemo(() => {
     const q = lookupQuery.trim().toLowerCase();
@@ -351,7 +380,8 @@ export function CallerFocusCockpit({
       .filter((l) => {
         if (l.status === "REJECTED") return false;
         if (lookupTab === "FOLLOW_UPS") {
-          if (!l.nextFollowUp) return false;
+          const fu = l.nextFollowUp || extractFollowUp(l.notes);
+          if (!fu) return false;
         } else if (lookupTab === "MEETINGS") {
           if (l.status !== "MEETING_BOOKED" && deriveCallStatus(l).key !== "MEETING_BOOKED")
             return false;
@@ -365,7 +395,17 @@ export function CallerFocusCockpit({
           (l.city && l.city.toLowerCase().includes(q))
         );
       })
-      .slice(0, 40);
+      .sort((a, b) => {
+        if (lookupTab === "FOLLOW_UPS") {
+          const fuA = a.nextFollowUp || extractFollowUp(a.notes) || "";
+          const fuB = b.nextFollowUp || extractFollowUp(b.notes) || "";
+          const tA = fuA ? Date.parse(fuA) : Infinity;
+          const tB = fuB ? Date.parse(fuB) : Infinity;
+          return tA - tB;
+        }
+        return 0;
+      })
+      .slice(0, 50);
   }, [leads, lookupQuery, lookupTab]);
 
   // Empty State when all leads in stream are completed
@@ -520,7 +560,7 @@ export function CallerFocusCockpit({
             onClick={() =>
               setActiveDrawer(activeDrawer === "LOOKUP" ? "NONE" : "LOOKUP")
             }
-            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
               activeDrawer === "LOOKUP"
                 ? "border-amber-400 bg-amber-500/20 text-amber-200"
                 : mandatoryDueCount > 0
@@ -530,9 +570,9 @@ export function CallerFocusCockpit({
           >
             <Search className="w-3 h-3 text-amber-400" />
             <span>Callbacks</span>
-            {telemetry.followUpsScheduled > 0 && (
+            {Math.max(dynamicFollowUpsCount, telemetry.followUpsScheduled) > 0 && (
               <span className="rounded-full bg-amber-500/30 border border-amber-400/40 px-1.5 text-[9px] font-bold text-amber-200">
-                {telemetry.followUpsScheduled}
+                {Math.max(dynamicFollowUpsCount, telemetry.followUpsScheduled)}
               </span>
             )}
           </button>
@@ -542,7 +582,7 @@ export function CallerFocusCockpit({
             onClick={() =>
               setActiveDrawer(activeDrawer === "ANALYTICS" ? "NONE" : "ANALYTICS")
             }
-            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
               activeDrawer === "ANALYTICS"
                 ? "border-emerald-400 bg-emerald-500/20 text-emerald-200"
                 : "border-white/10 bg-black/40 text-zinc-300 hover:text-white hover:border-zinc-700"
@@ -567,7 +607,10 @@ export function CallerFocusCockpit({
               </span>
               <div className="flex items-center gap-1 ml-2">
                 {[
-                  { id: "FOLLOW_UPS" as const, label: `Follow-Ups (${telemetry.followUpsScheduled})` },
+                  {
+                    id: "FOLLOW_UPS" as const,
+                    label: `Follow-Ups (${Math.max(dynamicFollowUpsCount, telemetry.followUpsScheduled)})`,
+                  },
                   { id: "MEETINGS" as const, label: `Meetings (${telemetry.meetingsBooked})` },
                   { id: "ALL" as const, label: `All Queue (${leads.length})` },
                 ].map((t) => (
@@ -575,7 +618,7 @@ export function CallerFocusCockpit({
                     key={t.id}
                     type="button"
                     onClick={() => setLookupTab(t.id)}
-                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold transition ${
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold transition cursor-pointer ${
                       lookupTab === t.id
                         ? "bg-white text-black font-bold"
                         : "bg-zinc-900 text-zinc-400 hover:text-white"
@@ -601,7 +644,7 @@ export function CallerFocusCockpit({
               <button
                 type="button"
                 onClick={() => setActiveDrawer("NONE")}
-                className="p-1 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800"
+                className="p-1 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -613,10 +656,11 @@ export function CallerFocusCockpit({
               No matching leads found.
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
               {lookupLeads.map((item) => {
-                const fu = formatFollowUpLabel(item.nextFollowUp);
-                const isCurrent = item.companyId === activeLead.companyId;
+                const targetFu = item.nextFollowUp || extractFollowUp(item.notes);
+                const fu = formatFollowUpLabel(targetFu, item.state);
+                const isCurrent = activeLead ? item.companyId === activeLead.companyId : false;
                 const leadCleanPhone = (item.bestContact.phone || item.phone || "").replace(/\D/g, "");
                 return (
                   <button
@@ -626,10 +670,10 @@ export function CallerFocusCockpit({
                       setPinnedLeadId(item.companyId);
                       setActiveDrawer("NONE");
                     }}
-                    className={`p-2 rounded-xl border text-left transition flex items-start justify-between gap-1.5 ${
+                    className={`p-2.5 rounded-xl border text-left transition flex items-start justify-between gap-1.5 cursor-pointer ${
                       isCurrent
                         ? "border-emerald-400 bg-emerald-500/15"
-                        : "border-white/10 bg-black/40 hover:border-white/20"
+                        : "border-white/10 bg-black/40 hover:border-amber-400/50 hover:bg-zinc-900/80"
                     }`}
                   >
                     <div className="min-w-0">
@@ -644,16 +688,16 @@ export function CallerFocusCockpit({
                       </div>
                       {fu.text && (
                         <div
-                          className={`text-[9px] font-semibold mt-0.5 ${
-                            fu.isOverdue ? "text-rose-400" : "text-amber-300"
+                          className={`text-[9px] font-semibold mt-1 flex items-center gap-1 ${
+                            fu.isOverdue ? "text-rose-400 font-bold" : "text-amber-300"
                           }`}
                         >
-                          {fu.isOverdue ? "Overdue: " : "Due: "}
-                          {fu.text}
+                          <span>{fu.isOverdue ? "⚠️ Overdue:" : "⏰ Due:"}</span>
+                          <span className="truncate">{fu.text}</span>
                         </div>
                       )}
                     </div>
-                    <span className="text-[10px] font-semibold text-emerald-400 shrink-0">
+                    <span className="text-[10px] font-bold text-emerald-400 shrink-0 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20">
                       Load →
                     </span>
                   </button>
