@@ -962,12 +962,12 @@ export function CallerFocusCockpit({
               </div>
             </div>
 
-            {/* Edit Lead — Strictly Owner only */}
-            {isOwner && canEditContacts && (
+            {/* Edit Lead — Accessible when user has editContacts permission */}
+            {canEditContacts && (
               <button
                 type="button"
                 onClick={() => onOpenEditLead(activeLead)}
-                className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-black/40 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-300 hover:text-white transition"
+                className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-black/40 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-300 hover:text-white transition cursor-pointer"
               >
                 <Pencil className="w-3 h-3 text-zinc-400" />
                 <span>Edit</span>
@@ -983,11 +983,11 @@ export function CallerFocusCockpit({
               </div>
               <div className="text-sm font-bold text-white mt-0.5 flex items-center gap-1.5">
                 <span>{dmName || "Owner / Managing Principal"}</span>
-                {isOwner && canEditContacts && (
+                {canEditContacts && (
                   <button
                     type="button"
                     onClick={() => onOpenEditLead(activeLead)}
-                    className="text-zinc-500 hover:text-white"
+                    className="text-zinc-500 hover:text-white cursor-pointer"
                     title="Update Owner Name"
                   >
                     <Pencil className="w-3 h-3" />
@@ -1028,11 +1028,11 @@ export function CallerFocusCockpit({
                   </a>
                 </div>
               ) : (
-                isOwner && (
+                canEditContacts && (
                   <button
                     type="button"
                     onClick={() => onOpenEditLead(activeLead)}
-                    className="text-xs font-semibold text-amber-300 underline"
+                    className="text-xs font-semibold text-amber-300 underline cursor-pointer"
                   >
                     + Add Phone Number
                   </button>
