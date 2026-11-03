@@ -20,6 +20,7 @@ import {
   type CallOutcomeKey,
 } from "../domain/call-outcomes";
 import { CALLER_TIMEZONE } from "../domain/call-time";
+import { computeAutoFollowUpCadence } from "../domain/focus-queue";
 
 export function extractLatestFollowUp(notes: string | null | undefined): string | null {
   if (!notes) return null;
@@ -333,13 +334,26 @@ export async function recordCallFeedback(
     });
   }
 
-  // 3. Update company lifecycle status and clean caller log entries
+  // 3. Update company lifecycle status and clean caller log entries (Closed-Loop Auto-Cadence)
+  const previousAttempts = parseCallLog(company.notes).length;
   const followUpMatch = (input.callerNotes || "").match(/\[Next Follow-up Scheduled:\s*([^\]]+)\]/i);
   const extractedFollowUp = followUpMatch ? followUpMatch[1]?.trim() : null;
-  const effectiveFollowUp =
-    (input.followUpDate ? input.followUpDate.trim() : null) ||
-    extractedFollowUp ||
-    extractLatestFollowUp(company.notes);
+  const explicitFollowUp =
+    (input.followUpDate ? input.followUpDate.trim() : null) || extractedFollowUp;
+  const existingFollowUp = extractLatestFollowUp(company.notes);
+  const existingIsFuture =
+    existingFollowUp && !Number.isNaN(Date.parse(existingFollowUp))
+      ? Date.parse(existingFollowUp) > Date.now()
+      : false;
+
+  const autoCadence = computeAutoFollowUpCadence({
+    outcome: effectiveOutcome,
+    previousAttempts,
+    explicitFollowUpDate:
+      explicitFollowUp || (existingIsFuture && effectiveOutcome !== "MEETING_BOOKED" && effectiveOutcome !== "NOT_INTERESTED" && effectiveOutcome !== "WRONG_NUMBER" ? existingFollowUp : null),
+  });
+
+  const effectiveFollowUp = autoCadence.nextFollowUpIso;
 
   const cleanUserNote = stripFollowUpTags(input.callerNotes).trim();
   const noteBody = cleanUserNote || getDefaultCallNote(effectiveOutcome);
