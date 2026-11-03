@@ -421,14 +421,27 @@ export function CallerClient({
   React.useEffect(() => {
     try {
       const savedView = localStorage.getItem("astraventa_caller_default_view");
-      if (savedView === "FOCUS" || savedView === "SHEET" || savedView === "CARDS") {
-        setViewMode(savedView);
-      } else if (activeMember?.role === "CALLER") {
+      if (activeMember?.role === "CALLER") {
+        setViewMode("FOCUS");
+      } else if (savedView === "SHEET") {
+        setViewMode("SHEET");
+      } else {
         setViewMode("FOCUS");
       }
       const savedStatus = localStorage.getItem("astraventa_caller_status_filter");
       if (savedStatus && initialStatusFilter === "ALL") {
-        setStatusFilter(savedStatus);
+        if (savedStatus === "TO_CALL" || savedStatus === "UNTOUCHED") {
+          const hasUntouched = queue.some((l) => deriveCallStatus(l).key === "UNTOUCHED");
+          if (hasUntouched) {
+            setStatusFilter(savedStatus);
+          } else {
+            // When zero untouched leads remain, default to ALL so leads never appear missing
+            setStatusFilter("ALL");
+            localStorage.removeItem("astraventa_caller_status_filter");
+          }
+        } else {
+          setStatusFilter(savedStatus);
+        }
       }
       const savedDate = localStorage.getItem("astraventa_caller_date_filter");
       if (savedDate && ["ALL", "TODAY", "YESTERDAY", "OLDER"].includes(savedDate)) {
@@ -439,7 +452,7 @@ export function CallerClient({
         setCallerFilter(savedCaller);
       }
     } catch {}
-  }, [initialStatusFilter, initialCallerFilter, activeMember?.role]);
+  }, [initialStatusFilter, initialCallerFilter, activeMember?.role, queue]);
 
   const setViewModeAndPersist = (mode: "FOCUS" | "CARDS" | "SHEET") => {
     setViewMode(mode);
@@ -1583,7 +1596,7 @@ export function CallerClient({
           onOpenEditLead={openEditModal}
           onSwitchToFullCrm={(filterStatus) => {
             if (filterStatus) setStatusFilterAndPersist(filterStatus);
-            setViewModeAndPersist("CARDS");
+            setViewModeAndPersist("SHEET");
           }}
         />
       ) : viewMode === "SHEET" ? (
@@ -1928,24 +1941,47 @@ export function CallerClient({
 
           {/* Lead Cards List */}
           {filteredQueue.length === 0 ? (
-            <div className="p-12 text-center rounded-xl border border-zinc-800/80 bg-[#121215] text-zinc-400 space-y-3">
-              <PhoneCall className="w-7 h-7 text-zinc-600 mx-auto" />
-              <p className="text-sm font-semibold text-zinc-200">
-                No leads in this pipeline filter
-              </p>
-              <p className="text-xs max-w-md mx-auto">
-                Switch pipeline tabs above (such as &ldquo;All CRM Leads&rdquo; or &ldquo;Ready to Call&rdquo;) or add a new lead to get started.
-              </p>
-              {totalCount > 0 && statusFilter !== "ALL" && (
-                <button
-                  type="button"
-                  onClick={() => setStatusFilterAndPersist("ALL")}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-white text-black px-3.5 py-1.5 text-xs font-bold hover:bg-zinc-200 transition"
-                >
-                  View All {totalCount} CRM Leads
-                </button>
-              )}
-            </div>
+            queue.length > 0 ? (
+              <div className="p-8 my-4 text-center rounded-2xl border border-white/10 bg-[#121215]/90 backdrop-blur-xl space-y-3 shadow-lg">
+                <div className="inline-flex items-center justify-center p-3 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 shadow-sm">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <p className="text-base font-bold text-white">
+                    {statusFilter === "TO_CALL" || statusFilter === "UNTOUCHED"
+                      ? `All ${queue.length} leads have been dialed! Zero uncalled leads remaining.`
+                      : `No leads currently match "${statusFilter}".`}
+                  </p>
+                  <p className="text-xs text-zinc-400 max-w-lg mx-auto mt-1 leading-relaxed">
+                    All <strong className="text-emerald-400 font-mono font-bold">{queue.length} leads</strong> are 100% safe, saved, and active in your CRM database.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatusFilterAndPersist("ALL");
+                      setCallerFilter("ALL");
+                      setDateFilterAndPersist("ALL");
+                      setSearch("");
+                    }}
+                    className="inline-flex items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black px-5 py-2 text-xs font-extrabold shadow-sm transition cursor-pointer"
+                  >
+                    <span>Reset All Filters &amp; View All {queue.length} Leads &rarr;</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-12 text-center rounded-xl border border-zinc-800/80 bg-[#121215] text-zinc-400 space-y-3">
+                <PhoneCall className="w-7 h-7 text-zinc-600 mx-auto" />
+                <p className="text-sm font-semibold text-zinc-200">
+                  No leads in this market
+                </p>
+                <p className="text-xs max-w-md mx-auto">
+                  Extract or import new verified leads to get started.
+                </p>
+              </div>
+            )
           ) : (
             <div className="space-y-6">
               {groupedDateBatches.map((batch) => {

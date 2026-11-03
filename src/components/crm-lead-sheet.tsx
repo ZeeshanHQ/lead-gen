@@ -494,14 +494,25 @@ export function CrmLeadSheet({
       }
       const savedStatus = localStorage.getItem("astraventa_crm_status_filter");
       if (savedStatus && initialStatusFilter === "ALL") {
-        setStatusFilter(savedStatus);
+        if (savedStatus === "UNTOUCHED" || savedStatus === "TO_CALL") {
+          const hasUntouched = leads.some((l) => deriveCallStatus(l).key === "UNTOUCHED");
+          if (hasUntouched) {
+            setStatusFilter(savedStatus);
+          } else {
+            // All leads in queue have been dialed; default to ALL so leads never appear missing
+            setStatusFilter("ALL");
+            localStorage.removeItem("astraventa_crm_status_filter");
+          }
+        } else {
+          setStatusFilter(savedStatus);
+        }
       }
       const savedDate = localStorage.getItem("astraventa_crm_date_filter");
       if (savedDate && ["ALL", "TODAY", "YESTERDAY", "OLDER"].includes(savedDate)) {
         setDateFilter(savedDate as any);
       }
     } catch {}
-  }, [initialStatusFilter]);
+  }, [initialStatusFilter, leads]);
 
   const setStatusFilterAndPersist = (f: string) => {
     setStatusFilter(f);
@@ -509,6 +520,17 @@ export function CrmLeadSheet({
     try {
       localStorage.setItem("astraventa_crm_status_filter", f);
     } catch {}
+  };
+
+  const toggleStatusFilter = (f: string) => {
+    const next = statusFilter === f ? "ALL" : f;
+    setStatusFilterAndPersist(next);
+  };
+
+  const toggleCallerFilter = (cId: string) => {
+    const next = callerFilter === cId ? "ALL" : cId;
+    setCallerFilter(next);
+    setTablePage(1);
   };
 
   const setDateFilterAndPersist = (df: "ALL" | "TODAY" | "YESTERDAY" | "OLDER") => {
@@ -1209,10 +1231,22 @@ export function CrmLeadSheet({
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
           <button
             type="button"
-            onClick={() => setStatusFilterAndPersist("UNTOUCHED")}
+            onClick={() => {
+              if (liveTelemetry.untouchedLeads === 0) {
+                if (statusFilter === "UNTOUCHED") {
+                  toggleStatusFilter("ALL");
+                } else {
+                  setSyncFeedback("All leads have already been dialed! Showing full CRM queue.");
+                  setTimeout(() => setSyncFeedback(null), 3000);
+                  toggleStatusFilter("ALL");
+                }
+              } else {
+                toggleStatusFilter("UNTOUCHED");
+              }
+            }}
             className={`p-2.5 rounded-lg border text-left transition ${
               statusFilter === "UNTOUCHED"
-                ? "border-zinc-400 bg-zinc-800 text-white"
+                ? "border-emerald-400 bg-emerald-950/40 text-white ring-1 ring-emerald-400/50"
                 : "border-zinc-800/90 bg-[#121215] hover:border-zinc-700"
             }`}
           >
@@ -1331,7 +1365,7 @@ export function CrmLeadSheet({
 
           <button
             type="button"
-            onClick={() => setStatusFilterAndPersist("FOLLOW_UP")}
+            onClick={() => toggleStatusFilter("FOLLOW_UP")}
             className={`p-2.5 rounded-lg border text-left transition ${
               statusFilter === "FOLLOW_UP"
                 ? "border-indigo-400 bg-indigo-500/20 text-white"
@@ -1577,11 +1611,17 @@ export function CrmLeadSheet({
               <button
                 key={chip.filter}
                 type="button"
-                onClick={() => setStatusFilterAndPersist(chip.filter)}
+                onClick={() => {
+                  if (count === 0 && statusFilter !== chip.filter) {
+                    setSyncFeedback(`0 leads currently in "${chip.label}". Total ${scopedFilterLeads.length} leads in this queue.`);
+                    setTimeout(() => setSyncFeedback(null), 3500);
+                  }
+                  toggleStatusFilter(chip.filter);
+                }}
                 title={`${def.meaning} ${def.whenToUse}`}
                 className={`shrink-0 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
                   active
-                    ? `${def.selected} text-white`
+                    ? `${def.selected} text-white ring-1 ring-white/30`
                     : count === 0
                     ? "border-zinc-800/70 bg-[#09090b] text-zinc-600 hover:border-zinc-700"
                     : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-600"
@@ -1612,7 +1652,7 @@ export function CrmLeadSheet({
           </button>
           <button
             type="button"
-            onClick={() => setStatusFilterAndPersist("OVERDUE")}
+            onClick={() => toggleStatusFilter("OVERDUE")}
             title="Follow-up date has passed. Call these first."
             className={`shrink-0 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
               statusFilter === "OVERDUE"
@@ -1718,39 +1758,83 @@ export function CrmLeadSheet({
 
       {/* Spreadsheet Table View */}
       {filteredLeads.length === 0 ? (
-        <div className="p-10 text-center text-xs text-zinc-400 space-y-3">
-          <Sheet className="w-7 h-7 text-zinc-600 mx-auto" />
-          <p className="font-semibold text-sm text-zinc-200">
-            No leads found for {nicheName ? `"${nicheName}"` : "this filter"}
-          </p>
-          <p className="max-w-md mx-auto text-zinc-400">
-            {canDiscover
-              ? "Switch filter tabs above or extract new verified leads."
-              : "No leads are currently assigned to your queue. Contact your workspace owner to assign leads."}
-          </p>
-          {(canDiscover || canImport) && (
-            <div className="flex items-center justify-center gap-2.5 pt-1">
-              {canDiscover && (
-                <Link
-                  href="/discover"
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3.5 py-1.5 text-xs font-bold text-black hover:bg-zinc-200"
-                >
-                  <span>+ Find Leads</span>
-                </Link>
-              )}
-              {canImport && (
+        leads.length > 0 ? (
+          <div className="p-8 my-4 text-center rounded-2xl border border-white/10 bg-[#121215]/90 backdrop-blur-xl space-y-3 shadow-lg">
+            <div className="inline-flex items-center justify-center p-3 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 shadow-sm">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-base font-bold text-white">
+                {statusFilter === "UNTOUCHED" || statusFilter === "TO_CALL"
+                  ? `All ${leads.length} leads have been dialed! Zero uncalled leads remaining.`
+                  : `No leads match filter "${statusFilter === "ALL" ? "Current Search" : statusFilter}".`}
+              </p>
+              <p className="text-xs text-zinc-400 max-w-lg mx-auto mt-1 leading-relaxed">
+                All <strong className="text-emerald-400 font-mono font-bold">{leads.length} leads</strong> are 100% safe, saved, and active in your CRM database.
+                {callerFilter !== "ALL" ? ` Queue is currently filtered to "${teamCallers.find((c) => c.id === callerFilter)?.name || (callerFilter === "UNASSIGNED" ? "Unassigned Pool" : callerFilter)}".` : ""}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilterAndPersist("ALL");
+                  setCallerFilter("ALL");
+                  setDateFilterAndPersist("ALL");
+                  setSearch("");
+                }}
+                className="inline-flex items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black px-5 py-2 text-xs font-extrabold shadow-sm transition cursor-pointer"
+              >
+                <span>Reset All Filters &amp; View All {leads.length} Leads &rarr;</span>
+              </button>
+              {callerFilter !== "ALL" && (
                 <button
                   type="button"
-                  onClick={() => setImportModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3.5 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-800"
+                  onClick={() => {
+                    setStatusFilterAndPersist("ALL");
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/40 hover:bg-zinc-800 text-zinc-200 px-4 py-2 text-xs font-semibold transition"
                 >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Import CSV</span>
+                  <span>Show All in Selected Pool ({scopedFilterLeads.length} leads)</span>
                 </button>
               )}
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="p-10 text-center text-xs text-zinc-400 space-y-3">
+            <Sheet className="w-7 h-7 text-zinc-600 mx-auto" />
+            <p className="font-semibold text-sm text-zinc-200">
+              No leads found for {nicheName ? `"${nicheName}"` : "this market"}
+            </p>
+            <p className="max-w-md mx-auto text-zinc-400">
+              {canDiscover
+                ? "Switch filter tabs above or extract new verified leads."
+                : "No leads are currently assigned to your queue. Contact your workspace owner to assign leads."}
+            </p>
+            {(canDiscover || canImport) && (
+              <div className="flex items-center justify-center gap-2.5 pt-1">
+                {canDiscover && (
+                  <Link
+                    href="/discover"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3.5 py-1.5 text-xs font-bold text-black hover:bg-zinc-200"
+                  >
+                    <span>+ Find Leads</span>
+                  </Link>
+                )}
+                {canImport && (
+                  <button
+                    type="button"
+                    onClick={() => setImportModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3.5 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-800"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Import CSV</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )
       ) : (
         <div className="overflow-x-auto touch-pan-x">
           <table className="w-full text-left text-xs text-zinc-300 divide-y divide-zinc-800/70">
