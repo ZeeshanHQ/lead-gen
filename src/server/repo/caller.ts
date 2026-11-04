@@ -1390,7 +1390,7 @@ export async function assignBulkLeadsToCaller(
   ];
 
   const conditions = [
-    eq(companies.marketId, params.marketId),
+    ...(params.marketId && params.marketId.trim() !== "" ? [eq(companies.marketId, params.marketId)] : []),
     inArray(companies.status, callerStatuses),
   ];
 
@@ -1405,7 +1405,7 @@ export async function assignBulkLeadsToCaller(
     .from(companies)
     .where(and(...conditions))
     .orderBy(desc(companies.updatedAt))
-    .limit(params.count && params.count > 0 ? params.count : 200);
+    .limit(params.count && params.count > 0 ? params.count : 500);
 
   if (rows.length === 0) return { assignedCount: 0 };
 

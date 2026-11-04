@@ -410,6 +410,7 @@ export function CallerClient({
   const [selectedLead, setSelectedLead] = useState<CallerLeadView | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"FOCUS" | "CARDS" | "SHEET">("FOCUS");
+  const effectiveViewMode = isOwner ? viewMode : "FOCUS";
   const [visibleCardsCount, setVisibleCardsCount] = useState<number>(50);
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "YESTERDAY" | "OLDER">("ALL");
   const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
@@ -450,6 +451,7 @@ export function CallerClient({
   }, [initialStatusFilter, initialCallerFilter, activeMember?.role, queue]);
 
   const setViewModeAndPersist = (mode: "FOCUS" | "CARDS" | "SHEET") => {
+    if (!isOwner && mode !== "FOCUS") return;
     setViewMode(mode);
     try {
       localStorage.setItem("astraventa_caller_default_view", mode);
@@ -1171,9 +1173,9 @@ export function CallerClient({
   const unassignedCount = fullQueueTelemetry.unassignedCount;
 
   return (
-    <div className={viewMode === "FOCUS" ? "space-y-2" : "space-y-4"}>
+    <div className={effectiveViewMode === "FOCUS" ? "space-y-2" : "space-y-4"}>
       {/* Top Header */}
-      {viewMode === "FOCUS" ? (
+      {effectiveViewMode === "FOCUS" ? (
         <div className="flex flex-wrap items-center justify-between gap-2 px-1">
           {/* iOS Bubble Group: Branding + Niche + Live Total Counter */}
           <div className="flex items-center gap-2">
@@ -1348,7 +1350,7 @@ export function CallerClient({
       )}
 
       {/* Owner Team Callers Overview & Lead Assignment Command Bar (Cards View) */}
-      {viewMode === "CARDS" && canManageSettings && teamCallers.length > 0 ? (
+      {effectiveViewMode === "CARDS" && canManageSettings && teamCallers.length > 0 ? (
         <div className="rounded-xl border border-zinc-800/80 bg-[#121215] p-4 space-y-3.5">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-zinc-800/80 pb-3">
             <div className="flex items-center gap-2">
@@ -1566,7 +1568,7 @@ export function CallerClient({
         </div>
       ) : null}
 
-      {viewMode === "FOCUS" ? (
+      {effectiveViewMode === "FOCUS" ? (
         <CallerFocusCockpit
           leads={callerScopedQueue}
           isOwner={isOwner}
@@ -1589,12 +1591,12 @@ export function CallerClient({
           onLogCallAndAdvance={handleFocusCockpitSubmit}
           onSmartFieldChange={handleSmartFieldChange}
           onOpenEditLead={openEditModal}
-          onSwitchToFullCrm={(filterStatus) => {
+          onSwitchToFullCrm={isOwner ? (filterStatus) => {
             if (filterStatus) setStatusFilterAndPersist(filterStatus);
             setViewModeAndPersist("SHEET");
-          }}
+          } : undefined}
         />
-      ) : viewMode === "SHEET" ? (
+      ) : effectiveViewMode === "SHEET" ? (
         <CrmLeadSheet
           initialLeads={crmLeadsFromQueue}
           marketId={marketId}

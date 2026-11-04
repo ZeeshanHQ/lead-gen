@@ -10,6 +10,8 @@ import {
   deleteCrmLeadAction,
   updateLeadSmartFieldAction,
   assignLeadAction,
+  assignBulkLeadsToCallerAction,
+  unassignCallerLeadsAction,
 } from "@/app/caller/actions";
 import { LeadImportModal } from "@/components/lead-import-modal";
 import {
@@ -75,6 +77,9 @@ import {
   BookOpen,
   Lightbulb,
   Target,
+  UserPlus,
+  UserMinus,
+  AlertCircle,
 } from "lucide-react";
 
 export interface CrmLeadItem {
@@ -673,6 +678,47 @@ export function CrmLeadSheet({
         target ? `Assigned ${lead.name} to ${target.name}.` : `Unassigned ${lead.name}.`
       );
       setTimeout(() => setSyncFeedback(null), 2500);
+    }
+  };
+
+  // Bulk Assign All Unassigned Leads to Chosen Caller
+  const handleAssignAllUnassignedToCaller = async (targetMemberId: string) => {
+    const target = teamCallers.find((c) => c.id === targetMemberId);
+    if (!target) return;
+    const unassignedCount = leads.filter(
+      (l) => (!l.assignedMemberId || l.assignedMemberId === "") && l.status !== "REJECTED"
+    ).length;
+    if (unassignedCount === 0) {
+      setSyncFeedback("No unassigned leads in the pool to assign.");
+      setTimeout(() => setSyncFeedback(null), 2500);
+      return;
+    }
+    if (!confirm(`Assign all ${unassignedCount} unassigned leads to ${target.name}?`)) {
+      return;
+    }
+    // Optimistically update all unassigned leads in local state
+    setLeads((prev) =>
+      prev.map((l) =>
+        (!l.assignedMemberId || l.assignedMemberId === "") && l.status !== "REJECTED"
+          ? { ...l, assignedMemberId: target.id, assignedMemberName: target.name }
+          : l
+      )
+    );
+    setSyncFeedback(`Assigned all ${unassignedCount} unassigned leads to ${target.name}.`);
+    setTimeout(() => setSyncFeedback(null), 3500);
+
+    const res = await assignBulkLeadsToCallerAction({
+      marketId: marketId || leads[0]?.marketId || "",
+      memberId: target.id,
+      memberName: target.name,
+      onlyUnassigned: true,
+      count: 5000,
+    });
+    if (!res.ok) {
+      setSyncFeedback(res.error || "Failed to bulk assign leads");
+      setTimeout(() => setSyncFeedback(null), 4000);
+    } else {
+      setCallerFilter(target.id);
     }
   };
 
@@ -1473,6 +1519,33 @@ export function CrmLeadSheet({
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {callerFilter === "UNASSIGNED" && callerStats.unassignedCount > 0 && (
+                <div className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs shadow-sm">
+                  <UserPlus className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="text-emerald-300 font-semibold">
+                    Assign All ({callerStats.unassignedCount}) to:
+                  </span>
+                  <select
+                    className="bg-zinc-900 border border-emerald-500/40 rounded px-2 py-0.5 text-xs text-white font-medium focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val) {
+                        handleAssignAllUnassignedToCaller(val);
+                        e.target.value = "";
+                      }
+                    }}
+                  >
+                    <option value="" disabled>Choose Caller...</option>
+                    {teamCallers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.title || "Caller"})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {callerFilter !== "ALL" && callerFilter !== "UNASSIGNED" && (() => {
                 const target = teamCallers.find((c) => c.id === callerFilter);
                 const assignedCount = leads.filter((l) => l.assignedMemberId === callerFilter && l.status !== "REJECTED").length;
@@ -1491,15 +1564,15 @@ export function CrmLeadSheet({
                       );
                       setSyncFeedback(`Unassigned all leads from ${target.name}.`);
                       setTimeout(() => setSyncFeedback(null), 3000);
-                      const { unassignCallerLeadsAction } = await import("@/app/caller/actions");
                       await unassignCallerLeadsAction({
-                        marketId: leads[0]?.marketId || "",
+                        marketId: marketId || leads[0]?.marketId || "",
                         memberId: callerFilter,
                       });
                     }}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-semibold px-2.5 py-1 text-xs transition"
                     title={`Unassign all ${assignedCount} leads from ${target.name}`}
                   >
+                    <UserMinus className="w-3.5 h-3.5" />
                     <span>Unassign All ({assignedCount}) Leads</span>
                   </button>
                 );
@@ -1623,6 +1696,46 @@ export function CrmLeadSheet({
               );
             })}
           </div>
+
+          {callerFilter === "UNASSIGNED" && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-200 mt-2.5">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                <div>
+                  <span className="font-bold text-white text-xs">Unassigned Pool:</span>{" "}
+                  <span className="text-zinc-300 text-xs">
+                    {callerStats.unassignedCount} lead{callerStats.unassignedCount === 1 ? "" : "s"} waiting to be assigned to a caller.
+                  </span>
+                </div>
+              </div>
+              {callerStats.unassignedCount > 0 && teamCallers.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-emerald-300 font-semibold flex items-center gap-1">
+                    <UserPlus className="w-3.5 h-3.5" />
+                    Assign All Leads To:
+                  </span>
+                  <select
+                    className="bg-zinc-900 border border-emerald-500/40 rounded-md px-3 py-1 text-xs text-white font-medium focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val) {
+                        handleAssignAllUnassignedToCaller(val);
+                        e.target.value = "";
+                      }
+                    }}
+                  >
+                    <option value="" disabled>Choose Caller...</option>
+                    {teamCallers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.title || "Caller"})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

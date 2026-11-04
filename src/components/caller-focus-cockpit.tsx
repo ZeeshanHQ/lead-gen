@@ -48,6 +48,7 @@ import {
   X,
   MessageSquare,
   ArrowRight,
+  RotateCcw,
   Award,
   Globe,
 } from "lucide-react";
@@ -470,7 +471,32 @@ export function CallerFocusCockpit({
             </button>
           )}
 
-          {onSwitchToFullCrm && (
+          {!hasCompletedSome && leads.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setSessionCompletedIds(new Set());
+                setCursorIndex(0);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold px-4 py-2 text-xs transition border border-white/10 shadow-sm"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Review Assigned Queue ({leads.length})</span>
+            </button>
+          )}
+
+          {dynamicFollowUpsCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveDrawer("LOOKUP")}
+              className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 font-bold px-4 py-2 text-xs transition border border-amber-500/30 shadow-sm"
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>View Scheduled Callbacks ({dynamicFollowUpsCount})</span>
+            </button>
+          )}
+
+          {isOwner && onSwitchToFullCrm && (
             <button
               type="button"
               onClick={() => onSwitchToFullCrm("ALL")}
