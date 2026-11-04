@@ -191,10 +191,29 @@ export function CallerFocusCockpit({
     return () => clearInterval(timer);
   }, []);
 
+  // Intelligent queue stream scope (ALL leads, Fresh untouched only, or Callbacks only)
+  const [streamScope, setStreamScope] = useState<"ALL" | "FRESH" | "CALLBACKS">("ALL");
+
   // Rank all leads into the intelligent Focus Stream
   const rankedStream = useMemo(
     () => rankLeadsForFocusStream(leads, nowMs),
     [leads, nowMs]
+  );
+
+  const freshUncalledCount = useMemo(
+    () => rankedStream.filter((r) => r.derivedStatus === "UNTOUCHED").length,
+    [rankedStream]
+  );
+
+  const callbacksDueCount = useMemo(
+    () =>
+      rankedStream.filter(
+        (r) =>
+          r.tier === "MANDATORY_FOLLOW_UP_DUE" ||
+          r.tier === "UPCOMING_FOLLOW_UP" ||
+          Boolean(r.followUpIso)
+      ).length,
+    [rankedStream]
   );
 
   const mandatoryDueCount = useMemo(
@@ -202,16 +221,32 @@ export function CallerFocusCockpit({
     [rankedStream]
   );
 
+  // Scoped stream according to active stream filter tab
+  const scopedStream = useMemo(() => {
+    if (streamScope === "FRESH") {
+      return rankedStream.filter((r) => r.derivedStatus === "UNTOUCHED");
+    }
+    if (streamScope === "CALLBACKS") {
+      return rankedStream.filter(
+        (r) =>
+          r.tier === "MANDATORY_FOLLOW_UP_DUE" ||
+          r.tier === "UPCOMING_FOLLOW_UP" ||
+          Boolean(r.followUpIso)
+      );
+    }
+    return rankedStream;
+  }, [rankedStream, streamScope]);
+
   // Stream of uncontacted leads for this active calling session
   const uncontactedStream = useMemo(
-    () => rankedStream.filter((r) => !sessionCompletedIds.has(r.lead.companyId)),
-    [rankedStream, sessionCompletedIds]
+    () => scopedStream.filter((r) => !sessionCompletedIds.has(r.lead.companyId)),
+    [scopedStream, sessionCompletedIds]
   );
 
   // Resolve current active item in stream (advances automatically to next uncontacted lead)
   const activeRankedItem = useMemo(() => {
     if (pinnedLeadId) {
-      const found = rankedStream.find((r) => r.lead.companyId === pinnedLeadId);
+      const found = scopedStream.find((r) => r.lead.companyId === pinnedLeadId) || rankedStream.find((r) => r.lead.companyId === pinnedLeadId);
       if (found) return found;
       // Fallback: when caller manually clicks a scheduled callback in drawer that is
       // held back from the normal stream (e.g. scheduled for later), immediately load it!
@@ -239,7 +274,7 @@ export function CallerFocusCockpit({
     }
     const safeIdx = Math.min(Math.max(0, cursorIndex), uncontactedStream.length - 1);
     return uncontactedStream[safeIdx] || uncontactedStream[0]!;
-  }, [leads, rankedStream, uncontactedStream, cursorIndex, pinnedLeadId]);
+  }, [leads, scopedStream, rankedStream, uncontactedStream, cursorIndex, pinnedLeadId]);
 
   const activeLead = activeRankedItem?.lead ?? null;
   const activeLeadId = activeLead?.companyId ?? null;
@@ -500,7 +535,7 @@ export function CallerFocusCockpit({
             <button
               type="button"
               onClick={() => onSwitchToFullCrm("ALL")}
-              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold px-4 py-2 text-xs transition border border-white/10 shadow-sm"
+              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold px-4 py-2 text-xs transition border border-white/10 shadow-sm cursor-pointer"
             >
               <span>View Full Pipeline ({leads.length} Leads)</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -538,8 +573,8 @@ export function CallerFocusCockpit({
     `${activeLead.name} ${activeLead.address || ""} ${activeLead.city || ""} ${activeLead.state || ""}`
   )}`;
 
-  // Total actionable leads waiting to be called in this active stream
-  const totalToCall = rankedStream.length;
+  // Total actionable leads waiting to be called in this active scoped stream
+  const totalToCall = scopedStream.length;
   const completedInSession = sessionCompletedIds.size;
   const currentLeadPosition = Math.min(completedInSession + 1, Math.max(1, totalToCall));
 
@@ -556,6 +591,57 @@ export function CallerFocusCockpit({
             <span>
               Lead {pinnedLeadId ? "(Callback)" : `${currentLeadPosition} of ${totalToCall}`}
             </span>
+          </div>
+
+          {/* Quick Stream Scope Selector */}
+          <div className="flex items-center gap-1 bg-black/60 border border-white/10 rounded-full p-0.5 text-[10px]">
+            <button
+              type="button"
+              onClick={() => {
+                setStreamScope("ALL");
+                setCursorIndex(0);
+              }}
+              title="Show all callable leads (Fresh + Due Callbacks + Retries)"
+              className={`px-2.5 py-0.5 rounded-full font-semibold transition cursor-pointer ${
+                streamScope === "ALL"
+                  ? "bg-zinc-800 text-white font-bold shadow-sm"
+                  : "text-zinc-400 hover:text-white"
+              }`}
+            >
+              All ({rankedStream.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setStreamScope("FRESH");
+                setCursorIndex(0);
+              }}
+              title="Filter to fresh leads that have never been dialed yet"
+              className={`px-2.5 py-0.5 rounded-full font-semibold transition cursor-pointer ${
+                streamScope === "FRESH"
+                  ? "bg-emerald-500 text-black font-extrabold shadow-sm"
+                  : "text-emerald-400/90 hover:text-emerald-300"
+              }`}
+            >
+              Fresh ({freshUncalledCount})
+            </button>
+            {callbacksDueCount > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStreamScope("CALLBACKS");
+                  setCursorIndex(0);
+                }}
+                title="Filter to due callbacks and scheduled follow-ups"
+                className={`px-2.5 py-0.5 rounded-full font-semibold transition cursor-pointer ${
+                  streamScope === "CALLBACKS"
+                    ? "bg-amber-500 text-black font-extrabold shadow-sm"
+                    : "text-amber-400/90 hover:text-amber-300"
+                }`}
+              >
+                Callbacks ({callbacksDueCount})
+              </button>
+            )}
           </div>
 
           {sessionStreak > 0 && (

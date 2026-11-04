@@ -310,6 +310,7 @@ const FOLLOW_UP_NOTE_LINE = /^\[Follow-Up Note\s+([^\]]+)\]\s*(.*)$/i;
 function isSystemBattlecardOrTagLine(line: string): boolean {
   if (!line) return true;
   if (/^\[(?:Next )?Follow-?up Scheduled:\s*[^\]]+\]$/i.test(line)) return true;
+  if (/\((?:Ready to Call|Number Corrected|Outcome Reset)\)\]/i.test(line)) return true;
   return (
     line.startsWith("BATTLECARD:") ||
     line.startsWith("15-SECOND OPENING SCRIPT:") ||
@@ -592,6 +593,11 @@ export function deriveCallStatus(lead: {
       key = "CONNECTED";
     } else if (status === "LOST" && lastLog.outcome !== "NOT_INTERESTED") {
       key = "NOT_INTERESTED";
+    } else if (
+      status === "APPROVED" &&
+      (lastLog.outcome === "WRONG_NUMBER" || lastLog.outcome === "NOT_INTERESTED")
+    ) {
+      key = "UNTOUCHED";
     } else {
       key = lastLog.outcome;
     }

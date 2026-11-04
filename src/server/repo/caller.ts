@@ -443,6 +443,7 @@ export interface UpdateLeadCrmInput {
   notes?: string | null;
   assignedMemberId?: string | null;
   assignedMemberName?: string | null;
+  resetCallOutcome?: boolean;
 }
 
 function formatCallerTimeStr(): string {
@@ -607,6 +608,27 @@ export async function updateLeadCrmDetails(
         ? `[Next Follow-up Scheduled: ${desiredFollowUp}]\n${cleanedNotes}`
         : `[Next Follow-up Scheduled: ${desiredFollowUp}]`
       : cleanedNotes || null;
+  }
+
+  // Auto-clear terminal outcome when phone is changed or when explicitly reset/approved
+  const isWrongNumberInNotes =
+    (company.notes || "").toLowerCase().includes("wrong number") ||
+    (company.notes || "").toLowerCase().includes("wrong");
+  const isPhoneChanged =
+    companyUpdates.phoneDisplay !== undefined &&
+    companyUpdates.phoneDisplay !== null &&
+    companyUpdates.phoneDisplay !== company.phoneDisplay;
+
+  if (input.resetCallOutcome || (isPhoneChanged && isWrongNumberInNotes) || input.status === "APPROVED") {
+    companyUpdates.status = "APPROVED";
+    const baseNotes = companyUpdates.notes !== undefined ? (companyUpdates.notes || "") : (company.notes || "");
+    let sanitizedNotes = baseNotes
+      .replace(/\(Wrong Number\)/gi, "(Number Corrected)")
+      .replace(/\(Not Interested\)/gi, "(Outcome Reset)");
+    if (input.nextFollowUp === undefined && (input.resetCallOutcome || isPhoneChanged)) {
+      sanitizedNotes = stripFollowUpTags(sanitizedNotes);
+    }
+    companyUpdates.notes = sanitizedNotes || null;
   }
 
   // If caller wrote a call note while status was still APPROVED/SYNCED, auto-advance lifecycle status
@@ -845,6 +867,187 @@ export async function updateLeadFollowUp(
   return { updatedNotes: finalNotes, nextFollowUp: trimmedDate };
 }
 
+export async function resetLeadCallStatus(
+  db: Db,
+  params: {
+    companyId: string;
+    newPhone?: string | null;
+    clearFollowUp?: boolean;
+    reason?: string | null;
+    actor: string;
+  }
+): Promise<{ updatedNotes: string | null; nextStatus: LifecycleStatus; phoneDisplay: string | null }> {
+  const [company] = await db
+    .select()
+    .from(companies)
+    .where(eq(companies.id, params.companyId))
+    .limit(1);
+
+  if (!company) throw new Error("Lead not found");
+
+  const companyUpdates: Record<string, any> = {
+    status: "APPROVED" as LifecycleStatus,
+    updatedAt: new Date(),
+  };
+
+  if (params.newPhone !== undefined && params.newPhone !== null) {
+    if (params.newPhone.trim()) {
+      const p = cleanPhone(params.newPhone.trim());
+      companyUpdates.phoneDisplay = p ? p.display : params.newPhone.trim();
+      companyUpdates.phoneE164 = p ? p.e164 : null;
+      const [primaryContact] = await db
+        .select()
+        .from(contacts)
+        .where(and(eq(contacts.companyId, params.companyId), eq(contacts.status, "ACTIVE")))
+        .limit(1);
+      if (primaryContact) {
+        await db
+          .update(contacts)
+          .set({ phoneDisplay: companyUpdates.phoneDisplay, phoneE164: companyUpdates.phoneE164, updatedAt: new Date() })
+          .where(eq(contacts.id, primaryContact.id));
+      }
+    } else {
+      companyUpdates.phoneDisplay = null;
+      companyUpdates.phoneE164 = null;
+    }
+  }
+
+  let cleanNotes = (company.notes || "")
+    .replace(/\(Wrong Number\)/gi, "(Number Corrected)")
+    .replace(/\(Not Interested\)/gi, "(Outcome Reset)");
+
+  if (params.clearFollowUp !== false) {
+    cleanNotes = stripFollowUpTags(cleanNotes);
+  }
+
+  const timeStr = formatCallerTimeStr();
+  const resetLog = `[${timeStr} • ${params.actor || "Owner"} (Ready to Call)]: ${
+    params.reason || "Call outcome reset to Ready to Call / Re-queued for dialing."
+  }`;
+  const finalNotes = cleanNotes ? `${resetLog}\n${cleanNotes}` : resetLog;
+  companyUpdates.notes = finalNotes;
+
+  await db
+    .update(companies)
+    .set(companyUpdates)
+    .where(eq(companies.id, params.companyId));
+
+  await audit(db, {
+    actor: params.actor,
+    action: "caller.outcome_reset",
+    entityType: "company",
+    entityId: params.companyId,
+    companyId: params.companyId,
+    details: {
+      previousStatus: company.status,
+      nextStatus: "APPROVED",
+      newPhone: params.newPhone || null,
+      reason: params.reason || null,
+    },
+  });
+
+  return {
+    updatedNotes: finalNotes,
+    nextStatus: "APPROVED",
+    phoneDisplay: companyUpdates.phoneDisplay !== undefined ? companyUpdates.phoneDisplay : company.phoneDisplay,
+  };
+}
+
+export async function deleteCallLogEntry(
+  db: Db,
+  companyId: string,
+  logIndex: number,
+  actor: string
+): Promise<{ updatedNotes: string | null; nextStatus: LifecycleStatus }> {
+  const [company] = await db
+    .select()
+    .from(companies)
+    .where(eq(companies.id, companyId))
+    .limit(1);
+
+  if (!company) throw new Error("Lead not found");
+
+  const rawNotes = company.notes || "";
+  const followUp = extractLatestFollowUp(rawNotes);
+  const clean = stripFollowUpTags(rawNotes);
+
+  const lines = clean.split("\n");
+  const callLogLines: string[] = [];
+  const systemLines: string[] = [];
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (
+      trimmed.startsWith("BATTLECARD:") ||
+      trimmed.startsWith("15-SECOND OPENING SCRIPT:") ||
+      trimmed.startsWith("Focus:") ||
+      trimmed.startsWith("Local Market:") ||
+      trimmed.startsWith("Gatekeeper Strategy:") ||
+      trimmed.startsWith("Reputation:") ||
+      trimmed.startsWith("Authority:") ||
+      trimmed.startsWith("PITCH ANGLE:")
+    ) {
+      systemLines.push(trimmed);
+    } else {
+      callLogLines.push(trimmed);
+    }
+  });
+
+  if (logIndex < 0 || logIndex >= callLogLines.length) {
+    throw new Error("Call log entry index out of bounds");
+  }
+
+  const deletedEntry = callLogLines[logIndex];
+  callLogLines.splice(logIndex, 1);
+
+  const remainingLogText = callLogLines.join("\n");
+  const systemText = systemLines.join("\n");
+  const combinedBody = [remainingLogText, systemText].filter(Boolean).join("\n");
+
+  const finalNotes = followUp
+    ? combinedBody
+      ? `[Next Follow-up Scheduled: ${followUp}]\n${combinedBody}`
+      : `[Next Follow-up Scheduled: ${followUp}]`
+    : combinedBody || null;
+
+  // Recalculate status from remaining logs
+  let nextStatus: LifecycleStatus = "APPROVED";
+  const remainingLogs = parseCallLog(finalNotes);
+  if (remainingLogs.length > 0 && remainingLogs[0]) {
+    const latestOutcome = remainingLogs[0].outcome;
+    nextStatus = outcomeToLifecycleStatus(latestOutcome);
+  } else if (company.status === "MEETING_BOOKED" || company.status === "QUALIFIED") {
+    nextStatus = company.status;
+  } else {
+    nextStatus = "APPROVED";
+  }
+
+  await db
+    .update(companies)
+    .set({
+      notes: finalNotes,
+      status: nextStatus,
+      updatedAt: new Date(),
+    })
+    .where(eq(companies.id, companyId));
+
+  await audit(db, {
+    actor,
+    action: "caller.call_log_deleted",
+    entityType: "company",
+    entityId: companyId,
+    companyId,
+    details: {
+      deletedLine: deletedEntry,
+      remainingLogsCount: remainingLogs.length,
+      nextStatus,
+    },
+  });
+
+  return { updatedNotes: finalNotes, nextStatus };
+}
+
 export interface CreateManualCrmLeadInput {
   marketId: string;
   name: string;
@@ -860,6 +1063,7 @@ export interface CreateManualCrmLeadInput {
   notes?: string | null;
   assignedMemberId?: string | null;
   assignedMemberName?: string | null;
+  resetCallOutcome?: boolean;
 }
 
 export async function createManualCrmLead(

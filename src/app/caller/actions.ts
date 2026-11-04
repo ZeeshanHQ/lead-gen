@@ -290,6 +290,63 @@ export async function updateLeadFollowUpAction(input: {
   }
 }
 
+export async function resetLeadCallStatusAction(input: {
+  companyId: string;
+  newPhone?: string | null;
+  clearFollowUp?: boolean;
+  reason?: string | null;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await resolveCallerActor(db);
+    const { resetLeadCallStatus } = await import("@/server/repo/caller");
+    const res = await resetLeadCallStatus(db, {
+      ...input,
+      actor,
+    });
+    revalidateCrmAndAnalytics(input.companyId);
+    return {
+      ok: true as const,
+      updatedNotes: res.updatedNotes,
+      nextStatus: res.nextStatus,
+      phoneDisplay: res.phoneDisplay,
+    };
+  } catch (err: any) {
+    return {
+      ok: false as const,
+      error: err.message || "Failed to reset lead outcome",
+      updatedNotes: undefined,
+      nextStatus: undefined,
+      phoneDisplay: undefined,
+    };
+  }
+}
+
+export async function deleteCallLogEntryAction(input: {
+  companyId: string;
+  logIndex: number;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await resolveCallerActor(db);
+    const { deleteCallLogEntry } = await import("@/server/repo/caller");
+    const res = await deleteCallLogEntry(db, input.companyId, input.logIndex, actor);
+    revalidateCrmAndAnalytics(input.companyId);
+    return {
+      ok: true as const,
+      updatedNotes: res.updatedNotes,
+      nextStatus: res.nextStatus,
+    };
+  } catch (err: any) {
+    return {
+      ok: false as const,
+      error: err.message || "Failed to delete call log entry",
+      updatedNotes: undefined,
+      nextStatus: undefined,
+    };
+  }
+}
+
 export async function createManualCrmLeadAction(
   input: import("@/server/repo/caller").CreateManualCrmLeadInput
 ) {

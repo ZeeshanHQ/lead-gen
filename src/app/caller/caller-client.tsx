@@ -213,7 +213,7 @@ export function CallerClient({
     setTimeout(() => setCrmToast(null), 3500);
   };
 
-  const isOwner = !activeMember || activeMember.role === "OWNER";
+  const isOwner = Boolean(activeMember && activeMember.role === "OWNER");
   const canDiscover = isOwner || Boolean(permissions?.discoverLeads);
   const canImport = isOwner || Boolean(permissions?.discoverLeads || permissions?.exportAndSync);
   const canExport = isOwner || Boolean(permissions?.exportAndSync);
@@ -634,7 +634,15 @@ export function CallerClient({
     const targetId = editingLead.companyId;
     const assignedObj = allMembers.find((m) => m.id === editAssignedId);
 
-    const combinedNotes = editFollowUp
+    const derived = deriveCallStatus(editingLead);
+    const isWrongNum = derived.key === "WRONG_NUMBER";
+    const phoneChanged = editPhone.trim() !== (editingLead.bestContact?.phone || editingLead.phone || "");
+    const shouldResetOutcome = (isWrongNum && phoneChanged) || editStatus === "APPROVED";
+    const effectiveStatus: LifecycleStatus = shouldResetOutcome ? "APPROVED" : editStatus;
+
+    const combinedNotes = shouldResetOutcome
+      ? editNotes.trim() || null
+      : editFollowUp
       ? editNotes.trim()
         ? `[Next Follow-up Scheduled: ${editFollowUp}]\n${editNotes.trim()}`
         : `[Next Follow-up Scheduled: ${editFollowUp}]`
@@ -650,8 +658,8 @@ export function CallerClient({
               website: editWebsite.trim() || null,
               city: editCity.trim() || null,
               state: editState.trim().toUpperCase() || null,
-              status: editStatus,
-              nextFollowUp: editFollowUp || null,
+              status: effectiveStatus,
+              nextFollowUp: shouldResetOutcome ? null : editFollowUp || null,
               notes: combinedNotes,
               assignedMemberId: editAssignedId || null,
               assignedMemberName: assignedObj?.name || null,
@@ -676,15 +684,16 @@ export function CallerClient({
         website: editWebsite.trim() || null,
         city: editCity.trim() || null,
         state: editState.trim().toUpperCase() || null,
-        status: editStatus,
+        status: effectiveStatus,
         contactName: editContactName.trim() || null,
         contactTitle: editContactTitle.trim() || null,
         contactEmail: editEmail.trim() || null,
         contactPhone: editPhone.trim() || null,
-        nextFollowUp: editFollowUp || null,
+        nextFollowUp: shouldResetOutcome ? null : editFollowUp || null,
         notes: editNotes.trim() || null,
         assignedMemberId: editAssignedId || null,
         assignedMemberName: assignedObj?.name || null,
+        resetCallOutcome: shouldResetOutcome,
       });
 
       if (res.ok) {

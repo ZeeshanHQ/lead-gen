@@ -12,6 +12,8 @@ import {
   assignLeadAction,
   assignBulkLeadsToCallerAction,
   unassignCallerLeadsAction,
+  resetLeadCallStatusAction,
+  deleteCallLogEntryAction,
 } from "@/app/caller/actions";
 import { LeadImportModal } from "@/components/lead-import-modal";
 import {
@@ -80,6 +82,7 @@ import {
   UserPlus,
   UserMinus,
   AlertCircle,
+  RotateCcw,
 } from "lucide-react";
 
 export interface CrmLeadItem {
@@ -463,6 +466,14 @@ export function CrmLeadSheet({
         };
         serverPayload.phone = value || null;
         serverPayload.contactPhone = value || null;
+
+        // If this lead was marked as Wrong Number, updating the phone automatically restores it to Ready to Call!
+        const currentDerived = derivedById.get(lead.id) ?? deriveCallStatus(lead);
+        if (currentDerived.key === "WRONG_NUMBER" && value) {
+          patch.status = "APPROVED";
+          serverPayload.status = "APPROVED";
+          serverPayload.resetCallOutcome = true;
+        }
       }
     } else if (field === "notes") {
       const oldNotes = stripFollowUpTagFromNotes(lead.notes) || "";
@@ -762,6 +773,88 @@ export function CrmLeadSheet({
     });
   };
 
+  // Reset call outcome (e.g. accidental wrong number / not interested / bad outcome) back to Ready to Call
+  const handleResetLeadOutcome = async (lead: CrmLeadItem, customPhone?: string) => {
+    const derived = derivedById.get(lead.id) ?? deriveCallStatus(lead);
+    if (
+      !confirm(
+        `Reset call status for ${lead.name} back to 'Ready to Call'?\n\nThis will remove the '${derived.def.label}' status, clear accidental terminal tags, and return the lead to the active calling queue.`
+      )
+    ) {
+      return;
+    }
+    const cleanNotes = (lead.notes || "")
+      .replace(/\(Wrong Number\)/gi, "(Number Corrected)")
+      .replace(/\(Not Interested\)/gi, "(Outcome Reset)");
+    const stripped = stripFollowUpTagFromNotes(cleanNotes);
+
+    applyLeadPatch(lead.id, {
+      status: "APPROVED",
+      nextFollowUp: null,
+      notes: stripped,
+      ...(customPhone ? { phoneDisplay: customPhone } : {}),
+    });
+
+    setSyncFeedback(`Reset ${lead.name} to Ready to Call queue.`);
+    setTimeout(() => setSyncFeedback(null), 3500);
+
+    const res = await resetLeadCallStatusAction({
+      companyId: lead.id,
+      newPhone: customPhone || null,
+      clearFollowUp: true,
+      reason: "Owner reset call outcome back to Ready to Call.",
+    });
+
+    if (res.ok) {
+      applyLeadPatch(lead.id, {
+        status: res.nextStatus || "APPROVED",
+        notes: res.updatedNotes,
+        nextFollowUp: null,
+        ...(res.phoneDisplay ? { phoneDisplay: res.phoneDisplay } : {}),
+      });
+    } else {
+      setSyncFeedback(res.error || "Failed to reset lead outcome");
+      setTimeout(() => setSyncFeedback(null), 4000);
+    }
+  };
+
+  // Delete a specific call log entry from a lead's history
+  const handleDeleteCallLog = async (lead: CrmLeadItem, logIndex: number) => {
+    if (
+      !confirm(
+        "Are you sure you want to delete this call log entry? If this was a mistake, deleting it will update the lead's call status."
+      )
+    ) {
+      return;
+    }
+    const res = await deleteCallLogEntryAction({
+      companyId: lead.id,
+      logIndex,
+    });
+    if (res.ok) {
+      applyLeadPatch(lead.id, {
+        notes: res.updatedNotes,
+        status: res.nextStatus,
+      });
+      if (viewingNotesHistoryLead && viewingNotesHistoryLead.id === lead.id) {
+        setViewingNotesHistoryLead((prev) =>
+          prev
+            ? {
+                ...prev,
+                notes: res.updatedNotes,
+                status: res.nextStatus,
+              }
+            : null
+        );
+      }
+      setSyncFeedback("Deleted call log entry.");
+      setTimeout(() => setSyncFeedback(null), 2500);
+    } else {
+      setSyncFeedback(res.error || "Failed to delete call log");
+      setTimeout(() => setSyncFeedback(null), 3000);
+    }
+  };
+
   // Open Full Edit Modal
   const openEditModal = (lead: CrmLeadItem) => {
     setEditingLead(lead);
@@ -794,14 +887,20 @@ export function CrmLeadSheet({
         : `[Next Follow-up Scheduled: ${editFollowUp}]`
       : editNotes.trim() || null;
 
+    const derived = derivedById.get(editingLead.id) ?? deriveCallStatus(editingLead);
+    const isWrongNum = derived.key === "WRONG_NUMBER";
+    const phoneChanged = editPhone.trim() !== (editingLead.bestContact?.phone || editingLead.phoneDisplay || "");
+    const shouldResetOutcome = (isWrongNum && phoneChanged) || editStatus === "APPROVED";
+    const effectiveStatus: LifecycleStatus = shouldResetOutcome ? "APPROVED" : editStatus;
+
     const optimistic: Partial<CrmLeadItem> = {
       name: editName.trim() || editingLead.name,
       phoneDisplay: editPhone.trim() || null,
       website: editWebsite.trim() || null,
       city: editCity.trim() || null,
       state: editState.trim().toUpperCase() || null,
-      status: editStatus,
-      nextFollowUp: editFollowUp || null,
+      status: effectiveStatus,
+      nextFollowUp: shouldResetOutcome ? null : editFollowUp || null,
       notes: updatedNotes,
       assignedMemberId: nextAssignedId,
       assignedMemberName: nextAssignedName,
@@ -825,16 +924,17 @@ export function CrmLeadSheet({
         website: editWebsite.trim() || null,
         city: editCity.trim() || null,
         state: editState.trim().toUpperCase() || null,
-        status: editStatus,
+        status: effectiveStatus,
         contactName: editContactName.trim() || null,
         contactTitle: editContactTitle.trim() || null,
         contactEmail: editEmail.trim() || null,
         contactPhone: editPhone.trim() || null,
         contactLinkedin: editContactLinkedin.trim() || null,
-        nextFollowUp: editFollowUp || null,
+        nextFollowUp: shouldResetOutcome ? null : editFollowUp || null,
         notes: editNotes.trim() || null,
         assignedMemberId: nextAssignedId,
         assignedMemberName: nextAssignedName,
+        resetCallOutcome: shouldResetOutcome,
       });
 
       if (res.ok) {
@@ -1519,7 +1619,7 @@ export function CrmLeadSheet({
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {callerFilter === "UNASSIGNED" && callerStats.unassignedCount > 0 && (
+              {callerStats.unassignedCount > 0 && (
                 <div className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs shadow-sm">
                   <UserPlus className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                   <span className="text-emerald-300 font-semibold">
@@ -2370,6 +2470,21 @@ export function CrmLeadSheet({
                                   attempts={derived.attempts}
                                   onClick={canCall ? () => openCallModal(lead) : undefined}
                                 />
+                                {canEdit && derived.key !== "UNTOUCHED" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResetLeadOutcome(lead)}
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-zinc-400 hover:text-amber-300 hover:bg-zinc-800 border border-zinc-800/80 transition inline-flex items-center gap-1 shadow-sm"
+                                    title={
+                                      derived.key === "WRONG_NUMBER"
+                                        ? "Mistake? Reset Wrong Number back to Ready to Call"
+                                        : "Reset outcome back to Ready to Call"
+                                    }
+                                  >
+                                    <RotateCcw className="w-2.5 h-2.5 text-amber-400" />
+                                    <span>Reset</span>
+                                  </button>
+                                )}
                                 {recentlyDialedIds.has(lead.id) && (
                                   <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300 border border-emerald-500/30">
                                     <PhoneCall className="w-2.5 h-2.5 animate-pulse" />
@@ -2720,6 +2835,32 @@ export function CrmLeadSheet({
             </div>
 
             <form onSubmit={handleSaveEditLead} className="p-6 space-y-4 overflow-y-auto">
+              {((derivedById.get(editingLead.id) ?? deriveCallStatus(editingLead)).key === "WRONG_NUMBER" ||
+                (editingLead.notes || "").toLowerCase().includes("wrong number")) && (
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-200 text-xs">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <div>
+                      <span className="font-bold text-white">Marked as Wrong Number.</span>{" "}
+                      <span className="text-zinc-300">
+                        Update the phone number below, or click Reset to restore this lead to the active calling queue.
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditStatus("APPROVED");
+                      setSyncFeedback("Status set to Ready to Call. Click Save Changes to apply.");
+                      setTimeout(() => setSyncFeedback(null), 3000);
+                    }}
+                    className="px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 font-bold text-[11px] shrink-0 inline-flex items-center gap-1 transition"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Reset to Ready to Call</span>
+                  </button>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-zinc-300 mb-1">
@@ -3008,16 +3149,29 @@ export function CrmLeadSheet({
                   .filter((line) => line.trim())
                   .map((line, lineIdx) => {
                     const isFollowUpLine = line.includes("Next Follow-up Scheduled");
+                    const isCallLog = line.startsWith("[") && line.includes("•");
                     return (
                       <div
                         key={lineIdx}
-                        className={`p-3 rounded-lg border text-xs leading-relaxed ${
+                        className={`p-3 rounded-lg border text-xs leading-relaxed flex items-start justify-between gap-3 ${
                           isFollowUpLine
                             ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                            : line.toLowerCase().includes("(wrong number)")
+                            ? "border-rose-500/30 bg-rose-500/10 text-rose-200"
                             : "border-zinc-800 bg-[#09090b] text-zinc-300"
                         }`}
                       >
-                        <p className="whitespace-pre-wrap">{line}</p>
+                        <p className="whitespace-pre-wrap flex-1">{line}</p>
+                        {canEdit && isCallLog && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCallLog(viewingNotesHistoryLead, lineIdx)}
+                            className="p-1 rounded text-zinc-500 hover:text-rose-400 hover:bg-zinc-800 transition shrink-0"
+                            title="Delete this call log (Reverts outcome if logged by mistake)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     );
                   })
@@ -3029,13 +3183,30 @@ export function CrmLeadSheet({
             </div>
 
             <div className="p-4 border-t border-zinc-800 flex items-center justify-between bg-[#0c0c0f]">
-              <button
-                type="button"
-                onClick={() => setViewingNotesHistoryLead(null)}
-                className="px-3.5 py-1.5 rounded-lg text-zinc-400 hover:text-white text-xs font-medium"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setViewingNotesHistoryLead(null)}
+                  className="px-3.5 py-1.5 rounded-lg text-zinc-400 hover:text-white text-xs font-medium"
+                >
+                  Close
+                </button>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = viewingNotesHistoryLead;
+                      setViewingNotesHistoryLead(null);
+                      handleResetLeadOutcome(target);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-semibold transition"
+                    title="Reset call status back to Ready to Call"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset to Ready to Call</span>
+                  </button>
+                )}
+              </div>
               {canCall && (
                 <button
                   type="button"

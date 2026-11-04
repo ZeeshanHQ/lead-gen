@@ -36,7 +36,7 @@ export function CallStatusBadge({
     <>
       <span className={`h-2 w-2 rounded-full ${def.dot}`} />
       <span>{def.label}</span>
-      {showAttempts && finalAttempts !== undefined && finalAttempts > 0 && (
+      {showAttempts && finalAttempts !== undefined && finalAttempts > 0 && key !== "UNTOUCHED" && (
         <span className="rounded bg-black/30 px-1 text-[9px] font-bold text-zinc-300">
           {finalAttempts}x
         </span>
