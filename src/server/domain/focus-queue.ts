@@ -155,16 +155,12 @@ export function computeAutoFollowUpCadence(input: {
   const nowMs = input.nowMs ?? Date.now();
   const explicit = (input.explicitFollowUpDate || "").trim();
 
-  if (explicit) {
-    return {
-      nextFollowUpIso: explicit,
-      cadenceReason: "Manual follow-up scheduled by caller",
-      isTerminal: false,
-    };
-  }
-
-  // Terminal outcomes: remove from active calling retry loop
-  if (input.outcome === "NOT_INTERESTED" || input.outcome === "WRONG_NUMBER") {
+  // Terminal outcomes: remove from active calling retry loop and clear all follow-ups
+  if (
+    input.outcome === "NOT_INTERESTED" ||
+    input.outcome === "WRONG_NUMBER" ||
+    input.outcome === "MEETING_BOOKED"
+  ) {
     return {
       nextFollowUpIso: null,
       cadenceReason: "Closed outcome — removed from retry queue",
@@ -172,11 +168,11 @@ export function computeAutoFollowUpCadence(input: {
     };
   }
 
-  if (input.outcome === "MEETING_BOOKED") {
+  if (explicit) {
     return {
-      nextFollowUpIso: null,
-      cadenceReason: "Meeting booked — moved to won pipeline",
-      isTerminal: true,
+      nextFollowUpIso: explicit,
+      cadenceReason: "Manual follow-up scheduled by caller",
+      isTerminal: false,
     };
   }
 

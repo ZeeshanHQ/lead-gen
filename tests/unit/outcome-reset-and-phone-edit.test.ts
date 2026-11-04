@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { deriveCallStatus, parseCallLog } from "@/server/domain/call-outcomes";
-import { rankLeadsForFocusStream } from "@/server/domain/focus-queue";
+import { rankLeadsForFocusStream, computeAutoFollowUpCadence } from "@/server/domain/focus-queue";
 
 describe("Outcome Reset & Accidental Outcome Recovery", () => {
   it("derives WRONG_NUMBER when cold caller logs a wrong number attempt", () => {
@@ -59,5 +59,27 @@ describe("Outcome Reset & Accidental Outcome Recovery", () => {
 
     const stream = rankLeadsForFocusStream([lead]);
     expect(stream).toHaveLength(1);
+  });
+
+  it("ensures computeAutoFollowUpCadence completely clears follow-ups on NOT_INTERESTED even if date passed", () => {
+    const res = computeAutoFollowUpCadence({
+      outcome: "NOT_INTERESTED",
+      previousAttempts: 1,
+      explicitFollowUpDate: "2026-11-05T10:00",
+      nowMs: Date.now(),
+    });
+    expect(res.nextFollowUpIso).toBeNull();
+    expect(res.isTerminal).toBe(true);
+  });
+
+  it("ensures computeAutoFollowUpCadence completely clears follow-ups on WRONG_NUMBER even if date passed", () => {
+    const res = computeAutoFollowUpCadence({
+      outcome: "WRONG_NUMBER",
+      previousAttempts: 1,
+      explicitFollowUpDate: "2026-11-05T10:00",
+      nowMs: Date.now(),
+    });
+    expect(res.nextFollowUpIso).toBeNull();
+    expect(res.isTerminal).toBe(true);
   });
 });

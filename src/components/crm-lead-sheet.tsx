@@ -1129,13 +1129,12 @@ export function CrmLeadSheet({
 
     const targetLead = selectedLead;
     const chosenOutcome = data.outcome;
-    const derived = derivedById.get(targetLead.id) ?? deriveCallStatus(targetLead);
-    const autoCadence = computeAutoFollowUpCadence({
-      outcome: chosenOutcome,
-      previousAttempts: derived.attempts,
-      explicitFollowUpDate: data.followUpDate || null,
-    });
-    const chosenFollowUp = autoCadence.nextFollowUpIso;
+    const isTerminal =
+      chosenOutcome === "MEETING_BOOKED" ||
+      chosenOutcome === "NOT_INTERESTED" ||
+      chosenOutcome === "WRONG_NUMBER";
+    const explicitDate = (data.followUpDate || "").trim();
+    const chosenFollowUp = !isTerminal && explicitDate ? explicitDate : null;
     const rawNoteText = data.callerNotes;
     const combinedNotes = chosenFollowUp
       ? `[Next Follow-up Scheduled: ${chosenFollowUp}] ${rawNoteText}`

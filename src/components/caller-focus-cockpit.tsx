@@ -312,14 +312,15 @@ export function CallerFocusCockpit({
     const rawExplicitFollowUp =
       overrideFollowUp !== undefined ? overrideFollowUp : followUpDate.trim() || null;
 
-    const autoCadence = computeAutoFollowUpCadence({
-      outcome: outcomeToCommit,
-      previousAttempts: activeRankedItem?.attempts ?? 0,
-      explicitFollowUpDate: rawExplicitFollowUp,
-      nowMs,
-    });
+    const isTerminal =
+      outcomeToCommit === "MEETING_BOOKED" ||
+      outcomeToCommit === "NOT_INTERESTED" ||
+      outcomeToCommit === "WRONG_NUMBER";
 
-    const finalFollowUp = autoCadence.nextFollowUpIso;
+    const finalFollowUp =
+      !isTerminal && rawExplicitFollowUp && rawExplicitFollowUp.trim().length > 0
+        ? rawExplicitFollowUp.trim()
+        : null;
 
     setSessionStreak((s) => s + 1);
     setSessionCompletedIds((prev) => {
@@ -343,23 +344,8 @@ export function CallerFocusCockpit({
   const handleSelectDisposition = (btn: (typeof DISPOSITION_BUTTONS)[number]) => {
     setValidationHint(null);
     setSelectedOutcome(btn.key);
-
-    // Pre-fill smart follow-up preset for Connected / Gatekeeper if none picked yet
-    if (btn.key === "CONNECTED" && !followUpDate) {
-      const tomorrowIso = buildPresetFollowUpIso("TOMORROW");
-      setFollowUpDate(tomorrowIso);
-      setFollowUpPresetUsed("TOMORROW");
-    } else if (btn.key === "GATEKEEPER_BLOCKED" && !followUpDate) {
-      const auto = computeAutoFollowUpCadence({
-        outcome: "GATEKEEPER_BLOCKED",
-        previousAttempts: activeRankedItem?.attempts ?? 0,
-        nowMs,
-      });
-      if (auto.nextFollowUpIso) {
-        setFollowUpDate(auto.nextFollowUpIso);
-        setFollowUpPresetUsed("AUTO_GK");
-      }
-    }
+    // Never auto-force follow-up callbacks on simple attempts.
+    // Callers can explicitly click a preset chip or date picker if a callback was arranged.
   };
 
   // Keyboard shortcuts:

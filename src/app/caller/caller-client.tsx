@@ -856,13 +856,12 @@ export function CallerClient({
 
     const targetLead = selectedLead;
     const chosenOutcome = data.outcome;
-    const derived = deriveCallStatus(targetLead);
-    const autoCadence = computeAutoFollowUpCadence({
-      outcome: chosenOutcome,
-      previousAttempts: derived.attempts,
-      explicitFollowUpDate: data.followUpDate || null,
-    });
-    const chosenFollowUp = autoCadence.nextFollowUpIso;
+    const isTerminal =
+      chosenOutcome === "MEETING_BOOKED" ||
+      chosenOutcome === "NOT_INTERESTED" ||
+      chosenOutcome === "WRONG_NUMBER";
+    const explicitDate = (data.followUpDate || "").trim();
+    const chosenFollowUp = !isTerminal && explicitDate ? explicitDate : null;
     const chosenSoft = data.softwareConfirmed || null;
     const fleetNum = data.fleetSizeConfirmed ?? null;
     const rawNoteText = data.callerNotes;
@@ -916,7 +915,7 @@ export function CallerClient({
     setSelectedLead(null);
     showToast(
       `Call logged for ${targetLead.name} (${outcomeLabel}). ${
-        !autoCadence.isTerminal && autoCadence.nextFollowUpIso ? autoCadence.cadenceReason : "Lead updated."
+        chosenFollowUp ? "Next callback scheduled." : "Lead updated."
       }`
     );
 
@@ -954,13 +953,12 @@ export function CallerClient({
   const handleFocusCockpitSubmit = (payload: FocusCockpitSubmitPayload) => {
     const targetLead = payload.lead;
     const chosenOutcome = payload.outcome;
-    const derived = deriveCallStatus(targetLead);
-    const autoCadence = computeAutoFollowUpCadence({
-      outcome: chosenOutcome,
-      previousAttempts: derived.attempts,
-      explicitFollowUpDate: payload.followUpDate,
-    });
-    const chosenFollowUp = autoCadence.nextFollowUpIso;
+    const isTerminal =
+      chosenOutcome === "MEETING_BOOKED" ||
+      chosenOutcome === "NOT_INTERESTED" ||
+      chosenOutcome === "WRONG_NUMBER";
+    const explicitDate = (payload.followUpDate || "").trim();
+    const chosenFollowUp = !isTerminal && explicitDate ? explicitDate : null;
     const chosenSoft = payload.softwareConfirmed || null;
     const fleetNum = payload.fleetSizeConfirmed ?? null;
     const rawNoteText = payload.callerNotes;

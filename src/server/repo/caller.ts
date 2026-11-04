@@ -334,26 +334,23 @@ export async function recordCallFeedback(
     });
   }
 
-  // 3. Update company lifecycle status and clean caller log entries (Closed-Loop Auto-Cadence)
-  const previousAttempts = parseCallLog(company.notes).length;
+  // 3. Update company lifecycle status and clean caller log entries
+  const isTerminalOutcome =
+    effectiveOutcome === "MEETING_BOOKED" ||
+    effectiveOutcome === "NOT_INTERESTED" ||
+    effectiveOutcome === "WRONG_NUMBER";
+
   const followUpMatch = (input.callerNotes || "").match(/\[Next Follow-up Scheduled:\s*([^\]]+)\]/i);
   const extractedFollowUp = followUpMatch ? followUpMatch[1]?.trim() : null;
   const explicitFollowUp =
     (input.followUpDate ? input.followUpDate.trim() : null) || extractedFollowUp;
-  const existingFollowUp = extractLatestFollowUp(company.notes);
-  const existingIsFuture =
-    existingFollowUp && !Number.isNaN(Date.parse(existingFollowUp))
-      ? Date.parse(existingFollowUp) > Date.now()
-      : false;
 
-  const autoCadence = computeAutoFollowUpCadence({
-    outcome: effectiveOutcome,
-    previousAttempts,
-    explicitFollowUpDate:
-      explicitFollowUp || (existingIsFuture && effectiveOutcome !== "MEETING_BOOKED" && effectiveOutcome !== "NOT_INTERESTED" && effectiveOutcome !== "WRONG_NUMBER" ? existingFollowUp : null),
-  });
-
-  const effectiveFollowUp = autoCadence.nextFollowUpIso;
+  // A follow-up is ONLY scheduled if the caller explicitly provided a follow-up date AND the outcome is not terminal.
+  // When a caller dials a lead that previously had a follow-up, completing the call fulfills and clears the previous callback!
+  const effectiveFollowUp =
+    !isTerminalOutcome && explicitFollowUp && explicitFollowUp.trim().length > 0
+      ? explicitFollowUp.trim()
+      : null;
 
   const cleanUserNote = stripFollowUpTags(input.callerNotes).trim();
   const noteBody = cleanUserNote || getDefaultCallNote(effectiveOutcome);
