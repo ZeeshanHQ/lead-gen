@@ -293,6 +293,31 @@ describe("Phase 6 & 7: Google Sheets Sync & Caller Queue / Pain Discovery", () =
       expect(res2.ok).toBe(true);
       expect(res2.nextFollowUp).toBeTruthy();
       expect(res2.autoRescheduleReason).toBeTruthy();
+
+      // 4. If caller explicitly passes clearFollowUp: true, callback is cleared to null
+      const res3 = await recordCallFeedback(handle.db, {
+        companyId: companyBId,
+        actor: "Hamda",
+        callOutcome: "NO_ANSWER",
+        callerNotes: "Cleared callback intentionally",
+        followUpDate: null,
+        clearFollowUp: true,
+        clientLogId: "log_hamda_3",
+      });
+      expect(res3.ok).toBe(true);
+      expect(res3.nextFollowUp).toBeNull();
+
+      // 5. Subsequent normal cold dial without a callback stays null (never forces unwanted callback)
+      const res4 = await recordCallFeedback(handle.db, {
+        companyId: companyBId,
+        actor: "Hamda",
+        callOutcome: "NO_ANSWER",
+        callerNotes: "Cold retry dial, no answer",
+        followUpDate: null,
+        clientLogId: "log_hamda_4",
+      });
+      expect(res4.ok).toBe(true);
+      expect(res4.nextFollowUp).toBeNull();
     });
   });
 });

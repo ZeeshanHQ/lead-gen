@@ -139,6 +139,8 @@ export interface CallFeedbackInput {
   fleetSizeConfirmed?: number | null;
   callerNotes: string;
   followUpDate?: string | null;
+  /** When true, explicitly clears any existing follow-up even on an unfulfilled callback retry. */
+  clearFollowUp?: boolean | null;
   /**
    * Unique id generated in the browser for this submission. Makes retries safe: the server
    * saves a given clientLogId at most once.
@@ -501,6 +503,7 @@ async function recordCallFeedbackInTransaction(
   if (
     !effectiveFollowUp &&
     !isTerminalOutcome &&
+    !input.clearFollowUp &&
     previousFollowUp &&
     UNFULFILLED_CALLBACK_OUTCOMES.has(effectiveOutcome)
   ) {

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Focus Stream & Automated Follow-Up Enforcement Engine (Pure Domain Logic).
  *
  * Designed for 10,000+ lead scale and zero-friction cold caller psychology:
@@ -17,6 +17,7 @@ import {
   deriveCallStatus,
   extractFollowUp,
   parseCallLog,
+  parseNoteTimestamp,
   type CallOutcomeKey,
   type CallStatusKey,
 } from "./call-outcomes";
@@ -427,7 +428,12 @@ export function rankLeadsForFocusStream<
     }
 
     // TIER 4: Previously Dialed Leads Eligible for Retry
-    const retryPenalty = derived.attempts * 45;
+    const lastCallMs = derived.lastLog?.timestampRaw
+      ? parseNoteTimestamp(derived.lastLog.timestampRaw, nowMs)
+      : null;
+    const recentDialCooldownPenalty =
+      lastCallMs !== null && nowMs - lastCallMs < 3 * 3600_000 ? 1_500 : 0;
+    const retryPenalty = derived.attempts * 45 + recentDialCooldownPenalty;
     const retryScore = 4_000 + localTime.windowScoreBoost * 15 + icp * 2 + adBonus - retryPenalty;
     ranked.push({
       ...base,

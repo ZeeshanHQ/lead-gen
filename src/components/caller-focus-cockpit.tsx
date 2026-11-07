@@ -67,6 +67,7 @@ export interface FocusCockpitSubmitPayload {
   outcome: CallOutcomeKey;
   callerNotes: string;
   followUpDate: string | null;
+  clearFollowUp?: boolean;
   softwareConfirmed?: string | null;
   fleetSizeConfirmed?: number | null;
   clientLogId?: string;
@@ -116,7 +117,7 @@ const DISPOSITION_BUTTONS: Array<{
     key: "NO_ANSWER",
     hotkey: "1",
     label: "No Answer",
-    sublabel: "Retry next US window",
+    sublabel: "Log attempt • No callback forced",
     accentClass:
       "border-white/10 bg-[#09090b]/80 hover:border-slate-500 text-slate-200",
     activeClass:
@@ -126,7 +127,7 @@ const DISPOSITION_BUTTONS: Array<{
     key: "CALL_COMPLETED",
     hotkey: "2",
     label: "Left Voicemail",
-    sublabel: "Retry in 2 business days",
+    sublabel: "Log voicemail • No callback forced",
     accentClass:
       "border-white/10 bg-[#09090b]/80 hover:border-violet-500 text-violet-200",
     activeClass:
@@ -136,7 +137,7 @@ const DISPOSITION_BUTTONS: Array<{
     key: "GATEKEEPER_BLOCKED",
     hotkey: "3",
     label: "Receptionist / GK",
-    sublabel: "Retry early/late window",
+    sublabel: "Log GK • Set callback if needed",
     accentClass:
       "border-white/10 bg-[#09090b]/80 hover:border-amber-500 text-amber-200",
     activeClass:
@@ -146,7 +147,7 @@ const DISPOSITION_BUTTONS: Array<{
     key: "CONNECTED",
     hotkey: "4",
     label: "Spoke to Owner",
-    sublabel: "Follow-up / nurture",
+    sublabel: "Owner spoke • Set callback if needed",
     accentClass:
       "border-white/10 bg-[#09090b]/80 hover:border-sky-500 text-sky-200",
     activeClass:
@@ -242,10 +243,10 @@ export function CallerFocusCockpit({
     return () => clearInterval(timer);
   }, []);
 
-  // Intelligent queue stream scope (ALL callable leads, Fresh untouched only, or Callbacks only)
-  const [streamScope, setStreamScope] = useState<"ALL" | "FRESH" | "CALLBACKS">(
-    "ALL"
-  );
+  // Intelligent queue stream scope (ALL callable leads, Fresh untouched only, Callbacks only, or Retries only)
+  const [streamScope, setStreamScope] = useState<
+    "ALL" | "FRESH" | "CALLBACKS" | "RETRIES"
+  >("ALL");
 
   // Rank all leads into the intelligent Focus Stream
   const rankedStream = useMemo(
@@ -266,6 +267,13 @@ export function CallerFocusCockpit({
       ).length,
     [rankedStream]
   );
+
+  const retriesStream = useMemo(
+    () => rankedStream.filter((r) => r.tier === "CADENCE_RETRY_DUE"),
+    [rankedStream]
+  );
+
+  const retriesCount = retriesStream.length;
 
   const allCallbacksStream = useMemo(() => {
     return rankedStream
@@ -301,8 +309,17 @@ export function CallerFocusCockpit({
     if (streamScope === "CALLBACKS") {
       return allCallbacksStream;
     }
+    if (streamScope === "RETRIES") {
+      return retriesStream;
+    }
     return activeCallableStream;
-  }, [rankedStream, activeCallableStream, allCallbacksStream, streamScope]);
+  }, [
+    rankedStream,
+    activeCallableStream,
+    allCallbacksStream,
+    retriesStream,
+    streamScope,
+  ]);
 
   // Stream of uncontacted leads for this active calling session
   const uncontactedStream = useMemo(
@@ -479,12 +496,16 @@ export function CallerFocusCockpit({
       outcome: outcomeToCommit,
       callerNotes: finalNotes,
       followUpDate: finalFollowUp,
+      clearFollowUp: followUpPresetUsed === "CLEARED" || isTerminal,
       clientLogId,
     });
   };
 
   // Handle clicking one of the 7 Disposition Buttons:
-  // Selects the outcome and pre-fills smart US business-hour follow-up cadence for non-terminal outcomes
+  // - Never forces unwanted calendar follow-ups on normal cold calls (No Answer, Voicemail, GK, Connected).
+  // - Callers only set a callback date when a lead genuinely needs a follow-up (via 1-click presets or custom date).
+  // - However, if the lead ALREADY had a scheduled callback and the caller could not reach the owner
+  //   (No Answer / Voicemail / Receptionist), pre-fills the next US business window so a real callback is never lost.
   const handleSelectDisposition = (btn: (typeof DISPOSITION_BUTTONS)[number]) => {
     setValidationHint(null);
     setSelectedOutcome(btn.key);
@@ -503,11 +524,20 @@ export function CallerFocusCockpit({
       return;
     }
 
-    // Only auto-suggest if the caller hasn't manually picked a preset/custom date on this lead yet
+    const existingFu =
+      activeLead.nextFollowUp || extractFollowUp(activeLead.notes);
+    const isUnfulfilledAttempt =
+      btn.key === "NO_ANSWER" ||
+      btn.key === "CALL_COMPLETED" ||
+      btn.key === "GATEKEEPER_BLOCKED";
+
+    // Only auto-shift if this lead ALREADY had a scheduled callback and the caller couldn't reach the owner
     if (
-      !followUpPresetUsed ||
-      followUpPresetUsed === "AUTO" ||
-      followUpPresetUsed === "EXISTING"
+      existingFu &&
+      isUnfulfilledAttempt &&
+      (!followUpPresetUsed ||
+        followUpPresetUsed === "AUTO" ||
+        followUpPresetUsed === "EXISTING")
     ) {
       const cadence = computeAutoFollowUpCadence({
         outcome: btn.key,
@@ -518,26 +548,21 @@ export function CallerFocusCockpit({
       if (cadence.nextFollowUpIso) {
         setFollowUpDate(cadence.nextFollowUpIso);
         setFollowUpPresetUsed("AUTO");
-        setAutoCadenceReason(cadence.cadenceReason);
-      } else if (btn.key === "CONNECTED") {
-        // When speaking with the owner, pre-fill a 2-day follow-up if none exists, which the caller can adjust or clear in 1 click
-        const existingFu =
-          activeLead.nextFollowUp || extractFollowUp(activeLead.notes);
-        const existingMs = parseFollowUpMs(existingFu);
-        if (existingFu && existingMs !== null && existingMs > nowMs) {
-          setFollowUpDate(existingFu);
-          setFollowUpPresetUsed("EXISTING");
-          setAutoCadenceReason("Keeping existing scheduled callback");
-        } else {
-          const suggested = buildPresetFollowUpIso(
-            "TWO_DAYS",
-            activeLead.state
-          );
-          setFollowUpDate(suggested);
-          setFollowUpPresetUsed("AUTO");
-          setAutoCadenceReason("Auto +2 business days (10:00 AM prospect time)");
-        }
+        setAutoCadenceReason("Existing callback shifted to next US window");
+        return;
       }
+    }
+
+    // For normal cold calls (or when Connected is selected without a new preset chosen yet),
+    // do not force a follow-up date unless the caller explicitly clicked a preset or custom date.
+    if (
+      !followUpPresetUsed ||
+      followUpPresetUsed === "AUTO" ||
+      followUpPresetUsed === "EXISTING"
+    ) {
+      setFollowUpDate("");
+      setFollowUpPresetUsed(null);
+      setAutoCadenceReason(null);
     }
   };
 
@@ -907,7 +932,7 @@ export function CallerFocusCockpit({
                 setPinnedLeadId(null);
                 setCursorIndex(0);
               }}
-              title="All scheduled callbacks (Overdue, Due Today, and Upcoming)"
+              title="Only intentional scheduled callbacks (Overdue, Due Today, and Upcoming)"
               className={`px-2.5 py-0.5 rounded-full font-semibold transition cursor-pointer inline-flex items-center gap-1 ${
                 streamScope === "CALLBACKS"
                   ? "bg-amber-400 text-black font-extrabold shadow-sm"
@@ -921,6 +946,24 @@ export function CallerFocusCockpit({
                 <span className="inline-flex h-1.5 w-1.5 rounded-full bg-rose-400 animate-ping" />
               )}
             </button>
+            {retriesCount > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStreamScope("RETRIES");
+                  setPinnedLeadId(null);
+                  setCursorIndex(0);
+                }}
+                title="Previously dialed leads (No Answer / Voicemail / GK) eligible for retry"
+                className={`px-2.5 py-0.5 rounded-full font-semibold transition cursor-pointer ${
+                  streamScope === "RETRIES"
+                    ? "bg-sky-400 text-black font-extrabold shadow-sm"
+                    : "text-sky-300/90 hover:text-sky-200"
+                }`}
+              >
+                Retries ({retriesCount})
+              </button>
+            )}
           </div>
 
           {sessionStreak > 0 && (
@@ -1851,7 +1894,7 @@ export function CallerFocusCockpit({
               <div className="flex flex-wrap items-center justify-between gap-1">
                 <span className="text-[11px] font-bold text-amber-200 flex items-center gap-1">
                   <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Next Callback (US Business Hours)</span>
+                  <span>Schedule Callback (Optional)</span>
                 </span>
                 <div className="flex flex-wrap items-center gap-1">
                   {[
@@ -1931,7 +1974,7 @@ export function CallerFocusCockpit({
                   )}
               </div>
 
-              {followUpDate && (
+              {followUpDate ? (
                 <div className="flex items-center justify-between text-[10px] text-amber-200/90 px-0.5">
                   <span>
                     📅{" "}
@@ -1944,6 +1987,10 @@ export function CallerFocusCockpit({
                       {autoCadenceReason}
                     </span>
                   )}
+                </div>
+              ) : (
+                <div className="text-[10px] text-zinc-400 px-0.5">
+                  No callback scheduled — only pick a time above if this lead needs a follow-up.
                 </div>
               )}
             </div>

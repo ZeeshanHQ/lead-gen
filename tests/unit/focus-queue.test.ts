@@ -209,6 +209,31 @@ describe("rankLeadsForFocusStream", () => {
     expect(heldBackItem!.tier).toBe("SCHEDULED_FOLLOW_UP");
     expect(heldBackItem!.isHeldBack).toBe(true);
   });
+
+  it("applies a 3-hour cooldown penalty to recently dialed CADENCE_RETRY_DUE leads so older retries surface first", () => {
+    const justDialedLead = mockLead({
+      companyId: "just-dialed",
+      name: "Just Dialed Lead",
+      status: "CALLING",
+      nextFollowUp: null,
+      icpScore: 95,
+      notes: "[Oct 29, 7:45 PM • Hamda (No Answer)]: Rang 5x, no pickup",
+    });
+
+    const olderRetryLead = mockLead({
+      companyId: "older-retry",
+      name: "Older Retry Lead",
+      status: "CALLING",
+      nextFollowUp: null,
+      icpScore: 80,
+      notes: "[Oct 28, 10:00 AM • Hamda (No Answer)]: Rang 5x, no pickup",
+    });
+
+    const stream = rankLeadsForFocusStream([justDialedLead, olderRetryLead], mockNow);
+    expect(stream[0]!.lead.companyId).toBe("older-retry");
+    expect(stream[0]!.tier).toBe("CADENCE_RETRY_DUE");
+    expect(stream[1]!.lead.companyId).toBe("just-dialed");
+  });
 });
 
 describe("buildFlashBattlecard", () => {

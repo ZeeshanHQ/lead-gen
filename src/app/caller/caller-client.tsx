@@ -1052,7 +1052,10 @@ export function CallerClient({
               ...item,
               status: optimisticStatus,
               software: chosenSoft || item.software,
-              nextFollowUp: isTerminal ? null : chosenFollowUp || item.nextFollowUp,
+              nextFollowUp:
+                isTerminal || payload.clearFollowUp
+                  ? null
+                  : chosenFollowUp || item.nextFollowUp,
               notes: optimisticNotes,
               updatedAt: nowIso,
             }
@@ -1077,6 +1080,7 @@ export function CallerClient({
         fleetSizeConfirmed: fleetNum,
         callerNotes: combinedNotes,
         followUpDate: chosenFollowUp,
+        clearFollowUp: payload.clearFollowUp || false,
         clientLogId: payload.clientLogId || null,
       });
 
