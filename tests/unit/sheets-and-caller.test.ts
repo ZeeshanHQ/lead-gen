@@ -248,5 +248,51 @@ describe("Phase 6 & 7: Google Sheets Sync & Caller Queue / Pain Discovery", () =
       expect(c!.status).toBe("MEETING_BOOKED");
       expect(c!.notes).toContain("Demo scheduled for Thursday");
     });
+
+    it("never hijacks explicit caller disposition or wipes scheduled follow-ups on deferral notes, and auto-reschedules unfulfilled callbacks", async () => {
+      await approveCompany(handle.db, companyBId, {
+        actor: "auditor_alice",
+        note: "Approved for calling test.",
+      });
+
+      // 1. Caller selects CONNECTED and types "not interested right now, call back Tuesday" with a followUpDate
+      const res1 = await recordCallFeedback(handle.db, {
+        companyId: companyBId,
+        actor: "Hamda",
+        callOutcome: "CONNECTED",
+        callerNotes: "Owner busy, said not interested right now, call back Tuesday morning.",
+        followUpDate: "2026-11-10T20:00",
+        clientLogId: "log_hamda_1",
+      });
+
+      expect(res1.ok).toBe(true);
+      expect(res1.nextStatus).toBe("CONNECTED");
+      expect(res1.nextFollowUp).toBe("2026-11-10T20:00");
+
+      // 2. Duplicate submission with same clientLogId is ignored idempotently
+      const resDup = await recordCallFeedback(handle.db, {
+        companyId: companyBId,
+        actor: "Hamda",
+        callOutcome: "CONNECTED",
+        callerNotes: "Owner busy, said not interested right now, call back Tuesday morning.",
+        followUpDate: "2026-11-10T20:00",
+        clientLogId: "log_hamda_1",
+      });
+      expect(resDup.duplicate).toBe(true);
+
+      // 3. Later, caller dials the callback and gets NO_ANSWER without passing a new followUpDate:
+      //    nextFollowUp must NOT be wiped to null!
+      const res2 = await recordCallFeedback(handle.db, {
+        companyId: companyBId,
+        actor: "Hamda",
+        callOutcome: "NO_ANSWER",
+        callerNotes: "Rang 5x, no pickup",
+        followUpDate: null,
+        clientLogId: "log_hamda_2",
+      });
+      expect(res2.ok).toBe(true);
+      expect(res2.nextFollowUp).toBeTruthy();
+      expect(res2.autoRescheduleReason).toBeTruthy();
+    });
   });
 });

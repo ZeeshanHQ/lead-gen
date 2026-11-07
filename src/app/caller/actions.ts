@@ -52,6 +52,8 @@ export async function logCallFeedbackAction(input: CallFeedbackInput) {
       updatedNotes: result.updatedNotes,
       nextFollowUp: result.nextFollowUp,
       updatedAt: result.updatedAt,
+      autoRescheduleReason: result.autoRescheduleReason ?? null,
+      duplicate: Boolean(result.duplicate),
     };
   } catch (error: any) {
     console.error("Failed to record call feedback:", error);

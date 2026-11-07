@@ -42,6 +42,8 @@ import {
   STATUS_FILTER_TO_KEY,
   computeLiveCrmTelemetry,
   deriveCallStatus,
+  extractFollowUp,
+  isFollowUpOverdue,
   type CallOutcomeKey,
   type CallStatusKey,
 } from "@/server/domain/call-outcomes";
@@ -559,14 +561,62 @@ export function CallerClient({
   // Open Quick Follow-Up Modal
   const openFollowUpModal = (lead: CallerLeadView) => {
     setFollowUpTarget(lead);
-    setFollowUpInput(lead.nextFollowUp || buildPresetFollowUpIso("TOMORROW"));
+    setFollowUpInput(lead.nextFollowUp || buildPresetFollowUpIso("TOMORROW", lead.state));
     setFollowUpNote("");
+  };
+
+  // Direct Follow-Up Reschedule from Calling Cockpit (never logs a fake call)
+  const handleCockpitRescheduleFollowUp = (
+    lead: CallerLeadView,
+    followUpDate: string | null,
+    note?: string
+  ) => {
+    const targetId = lead.companyId;
+    setQueue((prev) =>
+      prev.map((item) =>
+        item.companyId === targetId
+          ? {
+              ...item,
+              nextFollowUp: followUpDate,
+            }
+          : item
+      )
+    );
+    showToast(
+      followUpDate
+        ? `Rescheduled callback for ${lead.name} (${formatFollowUpLabel(followUpDate, lead.state).text}).`
+        : `Cleared callback for ${lead.name}.`
+    );
+
+    startTransition(async () => {
+      const res = await updateLeadFollowUpAction({
+        companyId: targetId,
+        followUpDate,
+        note: note || null,
+      });
+      if (res.ok) {
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.companyId === targetId
+              ? {
+                  ...item,
+                  nextFollowUp: res.nextFollowUp ?? null,
+                  notes: res.updatedNotes ?? item.notes,
+                }
+              : item
+          )
+        );
+      } else {
+        showToast(res.error || "Could not update follow-up");
+      }
+    });
   };
 
   const handleSaveFollowUp = (overrideDate?: string | null) => {
     if (!followUpTarget) return;
     const targetId = followUpTarget.companyId;
     const targetName = followUpTarget.name;
+    const targetState = followUpTarget.state;
     const dateToSave =
       overrideDate !== undefined ? overrideDate : followUpInput.trim() || null;
 
@@ -602,7 +652,7 @@ export function CallerClient({
         );
         showToast(
           dateToSave
-            ? `Scheduled follow-up for ${targetName} (${formatFollowUpLabel(dateToSave).text}).`
+            ? `Scheduled follow-up for ${targetName} (${formatFollowUpLabel(dateToSave, targetState).text}).`
             : `Marked follow-up completed for ${targetName}.`
         );
       } else {
@@ -800,10 +850,11 @@ export function CallerClient({
     if (statusFilter === "MY_LEADS") {
       if (!activeMember || lead.assignedMemberId !== activeMember.id) return false;
     } else if (statusFilter === "FOLLOW_UP") {
-      if (!lead.nextFollowUp && !(lead.notes && lead.notes.includes("Follow-up Scheduled")))
+      if (!lead.nextFollowUp && !extractFollowUp(lead.notes))
         return false;
     } else if (statusFilter === "OVERDUE") {
-      if (!lead.nextFollowUp || new Date(lead.nextFollowUp).getTime() >= Date.now()) return false;
+      const fu = lead.nextFollowUp || extractFollowUp(lead.notes);
+      if (!fu || !isFollowUpOverdue(fu)) return false;
     } else if (statusFilter === "TO_CALL") {
       // Keep leads dialed in the current session in view so callers can verify notes and don't panic
       const isRecentlyDialed = recentlyDialedIds.has(lead.companyId);
@@ -905,7 +956,7 @@ export function CallerClient({
               ...item,
               status: optimisticStatus,
               software: chosenSoft || item.software,
-              nextFollowUp: chosenFollowUp,
+              nextFollowUp: isTerminal ? null : chosenFollowUp || item.nextFollowUp,
               notes: optimisticNotes,
               updatedAt: nowIso,
             }
@@ -928,6 +979,7 @@ export function CallerClient({
         fleetSizeConfirmed: fleetNum,
         callerNotes: combinedNotes,
         followUpDate: chosenFollowUp,
+        clientLogId: data.clientLogId || null,
       });
 
       if (res.success && res.nextStatus) {
@@ -1000,7 +1052,7 @@ export function CallerClient({
               ...item,
               status: optimisticStatus,
               software: chosenSoft || item.software,
-              nextFollowUp: chosenFollowUp,
+              nextFollowUp: isTerminal ? null : chosenFollowUp || item.nextFollowUp,
               notes: optimisticNotes,
               updatedAt: nowIso,
             }
@@ -1010,7 +1062,9 @@ export function CallerClient({
 
     showToast(
       `✓ ${targetLead.name}: ${outcomeLabel}${
-        chosenFollowUp ? ` • Next callback scheduled (${formatFollowUpLabel(chosenFollowUp).text})` : ""
+        chosenFollowUp
+          ? ` • Callback set (${formatFollowUpLabel(chosenFollowUp, targetLead.state).text})`
+          : ""
       }`
     );
 
@@ -1023,6 +1077,7 @@ export function CallerClient({
         fleetSizeConfirmed: fleetNum,
         callerNotes: combinedNotes,
         followUpDate: chosenFollowUp,
+        clientLogId: payload.clientLogId || null,
       });
 
       if (res.success && res.nextStatus) {
@@ -1041,6 +1096,11 @@ export function CallerClient({
               : item
           )
         );
+        if (res.autoRescheduleReason && res.nextFollowUp) {
+          showToast(
+            `✓ ${targetLead.name}: ${res.autoRescheduleReason} (${formatFollowUpLabel(res.nextFollowUp, targetLead.state).text})`
+          );
+        }
       }
     });
   };
@@ -1596,6 +1656,7 @@ export function CallerClient({
             })
           }
           onLogCallAndAdvance={handleFocusCockpitSubmit}
+          onRescheduleFollowUp={handleCockpitRescheduleFollowUp}
           onSmartFieldChange={handleSmartFieldChange}
           onOpenEditLead={openEditModal}
           onSwitchToFullCrm={isOwner ? (filterStatus) => {
@@ -2698,7 +2759,11 @@ export function CallerClient({
                     <button
                       key={item.preset}
                       type="button"
-                      onClick={() => setFollowUpInput(buildPresetFollowUpIso(item.preset))}
+                      onClick={() =>
+                        setFollowUpInput(
+                          buildPresetFollowUpIso(item.preset, followUpTarget.state)
+                        )
+                      }
                       className="rounded-lg border border-zinc-800 bg-[#09090b] hover:border-amber-500/40 hover:bg-amber-500/10 px-3 py-2 text-xs font-semibold text-zinc-200 hover:text-amber-200 text-left transition"
                     >
                       {item.label}

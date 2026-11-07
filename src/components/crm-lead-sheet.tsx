@@ -42,6 +42,7 @@ import {
   computeLiveCrmTelemetry,
   deriveCallStatus,
   extractFollowUp,
+  isFollowUpOverdue,
   parseCallLog,
   parseNoteTimestamp,
   type CallOutcomeKey,
@@ -50,7 +51,12 @@ import {
 import { CallOutcomePicker, CallStatusBadge, CallStatusLegend } from "@/components/call-status-ui";
 import { CallLogModal, type CallLogSubmitData } from "@/components/call-log-modal";
 import { computeAutoFollowUpCadence } from "@/server/domain/focus-queue";
-import { zoneForState } from "@/server/domain/call-time";
+import {
+  buildPresetFollowUp,
+  describeFollowUp,
+  zoneForState,
+  type FollowUpPreset,
+} from "@/server/domain/call-time";
 import {
   Sheet,
   Phone,
@@ -195,54 +201,14 @@ export function formatFollowUpLabel(
   text: string;
   isOverdue: boolean;
 } {
-  if (!raw) return { text: "", isOverdue: false };
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) {
-    return { text: raw.replace("T", " "), isOverdue: false };
-  }
-  const isOverdue = d.getTime() < Date.now();
-  const formatted = d.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
-  let tzSuffix = "";
-  if (state) {
-    const zone = zoneForState(state);
-    if (zone) {
-      const prospectTime = d.toLocaleString("en-US", {
-        timeZone: zone.iana,
-        hour: "numeric",
-        minute: "2-digit",
-      });
-      tzSuffix = ` (${prospectTime} ${zone.groupId})`;
-    }
-  }
-
-  return { text: `${formatted}${tzSuffix}`, isOverdue };
+  return describeFollowUp(raw, state);
 }
 
-export function buildPresetFollowUpIso(preset: "LATER_TODAY" | "TOMORROW" | "TWO_DAYS" | "NEXT_WEEK"): string {
-  const now = new Date();
-  const target = new Date(now);
-  if (preset === "LATER_TODAY") {
-    target.setHours(now.getHours() + 3, 0, 0, 0);
-  } else if (preset === "TOMORROW") {
-    target.setDate(now.getDate() + 1);
-    target.setHours(10, 0, 0, 0);
-  } else if (preset === "TWO_DAYS") {
-    target.setDate(now.getDate() + 2);
-    target.setHours(10, 0, 0, 0);
-  } else if (preset === "NEXT_WEEK") {
-    target.setDate(now.getDate() + 7);
-    target.setHours(10, 0, 0, 0);
-  }
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}T${pad(
-    target.getHours()
-  )}:${pad(target.getMinutes())}`;
+export function buildPresetFollowUpIso(
+  preset: FollowUpPreset,
+  state?: string | null
+): string {
+  return buildPresetFollowUp(preset, state);
 }
 
 export function stripFollowUpTagFromNotes(notes: string | null | undefined): string {
@@ -736,7 +702,7 @@ export function CrmLeadSheet({
   // Open Quick Follow-Up Modal
   const openFollowUpModal = (lead: CrmLeadItem) => {
     setFollowUpTarget(lead);
-    setFollowUpInput(lead.nextFollowUp || buildPresetFollowUpIso("TOMORROW"));
+    setFollowUpInput(lead.nextFollowUp || buildPresetFollowUpIso("TOMORROW", lead.state));
     setFollowUpNote("");
   };
 
@@ -999,7 +965,7 @@ export function CrmLeadSheet({
     if (statusFilter === "FOLLOW_UP") {
       if (!followUp) return false;
     } else if (statusFilter === "OVERDUE") {
-      if (!followUp || new Date(followUp).getTime() >= Date.now()) return false;
+      if (!followUp || !isFollowUpOverdue(followUp)) return false;
     } else if (statusFilter === "UNTOUCHED" || statusFilter === "TO_CALL") {
       const isRecentlyDialed = recentlyDialedIds.has(lead.id);
       if (!isRecentlyDialed && derived.key !== "UNTOUCHED") return false;
@@ -1171,7 +1137,7 @@ export function CrmLeadSheet({
     // Instant optimistic UI update + close modal immediately for zero caller lag
     applyLeadPatch(targetLead.id, {
       status: optimisticStatus,
-      nextFollowUp: chosenFollowUp || targetLead.nextFollowUp,
+      nextFollowUp: isTerminal ? null : chosenFollowUp || targetLead.nextFollowUp,
       notes: optimisticNotes,
       updatedAt: nowIso,
       ...(data.softwareConfirmed ? { software: data.softwareConfirmed } : {}),
@@ -1189,12 +1155,13 @@ export function CrmLeadSheet({
         fleetSizeConfirmed: data.fleetSizeConfirmed || null,
         callerNotes: combinedNotes,
         followUpDate: chosenFollowUp,
+        clientLogId: data.clientLogId || null,
       });
 
       if (res.success && res.nextStatus) {
         applyLeadPatch(targetLead.id, {
           status: res.nextStatus,
-          nextFollowUp: res.nextFollowUp || chosenFollowUp || targetLead.nextFollowUp,
+          nextFollowUp: res.nextFollowUp !== undefined ? res.nextFollowUp : chosenFollowUp,
           notes: res.updatedNotes || optimisticNotes,
           updatedAt: res.updatedAt || nowIso,
         });
@@ -2201,7 +2168,7 @@ export function CrmLeadSheet({
                 const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
                   `${lead.name} ${lead.address || ""} ${lead.city || ""} ${lead.state || ""}`
                 )}`;
-                const followUpInfo = formatFollowUpLabel(lead.nextFollowUp);
+                const followUpInfo = formatFollowUpLabel(lead.nextFollowUp, lead.state);
                 const parsedNote = parseLatestCallerNote(lead.notes);
                 const dateInfo = classifyLeadDate(lead);
                 const prevLead = idx > 0 ? pagedLeads[idx - 1] : null;
@@ -2744,7 +2711,9 @@ export function CrmLeadSheet({
                     <button
                       key={item.preset}
                       type="button"
-                      onClick={() => setFollowUpInput(buildPresetFollowUpIso(item.preset))}
+                      onClick={() =>
+                        setFollowUpInput(buildPresetFollowUpIso(item.preset, followUpTarget.state))
+                      }
                       className="rounded-lg border border-zinc-800 bg-[#09090b] hover:border-amber-500/40 hover:bg-amber-500/10 px-3 py-2 text-xs font-semibold text-zinc-200 hover:text-amber-200 text-left transition"
                     >
                       {item.label}

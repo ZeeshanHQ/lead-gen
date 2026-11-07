@@ -3,13 +3,14 @@
 import React, { useState } from "react";
 import { X, CheckCircle2, ChevronDown, ChevronUp, Phone, PhoneCall } from "lucide-react";
 import { CallOutcomePicker } from "@/components/call-status-ui";
-import { type CallOutcomeKey, inferOutcomeFromText } from "@/server/domain/call-outcomes";
+import { type CallOutcomeKey, refineConnectedOutcome } from "@/server/domain/call-outcomes";
 import { buildPresetFollowUpIso } from "@/components/crm-lead-sheet";
 
 export interface CallLogLeadTarget {
   id?: string;
   companyId?: string;
   name: string;
+  state?: string | null;
   phone?: string | null;
   phoneDisplay?: string | null;
   bestContact?: {
@@ -28,6 +29,7 @@ export interface CallLogSubmitData {
   followUpDate: string | null;
   softwareConfirmed?: string | null;
   fleetSizeConfirmed?: number | null;
+  clientLogId?: string;
 }
 
 export interface CallLogModalProps {
@@ -54,6 +56,9 @@ export const CallLogModal = React.memo(function CallLogModal({
   const [confirmedFleet, setConfirmedFleet] = useState<string>("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [clientLogId] = useState(
+    () => `cl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  );
 
   const contactName = lead.bestContact?.name || "Owner / Decision Maker";
   const contactPhone = lead.bestContact?.phone || lead.phone || lead.phoneDisplay || "";
@@ -73,6 +78,7 @@ export const CallLogModal = React.memo(function CallLogModal({
       followUpDate: followUpDate || null,
       softwareConfirmed: confirmedSoftware.trim() || null,
       fleetSizeConfirmed: fleetNum && !isNaN(fleetNum) ? fleetNum : null,
+      clientLogId,
     });
   };
 
@@ -157,7 +163,7 @@ export const CallLogModal = React.memo(function CallLogModal({
                       key={p.preset}
                       type="button"
                       disabled={isSubmitting}
-                      onClick={() => setFollowUpDate(buildPresetFollowUpIso(p.preset))}
+                      onClick={() => setFollowUpDate(buildPresetFollowUpIso(p.preset, lead.state))}
                       className="rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-amber-300 hover:text-amber-200 transition"
                     >
                       {p.label}
@@ -201,9 +207,10 @@ export const CallLogModal = React.memo(function CallLogModal({
                 onChange={(e) => {
                   const val = e.target.value;
                   setNotes(val);
-                  // Real-time honest outcome detection: if caller types "meeting booked", "gatekeeper", "voicemail", etc.
-                  const detected = inferOutcomeFromText(val);
-                  if (detected && (!outcome || outcome === "CONNECTED" || outcome === "NO_ANSWER")) {
+                  // Only auto-select an outcome if none was chosen yet or if generic "Connected" is active,
+                  // and never override a deferral ("call back Monday") into NOT_INTERESTED.
+                  const detected = refineConnectedOutcome(val);
+                  if (detected && (!outcome || outcome === "CONNECTED")) {
                     setOutcome(detected);
                     if (validationError) setValidationError(null);
                   }

@@ -183,6 +183,32 @@ describe("rankLeadsForFocusStream", () => {
     expect(stream[0]!.lead.companyId).toBe("tx-lead");
     expect(stream[0]!.isMandatoryFollowUpLock).toBe(false);
   });
+
+  it("retains future scheduled callbacks (>45m out) with isHeldBack=true so Callbacks tab is never empty", () => {
+    const futureCallback = mockLead({
+      companyId: "future-cb",
+      name: "Future Callback Lead",
+      nextFollowUp: new Date(mockNow + 5 * 3600 * 1000).toISOString(),
+      icpScore: 90,
+    });
+    const freshLead = mockLead({
+      companyId: "fresh-1",
+      name: "Fresh Lead",
+      nextFollowUp: null,
+      icpScore: 75,
+    });
+
+    const stream = rankLeadsForFocusStream([futureCallback, freshLead], mockNow);
+    expect(stream.length).toBe(2);
+    const activeStream = stream.filter((r) => !r.isHeldBack);
+    expect(activeStream.length).toBe(1);
+    expect(activeStream[0]!.lead.companyId).toBe("fresh-1");
+
+    const heldBackItem = stream.find((r) => r.lead.companyId === "future-cb");
+    expect(heldBackItem).toBeDefined();
+    expect(heldBackItem!.tier).toBe("SCHEDULED_FOLLOW_UP");
+    expect(heldBackItem!.isHeldBack).toBe(true);
+  });
 });
 
 describe("buildFlashBattlecard", () => {

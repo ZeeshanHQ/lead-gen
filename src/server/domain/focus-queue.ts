@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Focus Stream & Automated Follow-Up Enforcement Engine (Pure Domain Logic).
  *
  * Designed for 10,000+ lead scale and zero-friction cold caller psychology:
@@ -20,7 +20,15 @@ import {
   type CallOutcomeKey,
   type CallStatusKey,
 } from "./call-outcomes";
-import { wallClock, zoneForState } from "./call-time";
+import {
+  DEFAULT_PROSPECT_TZ,
+  formatFollowUpPkt,
+  isWithinProspectBusinessHours,
+  parseFollowUpMs,
+  prospectBusinessDayAtMs,
+  wallClock,
+  zoneForState,
+} from "./call-time";
 
 export type LocalWindowStatus =
   | "PRIME_WINDOW"
@@ -126,13 +134,11 @@ export function computeProspectLocalTimeInfo(
 }
 
 /**
- * Formats a Date into `YYYY-MM-DDTHH:mm` in local browser/caller format for follow-up storage.
+ * Formats a Date into the stored follow-up string (`YYYY-MM-DDTHH:mm`, always CALLER/PKT time).
+ * Kept under its historical name; it no longer depends on the machine's own timezone.
  */
 export function formatFollowUpIsoLocal(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-    date.getHours()
-  )}:${pad(date.getMinutes())}`;
+  return formatFollowUpPkt(date.getTime());
 }
 
 export interface AutoCadenceResult {
@@ -142,18 +148,23 @@ export interface AutoCadenceResult {
 }
 
 /**
- * Closed-Loop Auto-Cadence Engine:
- * Guarantees that EVERY non-terminal call outcome automatically schedules a smart next retry
- * if the caller did not manually pick a date. No lead can ever fall into a black hole.
+ * Closed-Loop Auto-Cadence Engine.
+ * Suggests the next retry for a lead. Every time is chosen on the PROSPECT's clock
+ * (US business hours, weekdays only) and stored in PKT.
  */
 export function computeAutoFollowUpCadence(input: {
   outcome: CallOutcomeKey;
   previousAttempts: number;
   explicitFollowUpDate?: string | null;
+  /** Prospect state (TX, CA ...) used to pick the right US time zone. */
+  state?: string | null;
   nowMs?: number;
 }): AutoCadenceResult {
   const nowMs = input.nowMs ?? Date.now();
   const explicit = (input.explicitFollowUpDate || "").trim();
+  const tz = zoneForState(input.state)?.iana ?? DEFAULT_PROSPECT_TZ;
+  const at = (days: number, hour: number, minute = 0) =>
+    formatFollowUpPkt(prospectBusinessDayAtMs(nowMs, tz, days, hour, minute));
 
   // Terminal outcomes: remove from active calling retry loop and clear all follow-ups
   if (
@@ -178,72 +189,65 @@ export function computeAutoFollowUpCadence(input: {
 
   const attemptNum = Math.max(1, input.previousAttempts + 1);
 
-  // Max 6 attempts on unresponsive leads before resting in nurture
+  // Max 6 attempts on unresponsive leads before resting for a week
   if (
     attemptNum >= 6 &&
     (input.outcome === "NO_ANSWER" || input.outcome === "CALL_COMPLETED")
   ) {
-    const nextWeek = new Date(nowMs + 7 * 86400_000);
-    nextWeek.setHours(19, 0, 0, 0);
     return {
-      nextFollowUpIso: formatFollowUpIsoLocal(nextWeek),
+      nextFollowUpIso: at(7, 10),
       cadenceReason: "Attempt 6 reached — moved to 7-day low-priority nurture",
       isTerminal: false,
     };
   }
 
-  // Connected with Decision Maker: NEVER allow a connected lead to go without a follow-up!
+  // Connected with Decision Maker: never leave an open conversation without a next touch
   if (input.outcome === "CONNECTED") {
-    const tomorrow = new Date(nowMs + 86400_000);
-    tomorrow.setHours(19, 0, 0, 0); // 7:00 PM PKT (9:00 AM CT / 10:00 AM ET)
     return {
-      nextFollowUpIso: formatFollowUpIsoLocal(tomorrow),
-      cadenceReason: "Auto-protected owner conversation (24h follow-up lock)",
+      nextFollowUpIso: at(1, 10),
+      cadenceReason: "Auto-protected owner conversation (next business day 10:00 AM prospect time)",
       isTerminal: false,
     };
   }
 
-  // Gatekeeper Blocked: schedule for early morning / late afternoon bypass window next day
+  // Gatekeeper: alternate the owner-direct windows (early morning / late afternoon)
   if (input.outcome === "GATEKEEPER_BLOCKED") {
-    const target = new Date(nowMs + (attemptNum === 1 ? 86400_000 : 2 * 86400_000));
-    // Alternate between early morning (5:45 PM PKT = 8:45 AM ET) and late afternoon (1:45 AM PKT / 4:45 PM ET)
-    target.setHours(attemptNum % 2 === 1 ? 18 : 22, 15, 0, 0);
+    const days = attemptNum === 1 ? 1 : 2;
     return {
-      nextFollowUpIso: formatFollowUpIsoLocal(target),
+      nextFollowUpIso: attemptNum % 2 === 1 ? at(days, 8, 15) : at(days, 16, 45),
       cadenceReason: "Auto-scheduled for Gatekeeper Bypass window",
       isTerminal: false,
     };
   }
 
-  // Left Voicemail: give 48 hours for callback before next follow-up touch
+  // Left Voicemail: give 48 hours for a callback before the next touch
   if (input.outcome === "CALL_COMPLETED") {
-    const target = new Date(nowMs + 2 * 86400_000);
-    target.setHours(19, 30, 0, 0);
     return {
-      nextFollowUpIso: formatFollowUpIsoLocal(target),
+      nextFollowUpIso: at(2, 10, 30),
       cadenceReason: "Voicemail cadence (+48h follow-up)",
       isTerminal: false,
     };
   }
 
   // No Answer:
-  // Attempt 1 -> Retry in +4 hours (shift from morning to afternoon or next day prime window)
-  // Attempt 2 -> Retry tomorrow (+24h)
-  // Attempt 3+ -> Retry in +48h
+  //   Attempt 1 -> +4 hours if that is still business hours, otherwise next business morning
+  //   Attempt 2 -> next business day (afternoon)
+  //   Attempt 3+ -> +2 days
   if (attemptNum === 1) {
-    const fourHoursLater = new Date(nowMs + 4 * 3600_000);
+    const fourHours = nowMs + 4 * 3600_000;
+    const slot = isWithinProspectBusinessHours(fourHours, tz)
+      ? formatFollowUpPkt(fourHours)
+      : at(1, 9, 30);
     return {
-      nextFollowUpIso: formatFollowUpIsoLocal(fourHoursLater),
+      nextFollowUpIso: slot,
       cadenceReason: "Attempt 1 No-Answer -> +4h time-shift retry",
       isTerminal: false,
     };
   }
 
   const daysOut = attemptNum === 2 ? 1 : 2;
-  const retryDate = new Date(nowMs + daysOut * 86400_000);
-  retryDate.setHours(attemptNum % 2 === 0 ? 21 : 18, 30, 0, 0);
   return {
-    nextFollowUpIso: formatFollowUpIsoLocal(retryDate),
+    nextFollowUpIso: attemptNum % 2 === 0 ? at(daysOut, 15) : at(daysOut, 10, 30),
     cadenceReason: `Attempt ${attemptNum} No-Answer -> +${daysOut}d cadence retry`,
     isTerminal: false,
   };
@@ -252,6 +256,7 @@ export function computeAutoFollowUpCadence(input: {
 export type FocusPriorityTier =
   | "MANDATORY_FOLLOW_UP_DUE"
   | "UPCOMING_FOLLOW_UP"
+  | "SCHEDULED_FOLLOW_UP"
   | "PRIME_WINDOW_FRESH"
   | "CADENCE_RETRY_DUE"
   | "STANDARD_QUEUE";
@@ -262,6 +267,12 @@ export interface RankedFocusLead<T> {
   tier: FocusPriorityTier;
   reasonBadge: string;
   isMandatoryFollowUpLock: boolean;
+  /**
+   * True for callbacks scheduled further out than the "upcoming" window. They are kept in the
+   * ranked list (so the Callbacks tab shows every scheduled callback) but are not offered in
+   * the normal dialing stream until they are due.
+   */
+  isHeldBack: boolean;
   overdueMinutes: number;
   followUpIso: string | null;
   derivedStatus: CallStatusKey;
@@ -274,6 +285,7 @@ export interface RankedFocusLead<T> {
  * - Overdue & due-now follow-ups are strictly locked at the top (`isMandatoryFollowUpLock = true`).
  * - Fresh leads in their Prime Local Window with high ICP / Ad Spend signals come next.
  * - Scheduled cadence retries whose retry time has arrived come next.
+ * - Future callbacks are never dropped: they are returned with `isHeldBack = true`.
  */
 export function rankLeadsForFocusStream<
   T extends {
@@ -309,8 +321,9 @@ export function rankLeadsForFocusStream<
 
     const localTime = computeProspectLocalTimeInfo(lead.state, nowMs);
     const followUpRaw = lead.nextFollowUp || extractFollowUp(lead.notes);
-    const followUpMs = followUpRaw ? Date.parse(followUpRaw) : NaN;
-    const hasValidFollowUp = !Number.isNaN(followUpMs);
+    const parsedFollowUp = parseFollowUpMs(followUpRaw);
+    const hasValidFollowUp = parsedFollowUp !== null;
+    const followUpMs = parsedFollowUp ?? NaN;
 
     const icp = lead.icpScore ?? 60;
     const facts = lead.facts || {};
@@ -320,24 +333,18 @@ export function rankLeadsForFocusStream<
       facts["zillow_advertiser"] === "YES";
     const adBonus = hasAdSpendSignal ? 18 : 0;
 
-    // 1. Check if this is a HUMAN-SCHEDULED or CONNECTED follow-up vs an auto-retry
-    const isHighPriorityFollowUp =
-      hasValidFollowUp &&
-      (derived.key === "CONNECTED" ||
-        derived.key === "GATEKEEPER_BLOCKED" ||
-        lead.status === "NURTURE" ||
-        lead.status === "CONNECTED" ||
-        lead.status === "PAIN_FOUND");
+    const base = {
+      lead,
+      derivedStatus: derived.key,
+      attempts: derived.attempts,
+      localTime,
+    };
 
     // TIER 1: Mandatory Follow-Up Due Now or Overdue (Grace window: due within next 5 mins)
     if (hasValidFollowUp && followUpMs <= nowMs + 5 * 60_000) {
       const overdueMinutes = Math.max(0, Math.round((nowMs - followUpMs) / 60_000));
-      // Lock the queue if it's a connected/callback follow-up or explicitly due
-      const isMandatoryLock =
-        isHighPriorityFollowUp || overdueMinutes >= 0;
-
       ranked.push({
-        lead,
+        ...base,
         priorityScore: 100_000 + Math.min(5_000, overdueMinutes) + icp + adBonus,
         tier: "MANDATORY_FOLLOW_UP_DUE",
         reasonBadge:
@@ -346,12 +353,10 @@ export function rankLeadsForFocusStream<
             : overdueMinutes > 0
             ? `🔔 Follow-Up Due (${overdueMinutes}m ago)`
             : "🔔 Follow-Up Due Right Now",
-        isMandatoryFollowUpLock: isMandatoryLock,
+        isMandatoryFollowUpLock: true,
+        isHeldBack: false,
         overdueMinutes,
         followUpIso: followUpRaw,
-        derivedStatus: derived.key,
-        attempts: derived.attempts,
-        localTime,
       });
       continue;
     }
@@ -360,23 +365,32 @@ export function rankLeadsForFocusStream<
     if (hasValidFollowUp && followUpMs <= nowMs + 45 * 60_000) {
       const minsUntil = Math.max(1, Math.round((followUpMs - nowMs) / 60_000));
       ranked.push({
-        lead,
+        ...base,
         priorityScore: 50_000 - minsUntil * 10 + icp,
         tier: "UPCOMING_FOLLOW_UP",
         reasonBadge: `⏰ Callback in ${minsUntil}m`,
         isMandatoryFollowUpLock: false,
+        isHeldBack: false,
         overdueMinutes: 0,
         followUpIso: followUpRaw,
-        derivedStatus: derived.key,
-        attempts: derived.attempts,
-        localTime,
       });
       continue;
     }
 
-    // If a lead has a future follow-up > 45 mins away, hold it back for its scheduled time!
-    // It remains safely preserved and accessible in the Callbacks drawer, but does not clutter the active to-call stream.
-    if (hasValidFollowUp && followUpMs > nowMs + 45 * 60_000) {
+    // TIER 2.5: Callback scheduled for later. Never dropped: it stays visible in the Callbacks
+    // tab, it just is not offered in the dialing stream until it is due.
+    if (hasValidFollowUp) {
+      const minsUntil = Math.round((followUpMs - nowMs) / 60_000);
+      ranked.push({
+        ...base,
+        priorityScore: 1_000 - Math.min(900, Math.floor(minsUntil / 60)),
+        tier: "SCHEDULED_FOLLOW_UP",
+        reasonBadge: "📅 Scheduled Callback",
+        isMandatoryFollowUpLock: false,
+        isHeldBack: true,
+        overdueMinutes: 0,
+        followUpIso: followUpRaw,
+      });
       continue;
     }
 
@@ -399,16 +413,15 @@ export function rankLeadsForFocusStream<
           : `🎯 Fresh Verified Lead (${icp}/100)`;
 
       ranked.push({
-        lead,
+        ...base,
         priorityScore: score,
         tier,
         reasonBadge: badge,
         isMandatoryFollowUpLock: false,
+        isHeldBack: false,
         overdueMinutes: 0,
         followUpIso: null,
-        derivedStatus: derived.key,
         attempts: 0,
-        localTime,
       });
       continue;
     }
@@ -417,16 +430,14 @@ export function rankLeadsForFocusStream<
     const retryPenalty = derived.attempts * 45;
     const retryScore = 4_000 + localTime.windowScoreBoost * 15 + icp * 2 + adBonus - retryPenalty;
     ranked.push({
-      lead,
+      ...base,
       priorityScore: retryScore,
       tier: "CADENCE_RETRY_DUE",
       reasonBadge: `🔄 Retry Attempt #${derived.attempts + 1} (${derived.def.label})`,
       isMandatoryFollowUpLock: false,
+      isHeldBack: false,
       overdueMinutes: 0,
       followUpIso: null,
-      derivedStatus: derived.key,
-      attempts: derived.attempts,
-      localTime,
     });
   }
 
@@ -576,3 +587,4 @@ export function getQuickNoteChipsForOutcome(outcome: CallOutcomeKey): string[] {
       ];
   }
 }
+

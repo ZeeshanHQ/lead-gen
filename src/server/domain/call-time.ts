@@ -199,3 +199,191 @@ export function formatClock(ms: number, tz: string): string {
     minute: "2-digit",
   }).format(new Date(ms));
 }
+
+// ---------------------------------------------------------------------------
+// Follow-up scheduling (single source of truth for client + server)
+//
+// Follow-up dates are stored as timezone-naive "YYYY-MM-DDTHH:mm" strings that always mean
+// CALLER time (PKT, UTC+5, no DST). Parsing them with `new Date(raw)` would depend on the
+// machine's own timezone (the Next.js server runs in UTC), so always go through these helpers.
+// ---------------------------------------------------------------------------
+
+const PKT_OFFSET_MS = 5 * 3600 * 1000;
+const NAIVE_FOLLOW_UP = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/;
+
+/** Parses a stored follow-up value to epoch ms. Naive values are interpreted as PKT. */
+export function parseFollowUpMs(raw: string | null | undefined): number | null {
+  const value = (raw || "").trim();
+  if (!value) return null;
+  const m = value.match(NAIVE_FOLLOW_UP);
+  if (m) {
+    const ms =
+      Date.UTC(
+        Number(m[1]),
+        Number(m[2]) - 1,
+        Number(m[3]),
+        Number(m[4] ?? 0),
+        Number(m[5] ?? 0),
+        Number(m[6] ?? 0)
+      ) - PKT_OFFSET_MS;
+    return Number.isNaN(ms) ? null : ms;
+  }
+  const direct = Date.parse(value);
+  return Number.isNaN(direct) ? null : direct;
+}
+
+/** Formats epoch ms as the naive PKT "YYYY-MM-DDTHH:mm" string used for storage + datetime-local inputs. */
+export function formatFollowUpPkt(ms: number): string {
+  const d = new Date(ms + PKT_OFFSET_MS);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(
+    d.getUTCHours()
+  )}:${pad(d.getUTCMinutes())}`;
+}
+
+interface ZonedParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+}
+
+function zonedParts(ms: number, tz: string): ZonedParts {
+  const f = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+  });
+  const p = Object.fromEntries(f.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return {
+    year: Number(p.year),
+    month: Number(p.month),
+    day: Number(p.day),
+    hour: Number(p.hour) % 24,
+    minute: Number(p.minute),
+  };
+}
+
+/** Epoch ms of a wall-clock time in a zone (DST aware). */
+export function zonedWallToUtcMs(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  tz: string
+): number {
+  const guess = Date.UTC(year, month - 1, day, hour, minute, 0);
+  let utc = guess - offsetMs(guess, tz);
+  const second = offsetMs(utc, tz);
+  utc = guess - second;
+  return utc;
+}
+
+/**
+ * Epoch ms of `hour:minute` prospect-local time, `calendarDays` days from today in the
+ * prospect's zone, rolled forward to Monday when it would land on a weekend.
+ */
+export function prospectBusinessDayAtMs(
+  nowMs: number,
+  tz: string,
+  calendarDays: number,
+  hour: number,
+  minute: number
+): number {
+  const today = zonedParts(nowMs, tz);
+  const cursor = new Date(Date.UTC(today.year, today.month - 1, today.day));
+  cursor.setUTCDate(cursor.getUTCDate() + Math.max(0, calendarDays));
+  while (cursor.getUTCDay() === 0 || cursor.getUTCDay() === 6) {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return zonedWallToUtcMs(
+    cursor.getUTCFullYear(),
+    cursor.getUTCMonth() + 1,
+    cursor.getUTCDate(),
+    hour,
+    minute,
+    tz
+  );
+}
+
+const BUSINESS_OPEN_HOUR = 9;
+const BUSINESS_CLOSE_DECIMAL = 16.5;
+
+/** True when `ms` is a weekday between 09:00 and 16:30 in the prospect's zone. */
+export function isWithinProspectBusinessHours(ms: number, tz: string): boolean {
+  const p = zonedParts(ms, tz);
+  const weekday = new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay();
+  if (weekday === 0 || weekday === 6) return false;
+  const dec = p.hour + p.minute / 60;
+  return dec >= BUSINESS_OPEN_HOUR && dec < BUSINESS_CLOSE_DECIMAL;
+}
+
+/** Zone used when a lead has no usable state (most leads are TX/Central). */
+export const DEFAULT_PROSPECT_TZ = "America/Chicago";
+
+export type FollowUpPreset = "LATER_TODAY" | "TOMORROW" | "TWO_DAYS" | "NEXT_WEEK";
+
+/**
+ * Preset follow-ups that always land inside the PROSPECT's business hours:
+ *  LATER_TODAY = +3h (or the next business morning when that would be after hours),
+ *  TOMORROW / TWO_DAYS / NEXT_WEEK = 10:00 AM prospect time, skipping weekends.
+ */
+export function computePresetFollowUpMs(
+  preset: FollowUpPreset,
+  state: string | null | undefined,
+  nowMs: number = Date.now()
+): number {
+  const tz = zoneForState(state)?.iana ?? DEFAULT_PROSPECT_TZ;
+  if (preset === "LATER_TODAY") {
+    const candidate = Math.ceil((nowMs + 3 * 3600 * 1000) / (5 * 60 * 1000)) * (5 * 60 * 1000);
+    if (isWithinProspectBusinessHours(candidate, tz)) return candidate;
+    const todayOpen = prospectBusinessDayAtMs(nowMs, tz, 0, 9, 30);
+    return todayOpen > nowMs ? todayOpen : prospectBusinessDayAtMs(nowMs, tz, 1, 9, 30);
+  }
+  const days = preset === "TOMORROW" ? 1 : preset === "TWO_DAYS" ? 2 : 7;
+  return prospectBusinessDayAtMs(nowMs, tz, days, 10, 0);
+}
+
+/** Convenience: preset as the stored naive PKT string. */
+export function buildPresetFollowUp(
+  preset: FollowUpPreset,
+  state: string | null | undefined,
+  nowMs: number = Date.now()
+): string {
+  return formatFollowUpPkt(computePresetFollowUpMs(preset, state, nowMs));
+}
+
+/** Short label such as "Mon, Nov 9 • 10:00 AM CT (8:00 PM PKT)". */
+export function describeFollowUp(
+  raw: string | null | undefined,
+  state?: string | null
+): { text: string; isOverdue: boolean; ms: number | null } {
+  const ms = parseFollowUpMs(raw);
+  if (ms === null) return { text: (raw || "").replace("T", " "), isOverdue: false, ms: null };
+  const pkt = new Intl.DateTimeFormat("en-US", {
+    timeZone: CALLER_TIMEZONE,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(ms));
+  const zone = zoneForState(state);
+  let suffix = "";
+  if (zone) {
+    const t = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone.iana,
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(ms));
+    suffix = ` (${t} ${zone.groupId})`;
+  }
+  return { text: `${pkt} PKT${suffix}`, isOverdue: ms < Date.now(), ms };
+}
+

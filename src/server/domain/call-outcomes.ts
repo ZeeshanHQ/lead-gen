@@ -6,6 +6,8 @@
  * never drift apart. Pure TypeScript: safe for server and client bundles.
  */
 
+import { parseFollowUpMs } from "./call-time";
+
 export type CallOutcomeKey =
   | "NO_ANSWER"
   | "CALL_COMPLETED" // legacy enum name for "Left Voicemail"
@@ -196,14 +198,71 @@ export function isOwnerConversation(key: CallOutcomeKey): boolean {
 export function outcomeKeyFromLabel(label: string | null | undefined): CallOutcomeKey | null {
   const t = (label || "").trim().toLowerCase();
   if (!t) return null;
-  if (t.includes("meeting")) return "MEETING_BOOKED";
+  // A bare "meeting" must NOT count as booked ("owner is in a meeting" is a gatekeeper block).
+  if (/\b(meeting|demo|appointment)\s*(booked|scheduled|set|confirmed)\b|\bbooked\b/.test(t)) {
+    return "MEETING_BOOKED";
+  }
   if (t.includes("not interested") || t.includes("declined")) return "NOT_INTERESTED";
   if (t.includes("connected") || t.includes("spoke")) return "CONNECTED";
   if (t.includes("gatekeeper")) return "GATEKEEPER_BLOCKED";
   if (t.includes("no answer") || t.includes("rang out")) return "NO_ANSWER";
   if (t.includes("voicemail") || t.includes("voice mail")) return "CALL_COMPLETED";
-  if (t.includes("wrong")) return "WRONG_NUMBER";
+  // "wrong extension / wrong time" is not a dead number.
+  if (/wrong\s*(number|person|company)/.test(t)) return "WRONG_NUMBER";
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Conservative refinement of a generic "Connected / Spoke" selection
+// ---------------------------------------------------------------------------
+
+const REFINE_MEETING =
+  /\b((meeting|demo|appointment|zoom)\s*(booked|scheduled|set|confirmed|fixed)|booked\s*(a\s*)?(meeting|demo|appointment|zoom)|calendar\s*invite|agreed\s*to\s*(meet|demo)|pitch\s*meeting|(intro|discovery)\s*call\s*(booked|scheduled|confirmed))\b/i;
+const REFINE_STRONG_REFUSAL =
+  /\b(not\s*interested|do\s*not\s*call|dnc|remove\s*(me|my\s*number|their\s*number|from\s*(the\s*)?list)|stop\s*calling|declined|said\s*no)\b/i;
+/** A refusal that also names a later date is a deferral, not a loss. */
+const REFINE_DEFERRAL =
+  /\b(call\s*-?back|follow\s*-?up|try\s*(again|later)|later|next\s*(week|month|quarter|year)|in\s*(a\s*)?(few|\d+)\s*(days?|weeks?|months?)|tomorrow)\b/i;
+const REFINE_DEAD_NUMBER =
+  /\b(wrong\s*number|invalid\s*number|disconnected|not\s*in\s*service|out\s*of\s*service|fax\s*line|bad\s*number)\b/i;
+const REFINE_VOICEMAIL =
+  /\b(left\s*(a\s*)?(voice\s*mail|vm|message)|went\s*to\s*voice\s*mail|sent\s*to\s*voice\s*mail|voice\s*mail|answering\s*machine|mailbox\s*full)\b/i;
+const REFINE_GATEKEEPER =
+  /\b(gatekeeper|refused\s*(to\s*)?(transfer|put\s*(me\s*)?through)|wouldn'?t\s*(transfer|put\s*(me\s*)?through)|not\s*putting\s*(me\s*)?through|took\s*a\s*message|receptionist\s*(said|picked|answered|took|refused)|front\s*desk\s*(said|answered|picked|refused))\b/i;
+
+/**
+ * The caller picked the generic "Connected / Spoke" but the note clearly says something more
+ * specific. Used by BOTH the server (when logging) and parseCallLog (when reading), so the
+ * stored label and the derived status can never disagree. Explicit non-generic selections are
+ * never overridden, and a refusal that names a later date stays alive as a follow-up.
+ */
+export function refineConnectedOutcome(text: string | null | undefined): CallOutcomeKey | null {
+  const t = (text || "").trim();
+  if (!t) return null;
+  if (REFINE_MEETING.test(t)) return "MEETING_BOOKED";
+  if (REFINE_STRONG_REFUSAL.test(t) && !REFINE_DEFERRAL.test(t)) return "NOT_INTERESTED";
+  if (REFINE_DEAD_NUMBER.test(t)) return "WRONG_NUMBER";
+  if (REFINE_VOICEMAIL.test(t)) return "CALL_COMPLETED";
+  if (REFINE_GATEKEEPER.test(t)) return "GATEKEEPER_BLOCKED";
+  return null;
+}
+
+/** Lifecycle status a call outcome moves a lead to (shared by server and optimistic UI). */
+export function lifecycleStatusForOutcome(
+  outcome: CallOutcomeKey
+): "MEETING_BOOKED" | "LOST" | "CONNECTED" | "NURTURE" | "CALLING" {
+  switch (outcome) {
+    case "MEETING_BOOKED":
+      return "MEETING_BOOKED";
+    case "NOT_INTERESTED":
+      return "LOST";
+    case "CONNECTED":
+      return "CONNECTED";
+    case "WRONG_NUMBER":
+      return "NURTURE";
+    default:
+      return "CALLING";
+  }
 }
 
 /**
@@ -217,8 +276,9 @@ export function inferOutcomeFromText(text: string | null | undefined): CallOutco
   if (direct) return direct;
 
   // 1. Meeting Booked (Highest intent milestone)
+  // NOTE: "schedule(d) a call back" / "call back tomorrow" is a callback, NOT a booked meeting.
   if (
-    /\b((meeting|demo|call|appointment|zoom)\s*(booked|scheduled|set|confirmed|fixed)|booked\s*(a\s*)?(meeting|demo|call|appointment|zoom)|scheduled\s*(a\s*)?(meeting|demo|call|appointment|zoom)|calendar\s*invite|agreed\s*to\s*(meet|demo|chat)|closed\s*deal|pitch\s*meeting|intro\s*call\s*booked|discovery\s*call\s*booked|booked\s*for\s*(mon|tue|wed|thu|fri|sat|sun|today|tomorrow|next\s*week|\d{1,2}))\b/i.test(
+    /\b((meeting|demo|appointment|zoom)\s*(booked|scheduled|set|confirmed|fixed)|booked\s*(a\s*)?(meeting|demo|appointment|zoom|call(?!\s*-?back))|scheduled\s*(a\s*)?(meeting|demo|appointment|zoom|call(?!\s*-?back))|calendar\s*invite|agreed\s*to\s*(meet|demo|chat)|closed\s*deal|pitch\s*meeting|intro\s*call\s*booked|discovery\s*call\s*booked|booked\s*for\s*(mon|tue|wed|thu|fri|sat|sun|today|tomorrow|next\s*week|\d{1,2}))\b/i.test(
       t
     )
   ) {
@@ -341,18 +401,13 @@ export function parseCallLog(notes: string | null | undefined): ParsedCallLogEnt
       if (m) {
         const labelOutcome = outcomeKeyFromLabel(m[3]) || inferOutcomeFromText(m[3]);
         const noteText = (m[4] || "").trim();
-        const textOutcome = inferOutcomeFromText(noteText);
-        // If the caller typed a specific note text with clear intent (like meeting booked, not interested, gatekeeper, voicemail, wrong number),
-        // prioritize the note text over a generic label to ensure 100% honest sales funnel telemetry!
+        // The label the caller (or server) wrote is authoritative. Only the generic
+        // "Connected / Spoke" label may be refined by an unambiguous note
+        // (same rule the server applies when it writes the log, see refineConnectedOutcome).
         const outcome =
-          textOutcome &&
-          (textOutcome === "MEETING_BOOKED" ||
-            textOutcome === "NOT_INTERESTED" ||
-            textOutcome === "WRONG_NUMBER" ||
-            textOutcome === "GATEKEEPER_BLOCKED" ||
-            textOutcome === "CALL_COMPLETED")
-            ? textOutcome
-            : labelOutcome || textOutcome;
+          labelOutcome === "CONNECTED"
+            ? refineConnectedOutcome(noteText) ?? labelOutcome
+            : labelOutcome || inferOutcomeFromText(noteText);
 
         if (outcome) {
           out.push({
@@ -383,15 +438,19 @@ export function parseCallLog(notes: string | null | undefined): ParsedCallLogEnt
 
   // If the caller typed freeform inline notes directly into the CRM without a [timestamp] header,
   // treat those human caller notes as a logged call entry so CRM counters and analytics stay in sync.
+  // A plain note typed straight into the CRM only counts as a call when it clearly says what
+  // happened ("no answer on cell"). Notes like "check website" are notes, not calls.
   if (out.length === 0 && freeformLines.length > 0) {
     const combinedFreeform = freeformLines.join(" — ");
-    const inferred = inferOutcomeFromText(combinedFreeform) ?? "CONNECTED";
-    out.push({
-      timestampRaw: "Inline CRM Note",
-      author: "",
-      outcome: inferred,
-      text: combinedFreeform,
-    });
+    const inferred = inferOutcomeFromText(combinedFreeform);
+    if (inferred) {
+      out.push({
+        timestampRaw: "Inline CRM Note",
+        author: "",
+        outcome: inferred,
+        text: combinedFreeform,
+      });
+    }
   } else if (out.length > 0 && freeformLines.length > 0) {
     for (const fl of freeformLines) {
       const inferred = inferOutcomeFromText(fl);
@@ -900,10 +959,12 @@ export function computeLiveCrmTelemetry(
   };
 }
 
-export function isFollowUpOverdue(iso: string | null | undefined, nowMs: number): boolean {
-  if (!iso) return false;
-  const t = new Date(iso).getTime();
-  return !Number.isNaN(t) && t < nowMs;
+export function isFollowUpOverdue(
+  iso: string | null | undefined,
+  nowMs: number = Date.now()
+): boolean {
+  const t = parseFollowUpMs(iso);
+  return t !== null && t < nowMs;
 }
 
 /**

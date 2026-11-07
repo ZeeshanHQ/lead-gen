@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { companies, contacts, leadScores, systemSettings } from "../db/schema";
+import { auditLogs, companies, contacts, leadScores, systemSettings } from "../db/schema";
 import { type LifecycleStatus } from "../domain/lifecycle";
 import { getContactsForCompanies, toContactInput } from "./contacts";
 import { classifyEmail, classifyTitle, pickBestContact } from "../domain/contact";
@@ -15,8 +15,10 @@ import { createNotification } from "./notifications";
 import {
   CALL_STATUS_DEFS,
   inferOutcomeFromText,
+  lifecycleStatusForOutcome,
   outcomeKeyFromEnum,
   parseCallLog,
+  refineConnectedOutcome,
   type CallOutcomeKey,
 } from "../domain/call-outcomes";
 import { CALLER_TIMEZONE } from "../domain/call-time";
@@ -137,6 +139,11 @@ export interface CallFeedbackInput {
   fleetSizeConfirmed?: number | null;
   callerNotes: string;
   followUpDate?: string | null;
+  /**
+   * Unique id generated in the browser for this submission. Makes retries safe: the server
+   * saves a given clientLogId at most once.
+   */
+  clientLogId?: string | null;
 }
 
 export async function getCallerQueue(
@@ -266,44 +273,181 @@ export async function getCallerQueue(
   return queue;
 }
 
+/**
+ * Runs `fn` inside one DB transaction. Every function that reads a lead's notes and writes
+ * them back (log call, follow-up, reset ...) goes through this so two simultaneous writers
+ * (two tabs, a retry, an owner edit) can never overwrite each other's log lines.
+ */
+async function inLeadTransaction<T>(db: Db, fn: (tx: Db) => Promise<T>): Promise<T> {
+  return db.transaction(async (tx) => fn(tx as unknown as Db));
+}
+
+const SYSTEM_NOTE_PREFIXES = [
+  "BATTLECARD:",
+  "15-SECOND OPENING SCRIPT:",
+  "Focus:",
+  "Local Market:",
+  "Gatekeeper Strategy:",
+  "Reputation:",
+  "Authority:",
+  "PITCH ANGLE:",
+];
+
+function isSystemNoteLine(line: string): boolean {
+  return SYSTEM_NOTE_PREFIXES.some((p) => line.startsWith(p));
+}
+
+/** Splits stored notes into the follow-up tag, human call-log lines and research/system lines. */
+export function splitNotes(notes: string | null | undefined): {
+  followUp: string | null;
+  logLines: string[];
+  systemLines: string[];
+} {
+  const followUp = extractLatestFollowUp(notes);
+  const lines = stripFollowUpTags(notes)
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return {
+    followUp,
+    logLines: lines.filter((l) => !isSystemNoteLine(l)),
+    systemLines: lines.filter(isSystemNoteLine),
+  };
+}
+
+/** Rebuilds notes without losing any line: [follow-up tag], newest logs first, research lines last. */
+export function composeNotes(parts: {
+  followUp: string | null;
+  logLines: string[];
+  systemLines: string[];
+}): string | null {
+  const body = [...parts.logLines, ...parts.systemLines].join("\n");
+  if (parts.followUp) {
+    return body
+      ? `[Next Follow-up Scheduled: ${parts.followUp}]\n${body}`
+      : `[Next Follow-up Scheduled: ${parts.followUp}]`;
+  }
+  return body || null;
+}
+
+/** Adds a new call-log line on top of existing notes while preserving every other line. */
+export function prependLogEntry(
+  notes: string | null | undefined,
+  entry: string,
+  followUp: string | null
+): string {
+  const split = splitNotes(notes);
+  return (
+    composeNotes({
+      followUp,
+      logLines: [entry, ...split.logLines],
+      systemLines: split.systemLines,
+    }) || entry
+  );
+}
+
+/** Lifecycle statuses that already mean "meeting booked or beyond"; a later retry must not demote them. */
+const PROTECTED_PROGRESS_STATUSES = new Set([
+  "MEETING_BOOKED",
+  "QUALIFIED",
+  "DISCOVERY",
+  "PROPOSAL",
+  "PILOT",
+  "CLOSED",
+]);
+
+/** Outcomes where the callback was NOT fulfilled, so an existing follow-up must stay alive. */
+const UNFULFILLED_CALLBACK_OUTCOMES = new Set<CallOutcomeKey>([
+  "NO_ANSWER",
+  "CALL_COMPLETED",
+  "GATEKEEPER_BLOCKED",
+]);
+
+export interface CallFeedbackResult {
+  ok: true;
+  nextStatus: LifecycleStatus;
+  updatedNotes: string;
+  nextFollowUp: string | null;
+  updatedAt: string;
+  /** True when this exact submission (clientLogId) was already saved, so nothing was written twice. */
+  duplicate?: boolean;
+  /** Set when the system re-scheduled an existing callback because the caller did not reach anyone. */
+  autoRescheduleReason?: string | null;
+}
+
 export async function recordCallFeedback(
   db: Db,
   input: CallFeedbackInput
-): Promise<{ ok: true; nextStatus: LifecycleStatus; updatedNotes: string; nextFollowUp: string | null; updatedAt: string }> {
+): Promise<CallFeedbackResult> {
+  return inLeadTransaction(db, (tx) => recordCallFeedbackInTransaction(tx, input));
+}
+
+async function recordCallFeedbackInTransaction(
+  db: Db,
+  input: CallFeedbackInput
+): Promise<CallFeedbackResult> {
   const [company] = await db
     .select()
     .from(companies)
     .where(eq(companies.id, input.companyId))
-    .limit(1);
+    .limit(1)
+    .for("update");
 
   if (!company) throw new Error(`Company ${input.companyId} not found`);
 
-  // Deep note analysis: check if caller's written notes contain explicit honest intent
-  // (e.g. if caller selected "Connected" but wrote "Meeting booked with owner" or "Secretary refused transfer")
-  const noteInferredOutcome = inferOutcomeFromText(input.callerNotes);
-  const effectiveOutcome: CallOutcomeKey =
-    noteInferredOutcome &&
-    (noteInferredOutcome === "MEETING_BOOKED" ||
-      noteInferredOutcome === "NOT_INTERESTED" ||
-      noteInferredOutcome === "WRONG_NUMBER" ||
-      noteInferredOutcome === "GATEKEEPER_BLOCKED" ||
-      noteInferredOutcome === "CALL_COMPLETED")
-      ? noteInferredOutcome
-      : input.callOutcome;
+  // Idempotency: a retried submission (flaky internet, double click) must never log twice.
+  if (input.clientLogId) {
+    const [already] = await db
+      .select({ id: auditLogs.id })
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.action, "caller.call_logged"),
+          eq(auditLogs.entityId, input.companyId),
+          sql`${auditLogs.details}->>'clientLogId' = ${input.clientLogId}`
+        )
+      )
+      .limit(1);
+    if (already) {
+      return {
+        ok: true,
+        duplicate: true,
+        nextStatus: company.status as LifecycleStatus,
+        updatedNotes: company.notes ?? "",
+        nextFollowUp: extractLatestFollowUp(company.notes),
+        updatedAt: new Date().toISOString(),
+      };
+    }
+  }
 
-  let nextStatus: LifecycleStatus = "CALLING";
+  const cleanUserNote = stripFollowUpTags(input.callerNotes).trim();
 
-  if (effectiveOutcome === "MEETING_BOOKED") {
-    nextStatus = "MEETING_BOOKED";
-  } else if (effectiveOutcome === "NOT_INTERESTED") {
-    // Owner declined: keep the lead visible in the CRM as a closed-lost lead (not archived).
-    nextStatus = "LOST";
-  } else if (input.painIdentified && input.painIdentified.trim().length > 0) {
+  // The caller's button is authoritative. Only the generic "Connected" may be refined, and only by
+  // an unambiguous note (meeting booked, voicemail, hard refusal...). See refineConnectedOutcome.
+  const refinedOutcome =
+    input.callOutcome === "CONNECTED" ? refineConnectedOutcome(cleanUserNote) : null;
+  const effectiveOutcome: CallOutcomeKey = refinedOutcome ?? input.callOutcome;
+
+  const isTerminalOutcome =
+    effectiveOutcome === "MEETING_BOOKED" ||
+    effectiveOutcome === "NOT_INTERESTED" ||
+    effectiveOutcome === "WRONG_NUMBER";
+
+  let nextStatus: LifecycleStatus = lifecycleStatusForOutcome(effectiveOutcome);
+  if (
+    !isTerminalOutcome &&
+    input.painIdentified &&
+    input.painIdentified.trim().length > 0
+  ) {
     nextStatus = "PAIN_FOUND";
-  } else if (effectiveOutcome === "CONNECTED") {
-    nextStatus = "CONNECTED";
-  } else if (effectiveOutcome === "WRONG_NUMBER") {
-    nextStatus = "NURTURE";
+  }
+  // A lead that already has a meeting must not be demoted by a later "no answer" retry.
+  if (
+    PROTECTED_PROGRESS_STATUSES.has(company.status) &&
+    effectiveOutcome !== "MEETING_BOOKED" &&
+    effectiveOutcome !== "NOT_INTERESTED"
+  ) {
+    nextStatus = company.status as LifecycleStatus;
   }
 
   // 1. If human confirmed software, record with HUMAN_CONFIRMED provenance
@@ -334,25 +478,41 @@ export async function recordCallFeedback(
     });
   }
 
-  // 3. Update company lifecycle status and clean caller log entries
-  const isTerminalOutcome =
-    effectiveOutcome === "MEETING_BOOKED" ||
-    effectiveOutcome === "NOT_INTERESTED" ||
-    effectiveOutcome === "WRONG_NUMBER";
-
+  // 3. Follow-up rules
+  //    - Terminal outcome: all callbacks are cleared.
+  //    - Caller picked a date: that date is saved.
+  //    - Caller reached nobody (no answer / voicemail / gatekeeper) but the lead had a callback:
+  //      the callback is NOT lost, it is re-scheduled on the prospect's business hours.
+  //    - Caller actually spoke to someone and picked no new date: the old callback was fulfilled.
   const followUpMatch = (input.callerNotes || "").match(/\[Next Follow-up Scheduled:\s*([^\]]+)\]/i);
   const extractedFollowUp = followUpMatch ? followUpMatch[1]?.trim() : null;
   const explicitFollowUp =
     (input.followUpDate ? input.followUpDate.trim() : null) || extractedFollowUp;
 
-  // A follow-up is ONLY scheduled if the caller explicitly provided a follow-up date AND the outcome is not terminal.
-  // When a caller dials a lead that previously had a follow-up, completing the call fulfills and clears the previous callback!
-  const effectiveFollowUp =
-    !isTerminalOutcome && explicitFollowUp && explicitFollowUp.trim().length > 0
-      ? explicitFollowUp.trim()
-      : null;
+  const previousFollowUp = extractLatestFollowUp(company.notes);
+  const previousAttempts = parseCallLog(company.notes).length;
 
-  const cleanUserNote = stripFollowUpTags(input.callerNotes).trim();
+  let effectiveFollowUp: string | null =
+    !isTerminalOutcome && explicitFollowUp && explicitFollowUp.length > 0
+      ? explicitFollowUp
+      : null;
+  let autoRescheduleReason: string | null = null;
+
+  if (
+    !effectiveFollowUp &&
+    !isTerminalOutcome &&
+    previousFollowUp &&
+    UNFULFILLED_CALLBACK_OUTCOMES.has(effectiveOutcome)
+  ) {
+    const cadence = computeAutoFollowUpCadence({
+      outcome: effectiveOutcome,
+      previousAttempts,
+      state: company.state,
+    });
+    effectiveFollowUp = cadence.nextFollowUpIso;
+    autoRescheduleReason = cadence.cadenceReason;
+  }
+
   const noteBody = cleanUserNote || getDefaultCallNote(effectiveOutcome);
 
   const timeStr = new Date().toLocaleString("en-US", {
@@ -362,44 +522,22 @@ export async function recordCallFeedback(
     hour: "numeric",
     minute: "2-digit",
   });
-  const outcomeLabel =
-    CALL_STATUS_DEFS[effectiveOutcome]?.noteLabel ||
-    (effectiveOutcome === "CONNECTED"
-      ? "Connected / Spoke"
-      : effectiveOutcome === "MEETING_BOOKED"
-      ? "Meeting Booked"
-      : effectiveOutcome === "GATEKEEPER_BLOCKED"
-      ? "Gatekeeper"
-      : effectiveOutcome === "NO_ANSWER"
-      ? "No Answer"
-      : effectiveOutcome === "WRONG_NUMBER"
-      ? "Wrong Number"
-      : effectiveOutcome === "NOT_INTERESTED"
-      ? "Not Interested"
-      : "Left Voicemail");
+  const outcomeLabel = CALL_STATUS_DEFS[effectiveOutcome]?.noteLabel || "Left Voicemail";
 
   const newCallLogEntry = `[${timeStr} • ${input.actor || "Caller"} (${outcomeLabel})]: ${noteBody}`;
+  const finalNotes = prependLogEntry(company.notes, newCallLogEntry, effectiveFollowUp);
 
-  const baseExisting = stripFollowUpTags(company.notes);
-  const existingLogs = extractCallerNotes(baseExisting);
-  const combinedLogs = existingLogs
-    ? `${newCallLogEntry}\n${existingLogs}`
-    : newCallLogEntry;
-
-  const finalNotes = effectiveFollowUp
-    ? `[Next Follow-up Scheduled: ${effectiveFollowUp}]\n${combinedLogs}`
-    : combinedLogs;
-
+  const updatedAt = new Date();
   await db
     .update(companies)
     .set({
       status: nextStatus,
       notes: finalNotes,
-      updatedAt: new Date(),
+      updatedAt,
     })
     .where(eq(companies.id, input.companyId));
 
-  // 4. Append audit log
+  // 4. Append audit log (this row is also the idempotency key and the durable call record)
   await audit(db, {
     actor: input.actor,
     action: "caller.call_logged",
@@ -408,18 +546,29 @@ export async function recordCallFeedback(
     companyId: input.companyId,
     details: {
       callOutcome: effectiveOutcome,
+      selectedOutcome: input.callOutcome,
       nextStatus,
       previousStatus: company.status,
-      attemptNumber: parseCallLog(company.notes).length + 1,
+      attemptNumber: previousAttempts + 1,
       painIdentified: input.painIdentified,
       softwareConfirmed: input.softwareConfirmed,
       fleetSizeConfirmed: input.fleetSizeConfirmed,
       notes: noteBody,
       effectiveFollowUp,
+      previousFollowUp,
+      autoRescheduleReason,
+      clientLogId: input.clientLogId ?? null,
     },
   });
 
-  return { ok: true, nextStatus, updatedNotes: finalNotes, nextFollowUp: effectiveFollowUp, updatedAt: new Date().toISOString() };
+  return {
+    ok: true,
+    nextStatus,
+    updatedNotes: finalNotes,
+    nextFollowUp: effectiveFollowUp,
+    updatedAt: updatedAt.toISOString(),
+    autoRescheduleReason,
+  };
 }
 
 export interface UpdateLeadCrmInput {
@@ -454,18 +603,70 @@ function formatCallerTimeStr(): string {
 }
 
 function outcomeToLifecycleStatus(outcome: CallOutcomeKey): LifecycleStatus {
-  switch (outcome) {
-    case "MEETING_BOOKED":
-      return "MEETING_BOOKED";
-    case "NOT_INTERESTED":
-      return "LOST";
-    case "CONNECTED":
-      return "CONNECTED";
-    case "WRONG_NUMBER":
-      return "NURTURE";
-    default:
-      return "CALLING";
+  return lifecycleStatusForOutcome(outcome);
+}
+
+export async function updateLeadCrmDetails(
+  db: Db,
+  input: UpdateLeadCrmInput,
+  actor: string
+): Promise<{ updatedNotes: string | null; nextStatus: LifecycleStatus }> {
+  return inLeadTransaction(db, (tx) => updateLeadCrmDetailsInTransaction(tx, input, actor));
+}
+
+export async function updateLeadStatusQuick(
+  db: Db,
+  companyId: string,
+  status: LifecycleStatus,
+  actor: string
+): Promise<{ updatedNotes: string | null; nextStatus: LifecycleStatus }> {
+  return inLeadTransaction(db, (tx) => updateLeadStatusQuickInTransaction(tx, companyId, status, actor));
+}
+
+export async function updateLeadFollowUp(
+  db: Db,
+  companyId: string,
+  followUpDate: string | null,
+  note: string | null | undefined,
+  actor: string
+): Promise<{ updatedNotes: string | null; nextFollowUp: string | null }> {
+  return inLeadTransaction(db, (tx) =>
+    updateLeadFollowUpInTransaction(tx, companyId, followUpDate, note, actor)
+  );
+}
+
+export async function resetLeadCallStatus(
+  db: Db,
+  params: {
+    companyId: string;
+    newPhone?: string | null;
+    clearFollowUp?: boolean;
+    reason?: string | null;
+    actor: string;
   }
+): Promise<{ updatedNotes: string | null; nextStatus: LifecycleStatus; phoneDisplay: string | null }> {
+  return inLeadTransaction(db, (tx) => resetLeadCallStatusInTransaction(tx, params));
+}
+
+export async function deleteCallLogEntry(
+  db: Db,
+  companyId: string,
+  logIndex: number,
+  actor: string
+): Promise<{ updatedNotes: string | null; nextStatus: LifecycleStatus }> {
+  return inLeadTransaction(db, (tx) => deleteCallLogEntryInTransaction(tx, companyId, logIndex, actor));
+}
+
+export async function updateLeadSmartField(
+  db: Db,
+  companyId: string,
+  fieldKey: string,
+  value: string,
+  actor: string
+): Promise<{ nextStatus: LifecycleStatus; updatedNotes: string | null }> {
+  return inLeadTransaction(db, (tx) =>
+    updateLeadSmartFieldInTransaction(tx, companyId, fieldKey, value, actor)
+  );
 }
 
 function lifecycleStatusToOutcome(status: LifecycleStatus): CallOutcomeKey | null {
@@ -487,7 +688,7 @@ function lifecycleStatusToOutcome(status: LifecycleStatus): CallOutcomeKey | nul
   }
 }
 
-export async function updateLeadCrmDetails(
+async function updateLeadCrmDetailsInTransaction(
   db: Db,
   input: UpdateLeadCrmInput,
   actor: string
@@ -496,7 +697,8 @@ export async function updateLeadCrmDetails(
     .select()
     .from(companies)
     .where(eq(companies.id, input.companyId))
-    .limit(1);
+    .limit(1)
+    .for("update");
 
   if (!company) throw new Error("Lead not found");
 
@@ -585,8 +787,10 @@ export async function updateLeadCrmDetails(
         }
         const inferred =
           inferOutcomeFromText(l) ??
-          (input.status ? lifecycleStatusToOutcome(input.status) : null) ??
-          "CONNECTED";
+          (input.status ? lifecycleStatusToOutcome(input.status) : null);
+        // A plain note ("check website", "owner is Mike") is just a note. It is only
+        // turned into a call-log line when it clearly says what happened on a call.
+        if (!inferred) return l;
         const label = CALL_STATUS_DEFS[inferred].noteLabel || "Connected / Spoke";
         autoLoggedOutcome = inferred;
         autoLoggedNoteText = l;
@@ -607,10 +811,10 @@ export async function updateLeadCrmDetails(
       : cleanedNotes || null;
   }
 
-  // Auto-clear terminal outcome when phone is changed or when explicitly reset/approved
-  const isWrongNumberInNotes =
-    (company.notes || "").toLowerCase().includes("wrong number") ||
-    (company.notes || "").toLowerCase().includes("wrong");
+  // Auto-clear terminal outcome when phone is changed or when explicitly reset/approved.
+  // "Wrong number" must come from the real latest call outcome, not from any note that merely
+  // contains the word "wrong" (e.g. "wrong extension, call the main line").
+  const isWrongNumberInNotes = parseCallLog(company.notes)[0]?.outcome === "WRONG_NUMBER";
   const isPhoneChanged =
     companyUpdates.phoneDisplay !== undefined &&
     companyUpdates.phoneDisplay !== null &&
@@ -739,6 +943,10 @@ export async function updateLeadCrmDetails(
     companyId: input.companyId,
     details: {
       updatedFields: Object.keys(companyUpdates),
+      // Safety net: the full previous notes are kept in the audit trail whenever notes are rewritten.
+      ...(companyUpdates.notes !== undefined && companyUpdates.notes !== company.notes
+        ? { previousNotes: company.notes }
+        : {}),
     },
   });
 
@@ -749,7 +957,7 @@ export async function updateLeadCrmDetails(
   };
 }
 
-export async function updateLeadStatusQuick(
+async function updateLeadStatusQuickInTransaction(
   db: Db,
   companyId: string,
   status: LifecycleStatus,
@@ -759,7 +967,8 @@ export async function updateLeadStatusQuick(
     .select()
     .from(companies)
     .where(eq(companies.id, companyId))
-    .limit(1);
+    .limit(1)
+    .for("update");
 
   const mappedOutcome = lifecycleStatusToOutcome(status);
   let nextNotes = company?.notes ?? null;
@@ -770,10 +979,7 @@ export async function updateLeadStatusQuick(
     const label = CALL_STATUS_DEFS[mappedOutcome].noteLabel || status;
     const noteBody = getDefaultCallNote(mappedOutcome);
     const newEntry = `[${timeStr} • ${actor || "Caller"} (${label})]: ${noteBody}`;
-    const followUp = extractLatestFollowUp(nextNotes);
-    const baseClean = extractCallerNotes(stripFollowUpTags(nextNotes));
-    const combined = baseClean ? `${newEntry}\n${baseClean}` : newEntry;
-    nextNotes = followUp ? `[Next Follow-up Scheduled: ${followUp}]\n${combined}` : combined;
+    nextNotes = prependLogEntry(nextNotes, newEntry, extractLatestFollowUp(nextNotes));
   }
 
   await db
@@ -815,7 +1021,7 @@ export async function updateLeadStatusQuick(
   return { updatedNotes: nextNotes, nextStatus: status };
 }
 
-export async function updateLeadFollowUp(
+async function updateLeadFollowUpInTransaction(
   db: Db,
   companyId: string,
   followUpDate: string | null,
@@ -826,7 +1032,8 @@ export async function updateLeadFollowUp(
     .select()
     .from(companies)
     .where(eq(companies.id, companyId))
-    .limit(1);
+    .limit(1)
+    .for("update");
 
   if (!company) throw new Error("Lead not found");
 
@@ -864,7 +1071,7 @@ export async function updateLeadFollowUp(
   return { updatedNotes: finalNotes, nextFollowUp: trimmedDate };
 }
 
-export async function resetLeadCallStatus(
+async function resetLeadCallStatusInTransaction(
   db: Db,
   params: {
     companyId: string;
@@ -878,7 +1085,8 @@ export async function resetLeadCallStatus(
     .select()
     .from(companies)
     .where(eq(companies.id, params.companyId))
-    .limit(1);
+    .limit(1)
+    .for("update");
 
   if (!company) throw new Error("Lead not found");
 
@@ -950,7 +1158,7 @@ export async function resetLeadCallStatus(
   };
 }
 
-export async function deleteCallLogEntry(
+async function deleteCallLogEntryInTransaction(
   db: Db,
   companyId: string,
   logIndex: number,
@@ -960,7 +1168,8 @@ export async function deleteCallLogEntry(
     .select()
     .from(companies)
     .where(eq(companies.id, companyId))
-    .limit(1);
+    .limit(1)
+    .for("update");
 
   if (!company) throw new Error("Lead not found");
 
@@ -1372,7 +1581,7 @@ export async function autoDistributeLeads(
   return { distributedCount: unassigned.length };
 }
 
-export async function updateLeadSmartField(
+async function updateLeadSmartFieldInTransaction(
   db: Db,
   companyId: string,
   fieldKey: string,
@@ -1383,7 +1592,8 @@ export async function updateLeadSmartField(
     .select()
     .from(companies)
     .where(eq(companies.id, companyId))
-    .limit(1);
+    .limit(1)
+    .for("update");
 
   if (!company) throw new Error("Lead not found");
 
@@ -1429,10 +1639,7 @@ export async function updateLeadSmartField(
         .replace(/_/g, " ");
       const noteBody = `Confirmed ${prettyField}: ${trimmedVal}`;
       const newEntry = `[${timeStr} • ${actor || "Caller"} (${label})]: ${noteBody}`;
-      const followUp = extractLatestFollowUp(company.notes);
-      const baseClean = extractCallerNotes(stripFollowUpTags(company.notes));
-      const combined = baseClean ? `${newEntry}\n${baseClean}` : newEntry;
-      nextNotes = followUp ? `[Next Follow-up Scheduled: ${followUp}]\n${combined}` : combined;
+      nextNotes = prependLogEntry(company.notes, newEntry, extractLatestFollowUp(company.notes));
     }
   }
 
