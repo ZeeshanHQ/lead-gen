@@ -20,6 +20,7 @@ import {
   outcomeKeyFromEnum,
   parseCallLog,
   parseNoteTimestamp,
+  refineConnectedOutcome,
   type CallOutcomeKey,
   type CallStatusKey,
   type FunnelDepth,
@@ -114,104 +115,110 @@ export function buildCallEvents(
   leads: FunnelLead[],
   audit: AuditCallInput[],
   members: FunnelMember[],
-  nowMs: number
+  nowMs: number = Date.now()
 ): CallEvent[] {
   const leadById = new Map(leads.map((l) => [l.id, l]));
   const events: CallEvent[] = [];
-  const hasAudit = new Set<string>();
-  const hasAnyEvent = new Set<string>();
 
+  // Group audit events by companyId (newest first to pair with parseCallLog which is newest first)
+  const auditsByCompany = new Map<string, Array<AuditCallInput & { resolvedOutcome: CallOutcomeKey }>>();
   for (const a of audit) {
     if (!a.companyId) continue;
     const lead = leadById.get(a.companyId);
     if (!lead) continue;
-    const outcome = outcomeKeyFromEnum(a.callOutcome);
-    if (!outcome) continue;
-    hasAudit.add(a.companyId);
-    hasAnyEvent.add(a.companyId);
-    events.push({
-      id: a.id,
-      companyId: a.companyId,
-      actor: a.actor,
-      memberId: resolveMemberId(a.actor, members, lead.assignedMemberId),
-      outcome,
-      atMs: a.createdAtMs,
-      source: "audit",
-    });
+    const rawOutcome = outcomeKeyFromEnum(a.callOutcome);
+    if (!rawOutcome) continue;
+    const resolvedOutcome =
+      rawOutcome === "CONNECTED" && a.notes
+        ? refineConnectedOutcome(a.notes) ?? rawOutcome
+        : rawOutcome;
+    const list = auditsByCompany.get(a.companyId) ?? [];
+    list.push({ ...a, resolvedOutcome });
+    auditsByCompany.set(a.companyId, list);
+  }
+  for (const list of auditsByCompany.values()) {
+    list.sort((a, b) => b.createdAtMs - a.createdAtMs);
   }
 
   for (const lead of leads) {
-    if (!hasAudit.has(lead.id)) {
-      for (const [idx, entry] of parseCallLog(lead.notes).entries()) {
-        const ts =
-          parseNoteTimestamp(entry.timestampRaw, nowMs) ??
-          lead.updatedAtMs ??
-          lead.createdAtMs ??
-          nowMs;
-        hasAnyEvent.add(lead.id);
+    const derived = deriveCallStatus(lead);
+    const noteLogs = parseCallLog(lead.notes);
+    const leadAudits = auditsByCompany.get(lead.id) ?? [];
+
+    // If a lead has notes and its derived status is UNTOUCHED (e.g., reset to Ready to Call),
+    // it has 0 active call events.
+    if (derived.key === "UNTOUCHED" && lead.notes !== null && lead.notes !== undefined) {
+      continue;
+    }
+
+    if (noteLogs.length > 0) {
+      for (const [idx, entry] of noteLogs.entries()) {
+        const matchedAudit = leadAudits[idx];
+        const actorName = entry.author || matchedAudit?.actor || "Caller";
+        const memberId =
+          lead.assignedMemberId ?? resolveMemberId(actorName, members, lead.assignedMemberId);
+        if (matchedAudit) {
+          events.push({
+            id: matchedAudit.id,
+            companyId: lead.id,
+            actor: actorName,
+            memberId,
+            outcome: entry.outcome,
+            atMs: Number.isFinite(matchedAudit.createdAtMs) ? matchedAudit.createdAtMs : nowMs,
+            source: "audit",
+          });
+        } else {
+          const ts =
+            parseNoteTimestamp(entry.timestampRaw, nowMs) ??
+            lead.updatedAtMs ??
+            lead.createdAtMs ??
+            nowMs;
+          events.push({
+            id: `${lead.id}#${idx}`,
+            companyId: lead.id,
+            actor: actorName,
+            memberId,
+            outcome: entry.outcome,
+            atMs: Number.isFinite(ts) ? ts : nowMs,
+            source: "note",
+          });
+        }
+      }
+      continue;
+    }
+
+    if (leadAudits.length > 0) {
+      for (const a of leadAudits) {
         events.push({
-          id: `${lead.id}#${idx}`,
+          id: a.id,
           companyId: lead.id,
-          actor: entry.author || "Caller",
-          memberId: resolveMemberId(entry.author, members, lead.assignedMemberId),
-          outcome: entry.outcome,
-          atMs: ts,
-          source: "note",
+          actor: a.actor,
+          memberId: lead.assignedMemberId ?? resolveMemberId(a.actor, members, lead.assignedMemberId),
+          outcome: a.resolvedOutcome,
+          atMs: Number.isFinite(a.createdAtMs) ? a.createdAtMs : nowMs,
+          source: "audit",
         });
       }
+      continue;
     }
 
     // If a lead was updated in CRM (status changed, smart qualification fields filled, or follow-up set)
     // without a separate call log entry yet, synthesize the call event so CRM and Funnel Analytics
     // always agree 100% on dialed, answered, connected, and booked counts.
-    if (!hasAnyEvent.has(lead.id)) {
-      const derived = deriveCallStatus(lead);
-      if (derived.key !== "UNTOUCHED") {
-        const assignedMember = lead.assignedMemberId
-          ? members.find((m) => m.id === lead.assignedMemberId)
-          : undefined;
-        events.push({
-          id: `${lead.id}#derived`,
-          companyId: lead.id,
-          actor: assignedMember?.name || "Caller",
-          memberId: lead.assignedMemberId,
-          outcome: derived.key,
-          atMs: lead.updatedAtMs ?? lead.createdAtMs ?? nowMs,
-          source: "note",
-        });
-        hasAnyEvent.add(lead.id);
-      }
-    }
-
-    // Ensure CRM milestone upgrades (Meeting Booked, Connected, Gatekeeper Blocked, etc.)
-    // are ALWAYS captured in events so Sales Funnel matches CRM 100% in real-time.
-    const derived = deriveCallStatus(lead);
-    const existingEvents = events.filter((e) => e.companyId === lead.id);
-    const maxExistingDepth = Math.max(
-      0,
-      ...existingEvents.map((e) => CALL_STATUS_DEFS[e.outcome]?.depth ?? 0)
-    );
-
-    if (derived.key !== "UNTOUCHED" && derived.def.depth > maxExistingDepth) {
-      const parsedLogs = parseCallLog(lead.notes);
-      const lastParsed = parsedLogs[parsedLogs.length - 1];
-      const parsedTs = lastParsed ? parseNoteTimestamp(lastParsed.timestampRaw, nowMs) : null;
-      const atMs = parsedTs ?? lead.updatedAtMs ?? lead.createdAtMs ?? nowMs;
-
+    if (derived.key !== "UNTOUCHED") {
       const assignedMember = lead.assignedMemberId
         ? members.find((m) => m.id === lead.assignedMemberId)
         : undefined;
-
+      const fallbackTs = lead.updatedAtMs ?? lead.createdAtMs ?? nowMs;
       events.push({
-        id: `${lead.id}#derived_upgrade`,
+        id: `${lead.id}#derived`,
         companyId: lead.id,
         actor: assignedMember?.name || "Caller",
         memberId: lead.assignedMemberId,
         outcome: derived.key,
-        atMs,
+        atMs: Number.isFinite(fallbackTs) ? fallbackTs : nowMs,
         source: "note",
       });
-      hasAnyEvent.add(lead.id);
     }
   }
 
@@ -455,7 +462,8 @@ export function computeFunnel(
     perLead.set(e.companyId, cur);
   }
   for (const l of poolLeads) {
-    const floor = lifecycleDepthFloor(l.status);
+    const derived = deriveCallStatus(l);
+    const floor = derived.def.depth;
     if (floor === 0) continue;
     const cur = perLead.get(l.id) ?? { depth: 0 as FunnelDepth, attempts: 0, last: null };
     if (floor > cur.depth) cur.depth = floor;
@@ -808,6 +816,10 @@ export function computeFunnel(
     if (!e.memberId) continue;
     const row = callerRows.get(e.memberId);
     if (!row) continue;
+    const lead = leadById.get(e.companyId);
+    if (row.assignedLeads > 0 && lead && lead.assignedMemberId !== e.memberId) {
+      continue;
+    }
     const d = CALL_STATUS_DEFS[e.outcome].depth;
     row.dials++;
     if (d >= 2) row.human++;

@@ -508,10 +508,9 @@ export function CrmLeadSheet({
           setStatusFilter(savedStatus);
         }
       }
-      const savedDate = localStorage.getItem("astraventa_crm_date_filter");
-      if (savedDate && ["ALL", "TODAY", "YESTERDAY", "OLDER"].includes(savedDate)) {
-        setDateFilter(savedDate as any);
-      }
+      // Always start with ALL dates visible so stale date filters never hide leads
+      setDateFilter("ALL");
+      localStorage.removeItem("astraventa_crm_date_filter");
     } catch {}
   }, [initialStatusFilter, leads]);
 
@@ -967,8 +966,7 @@ export function CrmLeadSheet({
     } else if (statusFilter === "OVERDUE") {
       if (!followUp || !isFollowUpOverdue(followUp)) return false;
     } else if (statusFilter === "UNTOUCHED" || statusFilter === "TO_CALL") {
-      const isRecentlyDialed = recentlyDialedIds.has(lead.id);
-      if (!isRecentlyDialed && derived.key !== "UNTOUCHED") return false;
+      if (derived.key !== "UNTOUCHED") return false;
     } else if (statusFilter !== "ALL") {
       const wanted = STATUS_FILTER_TO_KEY[statusFilter];
       if (wanted) {
@@ -2436,7 +2434,7 @@ export function CrmLeadSheet({
                                   attempts={derived.attempts}
                                   onClick={canCall ? () => openCallModal(lead) : undefined}
                                 />
-                                {canEdit && derived.key !== "UNTOUCHED" && (
+                                {(canCall || canEdit) && derived.key !== "UNTOUCHED" && (
                                   <button
                                     type="button"
                                     onClick={() => handleResetLeadOutcome(lead)}
@@ -3130,7 +3128,7 @@ export function CrmLeadSheet({
                         }`}
                       >
                         <p className="whitespace-pre-wrap flex-1">{line}</p>
-                        {canEdit && isCallLog && (
+                        {(canCall || canEdit) && isCallLog && (
                           <button
                             type="button"
                             onClick={() => handleDeleteCallLog(viewingNotesHistoryLead, lineIdx)}
@@ -3159,7 +3157,7 @@ export function CrmLeadSheet({
                 >
                   Close
                 </button>
-                {canEdit && (
+                {(canCall || canEdit) && (
                   <button
                     type="button"
                     onClick={() => {

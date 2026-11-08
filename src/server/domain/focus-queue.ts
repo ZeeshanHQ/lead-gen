@@ -427,7 +427,13 @@ export function rankLeadsForFocusStream<
       continue;
     }
 
-    // TIER 4: Previously Dialed Leads Eligible for Retry
+    // TIER 4: Previously Dialed Unreached Leads Eligible for Retry
+    // Exclude CONNECTED leads without a scheduled follow-up (already spoke with decision maker)
+    // and ensure at least 1 call attempt was logged.
+    if (derived.key === "CONNECTED" || derived.attempts <= 0) {
+      continue;
+    }
+
     const lastCallMs = derived.lastLog?.timestampRaw
       ? parseNoteTimestamp(derived.lastLog.timestampRaw, nowMs)
       : null;
@@ -439,7 +445,7 @@ export function rankLeadsForFocusStream<
       ...base,
       priorityScore: retryScore,
       tier: "CADENCE_RETRY_DUE",
-      reasonBadge: `🔄 Retry Attempt #${derived.attempts + 1} (${derived.def.label})`,
+      reasonBadge: `🔄 ${derived.attempts} ${derived.attempts === 1 ? "Call" : "Calls"} Logged (${derived.def.label})`,
       isMandatoryFollowUpLock: false,
       isHeldBack: false,
       overdueMinutes: 0,

@@ -274,4 +274,25 @@ describe("getQuickNoteChipsForOutcome", () => {
     const chipsConnected = getQuickNoteChipsForOutcome("CONNECTED");
     expect(chipsConnected).toContain("Spoke with owner, interested, call back tomorrow");
   });
+
+  it("excludes CONNECTED leads without follow-up from CADENCE_RETRY_DUE and formats retry badge with actual logged call count", () => {
+    const fixedNow = Date.UTC(2026, 9, 29, 15, 0, 0);
+    const connectedNoFu = mockLead({
+      companyId: "conn_no_fu",
+      status: "CONNECTED",
+      notes: "[Nov 8, 1:00 PM • Hamda (Connected / Spoke)]: Spoke with owner, reviewing info",
+    });
+    const noAnswerOnce = mockLead({
+      companyId: "na_once",
+      status: "CALLING",
+      notes: "[Nov 8, 1:05 PM • Hamda (No Answer)]: Rang 5x, no answer",
+    });
+
+    const ranked = rankLeadsForFocusStream([connectedNoFu, noAnswerOnce], fixedNow);
+    expect(ranked.find((r) => r.lead.companyId === "conn_no_fu")).toBeUndefined();
+    const retryItem = ranked.find((r) => r.lead.companyId === "na_once");
+    expect(retryItem).toBeDefined();
+    expect(retryItem?.tier).toBe("CADENCE_RETRY_DUE");
+    expect(retryItem?.reasonBadge).toContain("1 Call Logged (No Answer)");
+  });
 });

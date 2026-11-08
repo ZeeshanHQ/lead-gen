@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { auditLogs, companies, contacts, leadScores, systemSettings } from "../db/schema";
-import { type LifecycleStatus } from "../domain/lifecycle";
+import { POST_APPROVAL, type LifecycleStatus } from "../domain/lifecycle";
 import { getContactsForCompanies, toContactInput } from "./contacts";
 import { classifyEmail, classifyTitle, pickBestContact } from "../domain/contact";
 import { cleanPhone, normalizeCompanyName, normalizeWebsite } from "../domain/normalize";
@@ -14,7 +14,9 @@ import { audit } from "./audit";
 import { createNotification } from "./notifications";
 import {
   CALL_STATUS_DEFS,
+  extractFollowUp,
   inferOutcomeFromText,
+  isSystemBattlecardOrTagLine,
   lifecycleStatusForOutcome,
   outcomeKeyFromEnum,
   parseCallLog,
@@ -25,10 +27,7 @@ import { CALLER_TIMEZONE } from "../domain/call-time";
 import { computeAutoFollowUpCadence } from "../domain/focus-queue";
 
 export function extractLatestFollowUp(notes: string | null | undefined): string | null {
-  if (!notes) return null;
-  const matches = [...notes.matchAll(/\[(?:Next )?Follow-?up Scheduled:\s*([^\]]+)\]/gi)];
-  if (matches.length === 0) return null;
-  return matches[0]?.[1]?.trim() || null;
+  return extractFollowUp(notes);
 }
 
 export function stripFollowUpTags(notes: string | null | undefined): string {
@@ -44,19 +43,8 @@ export function extractCallerNotes(rawNotes: string | null | undefined): string 
   const filtered = lines.filter((line) => {
     const trimmed = line.trim();
     if (!trimmed) return false;
-    if (
-      trimmed.startsWith("BATTLECARD:") ||
-      trimmed.startsWith("15-SECOND OPENING SCRIPT:") ||
-      trimmed.startsWith("Focus:") ||
-      trimmed.startsWith("Local Market:") ||
-      trimmed.startsWith("Gatekeeper Strategy:") ||
-      trimmed.startsWith("Reputation:") ||
-      trimmed.startsWith("Authority:") ||
-      trimmed.startsWith("PITCH ANGLE:")
-    ) {
-      return false;
-    }
-    return true;
+    if (/^\[(?:Next )?Follow-?up Scheduled:\s*[^\]]+\]$/i.test(trimmed)) return true;
+    return !isSystemBattlecardOrTagLine(trimmed);
   });
   return filtered.join("\n").trim();
 }
@@ -157,24 +145,14 @@ export async function getCallerQueue(
     marketNames?: Record<string, string>;
   }
 ): Promise<CallerLeadView[]> {
-  const callerStatuses: LifecycleStatus[] = [
-    "APPROVED",
-    "SYNCED",
-    "CALLING",
-    "CONNECTED",
-    "PAIN_FOUND",
-    "MEETING_BOOKED",
-    "QUALIFIED",
-    "NURTURE",
-    "LOST",
-  ];
+  const callerStatuses: LifecycleStatus[] = [...POST_APPROVAL];
 
-  const statusOrAssignedCondition = sql`(${inArray(companies.status, callerStatuses)} OR (${companies.assignedMemberId} IS NOT NULL AND ${companies.assignedMemberId} != '' AND ${companies.status} != 'REJECTED'))`;
+  const statusCondition = inArray(companies.status, callerStatuses);
 
   const whereClause =
     marketId && !options?.includeCrossMarketForOwner
-      ? and(statusOrAssignedCondition, eq(companies.marketId, marketId))
-      : statusOrAssignedCondition;
+      ? and(statusCondition, eq(companies.marketId, marketId))
+      : statusCondition;
 
   const rows = await db
     .select()
@@ -296,7 +274,9 @@ const SYSTEM_NOTE_PREFIXES = [
 ];
 
 function isSystemNoteLine(line: string): boolean {
-  return SYSTEM_NOTE_PREFIXES.some((p) => line.startsWith(p));
+  if (/^\[(?:Next )?Follow-?up Scheduled:\s*[^\]]+\]$/i.test(line)) return false;
+  if (/\((?:Ready to Call|Number Corrected|Outcome Reset)\)\]/i.test(line)) return false;
+  return isSystemBattlecardOrTagLine(line);
 }
 
 /** Splits stored notes into the follow-up tag, human call-log lines and research/system lines. */
@@ -1187,16 +1167,7 @@ async function deleteCallLogEntryInTransaction(
   lines.forEach((line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
-    if (
-      trimmed.startsWith("BATTLECARD:") ||
-      trimmed.startsWith("15-SECOND OPENING SCRIPT:") ||
-      trimmed.startsWith("Focus:") ||
-      trimmed.startsWith("Local Market:") ||
-      trimmed.startsWith("Gatekeeper Strategy:") ||
-      trimmed.startsWith("Reputation:") ||
-      trimmed.startsWith("Authority:") ||
-      trimmed.startsWith("PITCH ANGLE:")
-    ) {
+    if (isSystemNoteLine(trimmed)) {
       systemLines.push(trimmed);
     } else {
       callLogLines.push(trimmed);
@@ -1214,20 +1185,20 @@ async function deleteCallLogEntryInTransaction(
   const systemText = systemLines.join("\n");
   const combinedBody = [remainingLogText, systemText].filter(Boolean).join("\n");
 
-  const finalNotes = followUp
+  const remainingLogs = parseCallLog(remainingLogText || null);
+  const keepFollowUp = remainingLogs.length > 0 ? followUp : null;
+
+  const finalNotes = keepFollowUp
     ? combinedBody
-      ? `[Next Follow-up Scheduled: ${followUp}]\n${combinedBody}`
-      : `[Next Follow-up Scheduled: ${followUp}]`
+      ? `[Next Follow-up Scheduled: ${keepFollowUp}]\n${combinedBody}`
+      : `[Next Follow-up Scheduled: ${keepFollowUp}]`
     : combinedBody || null;
 
   // Recalculate status from remaining logs
   let nextStatus: LifecycleStatus = "APPROVED";
-  const remainingLogs = parseCallLog(finalNotes);
   if (remainingLogs.length > 0 && remainingLogs[0]) {
     const latestOutcome = remainingLogs[0].outcome;
     nextStatus = outcomeToLifecycleStatus(latestOutcome);
-  } else if (company.status === "MEETING_BOOKED" || company.status === "QUALIFIED") {
-    nextStatus = company.status;
   } else {
     nextStatus = "APPROVED";
   }

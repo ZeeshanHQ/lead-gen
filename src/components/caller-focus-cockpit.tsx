@@ -60,6 +60,7 @@ import {
   ChevronRight,
   RotateCcw,
   Award,
+  Trash2,
 } from "lucide-react";
 
 export interface FocusCockpitSubmitPayload {
@@ -95,6 +96,8 @@ interface CallerFocusCockpitProps {
   ) => void;
   onOpenEditLead: (lead: CallerLeadView) => void;
   onSwitchToFullCrm?: (filterStatus?: string) => void;
+  onResetLead?: (lead: CallerLeadView) => void;
+  onDeleteCallLog?: (lead: CallerLeadView, logIndex: number) => void;
 }
 
 type ScriptTabKey =
@@ -199,6 +202,8 @@ export function CallerFocusCockpit({
   onSmartFieldChange,
   onOpenEditLead,
   onSwitchToFullCrm,
+  onResetLead,
+  onDeleteCallLog,
 }: CallerFocusCockpitProps) {
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [cursorIndex, setCursorIndex] = useState<number>(0);
@@ -210,6 +215,10 @@ export function CallerFocusCockpit({
   const [snoozedLockIds, setSnoozedLockIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [lastLoggedInfo, setLastLoggedInfo] = useState<{
+    lead: CallerLeadView;
+    outcomeLabel: string;
+  } | null>(null);
 
   // Active Disposition State
   const [selectedOutcome, setSelectedOutcome] = useState<CallOutcomeKey | null>(
@@ -256,21 +265,34 @@ export function CallerFocusCockpit({
 
   // Active callable stream excludes future callbacks (>45m away) that are held back until due
   const activeCallableStream = useMemo(
-    () => rankedStream.filter((r) => !r.isHeldBack),
-    [rankedStream]
-  );
-
-  const freshUncalledCount = useMemo(
     () =>
       rankedStream.filter(
-        (r) => r.derivedStatus === "UNTOUCHED" && !r.isHeldBack
-      ).length,
-    [rankedStream]
+        (r) => !r.isHeldBack && !sessionCompletedIds.has(r.lead.companyId)
+      ),
+    [rankedStream, sessionCompletedIds]
   );
 
+  const freshStream = useMemo(
+    () =>
+      rankedStream.filter(
+        (r) =>
+          r.derivedStatus === "UNTOUCHED" &&
+          !r.isHeldBack &&
+          !sessionCompletedIds.has(r.lead.companyId)
+      ),
+    [rankedStream, sessionCompletedIds]
+  );
+
+  const freshUncalledCount = freshStream.length;
+
   const retriesStream = useMemo(
-    () => rankedStream.filter((r) => r.tier === "CADENCE_RETRY_DUE"),
-    [rankedStream]
+    () =>
+      rankedStream.filter(
+        (r) =>
+          r.tier === "CADENCE_RETRY_DUE" &&
+          !sessionCompletedIds.has(r.lead.companyId)
+      ),
+    [rankedStream, sessionCompletedIds]
   );
 
   const retriesCount = retriesStream.length;
@@ -302,9 +324,7 @@ export function CallerFocusCockpit({
   // Scoped stream according to active stream filter tab
   const scopedStream = useMemo(() => {
     if (streamScope === "FRESH") {
-      return rankedStream.filter(
-        (r) => r.derivedStatus === "UNTOUCHED" && !r.isHeldBack
-      );
+      return freshStream;
     }
     if (streamScope === "CALLBACKS") {
       return allCallbacksStream;
@@ -314,17 +334,20 @@ export function CallerFocusCockpit({
     }
     return activeCallableStream;
   }, [
-    rankedStream,
     activeCallableStream,
+    freshStream,
     allCallbacksStream,
     retriesStream,
     streamScope,
   ]);
 
-  // Stream of uncontacted leads for this active calling session
+  // Stream of leads for the active tab (matches tab badge count 100%)
   const uncontactedStream = useMemo(
-    () => scopedStream.filter((r) => !sessionCompletedIds.has(r.lead.companyId)),
-    [scopedStream, sessionCompletedIds]
+    () =>
+      streamScope === "CALLBACKS"
+        ? scopedStream
+        : scopedStream.filter((r) => !sessionCompletedIds.has(r.lead.companyId)),
+    [scopedStream, sessionCompletedIds, streamScope]
   );
 
   // Resolve current active item in stream
@@ -487,6 +510,10 @@ export function CallerFocusCockpit({
       const next = new Set(prev);
       next.add(dialedId);
       return next;
+    });
+    setLastLoggedInfo({
+      lead: activeLead,
+      outcomeLabel: CALL_STATUS_DEFS[outcomeToCommit]?.label || outcomeToCommit,
     });
     setPinnedLeadId(null);
     setCursorIndex(0);
@@ -738,6 +765,28 @@ export function CallerFocusCockpit({
         )}
 
         <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+          {lastLoggedInfo && onResetLead && (
+            <button
+              type="button"
+              onClick={() => {
+                onResetLead(lastLoggedInfo.lead);
+                setSessionCompletedIds((prev) => {
+                  const next = new Set(prev);
+                  next.delete(lastLoggedInfo.lead.companyId);
+                  return next;
+                });
+                setPinnedLeadId(lastLoggedInfo.lead.companyId);
+                setLastLoggedInfo(null);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200 font-bold px-4 py-2 text-xs transition shadow-sm cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>
+                Undo Last: {lastLoggedInfo.lead.name} ({lastLoggedInfo.outcomeLabel})
+              </span>
+            </button>
+          )}
+
           {streamScope !== "ALL" && (
             <button
               type="button"
@@ -987,6 +1036,29 @@ export function CallerFocusCockpit({
               Reset Round ({sessionCompletedIds.size})
             </button>
           )}
+
+          {lastLoggedInfo && onResetLead && (
+            <button
+              type="button"
+              onClick={() => {
+                onResetLead(lastLoggedInfo.lead);
+                setSessionCompletedIds((prev) => {
+                  const next = new Set(prev);
+                  next.delete(lastLoggedInfo.lead.companyId);
+                  return next;
+                });
+                setPinnedLeadId(lastLoggedInfo.lead.companyId);
+                setLastLoggedInfo(null);
+              }}
+              className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 px-2.5 py-0.5 text-[10px] font-bold text-rose-200 transition cursor-pointer"
+              title="Undo the last logged call outcome and reset that lead back to Ready to Call"
+            >
+              <RotateCcw className="w-3 h-3 text-rose-300" />
+              <span className="truncate max-w-[190px]">
+                Undo: {lastLoggedInfo.lead.name} ({lastLoggedInfo.outcomeLabel})
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Right HUD: Compact Live Stats + Callbacks & Search Drawer + US Timezones */}
@@ -1169,6 +1241,7 @@ export function CallerFocusCockpit({
                 const isCurrent = activeLead
                   ? item.companyId === activeLead.companyId
                   : false;
+                const itemDerived = deriveCallStatus(item);
                 const leadCleanPhone = (
                   item.bestContact.phone ||
                   item.phone ||
@@ -1193,7 +1266,7 @@ export function CallerFocusCockpit({
                       }}
                       className="min-w-0 flex-1 text-left cursor-pointer"
                     >
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-xs font-bold text-white truncate">
                           {item.name}
                         </span>
@@ -1202,6 +1275,7 @@ export function CallerFocusCockpit({
                             {item.state}
                           </span>
                         )}
+                        <CallStatusBadge lead={item} />
                       </div>
                       <div className="text-[10px] text-zinc-400 truncate mt-0.5">
                         {item.bestContact.name || "Owner"} &bull;{" "}
@@ -1242,22 +1316,59 @@ export function CallerFocusCockpit({
                       >
                         Load →
                       </button>
+                      {(itemDerived.key !== "UNTOUCHED" || Boolean(targetFu)) &&
+                        onResetLead && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onResetLead(item);
+                              setSessionCompletedIds((prev) => {
+                                const next = new Set(prev);
+                                next.delete(item.companyId);
+                                return next;
+                              });
+                              setPinnedLeadId(item.companyId);
+                              setActiveDrawer("NONE");
+                            }}
+                            className="text-[9px] font-bold text-rose-300 hover:text-rose-200 underline cursor-pointer"
+                            title="Reset lead outcome and clear callbacks back to Ready to Call"
+                          >
+                            ↺ Reset to Fresh
+                          </button>
+                        )}
                       {targetFu && onRescheduleFollowUp && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleDirectReschedule(
-                              item,
-                              buildPresetFollowUpIso("TOMORROW", item.state),
-                              "Rescheduled callback to tomorrow",
-                              false
-                            )
-                          }
-                          className="text-[9px] font-semibold text-amber-300 hover:text-amber-200 underline cursor-pointer"
-                          title="Move callback to tomorrow 10 AM US time"
-                        >
-                          Tomorrow
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDirectReschedule(
+                                item,
+                                buildPresetFollowUpIso("TOMORROW", item.state),
+                                "Rescheduled callback to tomorrow",
+                                false
+                              )
+                            }
+                            className="text-[9px] font-semibold text-amber-300 hover:text-amber-200 underline cursor-pointer"
+                            title="Move callback to tomorrow 10 AM US time"
+                          >
+                            Tomorrow
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDirectReschedule(
+                                item,
+                                null,
+                                "Cleared callback",
+                                false
+                              )
+                            }
+                            className="text-[9px] font-semibold text-zinc-400 hover:text-white underline cursor-pointer"
+                            title="Remove scheduled callback"
+                          >
+                            Clear
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -1388,6 +1499,21 @@ export function CallerFocusCockpit({
             </button>
             <button
               type="button"
+              onClick={() =>
+                handleDirectReschedule(
+                  activeLead,
+                  null,
+                  "Cleared callback",
+                  false
+                )
+              }
+              className="rounded-full bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 px-2.5 py-1 text-[10px] font-semibold text-rose-200 transition cursor-pointer"
+              title="Remove this callback date without logging a call"
+            >
+              Clear Callback
+            </button>
+            <button
+              type="button"
               onClick={handleNextOrSkipLead}
               className="rounded-full bg-zinc-900 hover:bg-zinc-800 border border-white/10 px-2.5 py-1 text-[10px] font-semibold text-zinc-300 hover:text-white transition cursor-pointer"
               title="Temporarily skip this callback to dial the next lead"
@@ -1445,6 +1571,23 @@ export function CallerFocusCockpit({
                 >
                   <Calendar className="w-3 h-3" />
                   <span>Callback: {activeFollowUpInfo.text}</span>
+                  {onRescheduleFollowUp && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleDirectReschedule(
+                          activeLead,
+                          null,
+                          "Cleared callback",
+                          false
+                        )
+                      }
+                      className="ml-0.5 rounded-full hover:bg-black/30 p-0.5 text-current opacity-80 hover:opacity-100 cursor-pointer"
+                      title="Clear scheduled callback"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  )}
                 </span>
               )}
             </div>
@@ -1459,6 +1602,28 @@ export function CallerFocusCockpit({
                   ← Back to Stream
                 </button>
               )}
+              {(activeRankedItem.derivedStatus !== "UNTOUCHED" ||
+                activeRankedItem.attempts > 0 ||
+                callHistory.length > 0 ||
+                Boolean(activeFollowUpRaw)) &&
+                onResetLead && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onResetLead(activeLead);
+                      setSessionCompletedIds((prev) => {
+                        const next = new Set(prev);
+                        next.delete(activeLead.companyId);
+                        return next;
+                      });
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full border border-rose-500/40 bg-rose-500/15 hover:bg-rose-500/25 px-2.5 py-0.5 text-[10px] font-bold text-rose-200 transition cursor-pointer"
+                    title="Reset this lead back to Ready to Call (clears mistaken outcome or follow-up)"
+                  >
+                    <RotateCcw className="w-3 h-3 text-rose-300" />
+                    <span>Reset to Fresh</span>
+                  </button>
+                )}
               {canEditContacts && (
                 <button
                   type="button"
@@ -1624,57 +1789,6 @@ export function CallerFocusCockpit({
             </div>
           </div>
 
-          {/* 1-CLICK NICHE QUALIFICATION FIELDS (INLINE DURING CALL) */}
-          {smartFields.length > 0 && onSmartFieldChange && (
-            <div className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                Quick Qualification:
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                {smartFields.map((field) => {
-                  const val = resolveSmartFieldValue(activeLead, field);
-                  const isPositive =
-                    val.includes("✓") ||
-                    (val !== "Ask on Call" && val !== "Verify on Call");
-                  const allOpts = field.options.includes(val)
-                    ? field.options
-                    : [val, ...field.options];
-                  return (
-                    <div
-                      key={field.key}
-                      className="inline-flex items-center gap-1.5 text-[11px]"
-                    >
-                      <span className="text-zinc-400 font-medium">
-                        {field.shortLabel}:
-                      </span>
-                      <select
-                        value={val}
-                        onChange={(e) =>
-                          onSmartFieldChange(activeLead, field, e.target.value)
-                        }
-                        className={`rounded-lg border px-2 py-0.5 text-[11px] font-semibold focus:outline-none cursor-pointer transition ${
-                          isPositive
-                            ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
-                            : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-700"
-                        }`}
-                      >
-                        {allOpts.map((opt) => (
-                          <option
-                            key={opt}
-                            value={opt}
-                            className="bg-[#121215] text-white"
-                          >
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* 3 FLASH BATTLECARDS */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             <div className="rounded-xl border border-rose-500/30 bg-gradient-to-b from-rose-950/20 to-black/40 p-2.5 space-y-1">
@@ -1768,13 +1882,32 @@ export function CallerFocusCockpit({
           {/* CALL LOG TIMELINE (READABLE PROPORTIONS) */}
           {callHistory.length > 0 && (
             <div className="rounded-xl border border-white/10 bg-black/40 p-2.5 space-y-1.5">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 flex items-center justify-between">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 flex flex-wrap items-center justify-between gap-2">
                 <span>Previous Call History ({callHistory.length})</span>
-                {activeFollowUpRaw && (
-                  <span className="text-amber-300 font-semibold">
-                    Next Callback: {activeFollowUpInfo.text}
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {activeFollowUpRaw && (
+                    <span className="text-amber-300 font-semibold">
+                      Next Callback: {activeFollowUpInfo.text}
+                    </span>
+                  )}
+                  {onResetLead && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onResetLead(activeLead);
+                        setSessionCompletedIds((prev) => {
+                          const next = new Set(prev);
+                          next.delete(activeLead.companyId);
+                          return next;
+                        });
+                      }}
+                      className="text-[10px] font-bold text-rose-300 hover:text-rose-200 underline cursor-pointer normal-case"
+                      title="Reset lead outcome and clear all active call history back to Ready to Call"
+                    >
+                      ↺ Reset Lead to Fresh
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
                 {callHistory.slice(0, 5).map((entry, idx) => {
@@ -1792,9 +1925,21 @@ export function CallerFocusCockpit({
                         </span>
                         <span className="text-zinc-200">{entry.text}</span>
                       </div>
-                      <span className="text-[10px] text-zinc-500 shrink-0 font-mono">
-                        {entry.timestampRaw}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] text-zinc-500 font-mono">
+                          {entry.timestampRaw}
+                        </span>
+                        {onDeleteCallLog && (
+                          <button
+                            type="button"
+                            onClick={() => onDeleteCallLog(activeLead, idx)}
+                            className="p-0.5 rounded text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
+                            title="Delete this call log entry"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

@@ -332,4 +332,26 @@ describe("live CRM inline notes, smart fields, and telemetry sync", () => {
     };
     expect(canViewSalesAnalytics(enabledCaller)).toBe(true);
   });
+
+  it("correctly classifies 'no one picked up' as NO_ANSWER and ignores AI battlecard headers in notes", () => {
+    const crmLeads: FunnelLead[] = [
+      lead("c_no_pickup", {
+        status: "CONNECTED",
+        assignedMemberId: "m1",
+        notes:
+          "[Nov 8, 2:10 PM • Hamda (Connected / Spoke)]: rang 4x but no one picked up\n--- COLD CALLER BRIEF (Verified Evidence) ---\n📞 15-SECOND OPENING SCRIPT:\n\"Hey Marcus — calling about your ads\"",
+      }),
+    ];
+    const events = buildCallEvents(crmLeads, [], members, NOW);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.outcome).toBe("NO_ANSWER");
+    const funnel = computeFunnel(crmLeads, events, members, {
+      scope: "ALL",
+      timeframe: "ALL",
+      nowMs: NOW,
+    });
+    expect(funnel.statusCounts.NO_ANSWER).toBe(1);
+    expect(funnel.statusCounts.CONNECTED).toBe(0);
+    expect(funnel.stages[2]!.count).toBe(0);
+  });
 });

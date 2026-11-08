@@ -47,7 +47,7 @@ export default async function OverviewPage() {
   const [overview, approvedRows, allWorkspaceApprovedRows] = await Promise.all([
     getOverview(db, market.id),
     loadLeadRows(db, "approved", market.id),
-    isOwnerOrManager ? loadLeadRows(db, "approved") : Promise.resolve([]),
+    loadLeadRows(db, "approved"),
   ]);
 
   const marketNameById = new Map(allMarkets.map((m) => [m.id, m.name]));
@@ -55,22 +55,16 @@ export default async function OverviewPage() {
     (m) => m.role !== "OWNER" && m.status !== "SUSPENDED"
   );
 
-  // For Owner / Manager:
-  // If active market has approved rows, use them; if active market has 0 leads but other markets have leads, use all workspace leads so Owner never sees 0 leads!
+  // Align workspace-wide POST_APPROVAL pool with /caller and /analytics
   const rowsToConsider =
-    isOwnerOrManager && approvedRows.length === 0 && allWorkspaceApprovedRows.length > 0
+    allWorkspaceApprovedRows.length > 0
       ? allWorkspaceApprovedRows
       : approvedRows;
 
-  // Filter approved rows by the active Must-Have Gate AND by member assignment if not Owner/Manager
+  // Filter approved rows by member assignment if not Owner/Manager
   const qualifiedRows = rowsToConsider.filter((l) => {
     if (!isOwnerOrManager && l.assignedMemberId !== activeMember.id) {
       return false;
-    }
-    if (activeGate.requirePhone) {
-      const phone = l.best?.phone || l.phoneDisplay || "";
-      const digits = phone.replace(/\D/g, "");
-      if (digits.length < 10) return false;
     }
     return true;
   });

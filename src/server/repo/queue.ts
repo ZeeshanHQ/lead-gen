@@ -54,10 +54,7 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
       : scope === "approved"
       ? [...POST_APPROVAL]
       : [...reviewStatuses, ...POST_APPROVAL];
-  const baseStatusCond =
-    scope === "approved"
-      ? sql`(${inArray(companies.status, statuses)} OR (${companies.assignedMemberId} IS NOT NULL AND ${companies.assignedMemberId} != '' AND ${companies.status} != 'REJECTED'))`
-      : inArray(companies.status, statuses);
+  const baseStatusCond = inArray(companies.status, statuses);
   const whereClause = marketId
     ? and(baseStatusCond, eq(companies.marketId, marketId))
     : baseStatusCond;

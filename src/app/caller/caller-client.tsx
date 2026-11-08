@@ -10,6 +10,8 @@ import {
   updateLeadCrmDetailsAction,
   updateLeadStatusQuickAction,
   updateLeadFollowUpAction,
+  resetLeadCallStatusAction,
+  deleteCallLogEntryAction,
   createManualCrmLeadAction,
   deleteCrmLeadAction,
   updateLeadSmartFieldAction,
@@ -441,10 +443,9 @@ export function CallerClient({
           setStatusFilter(savedStatus);
         }
       }
-      const savedDate = localStorage.getItem("astraventa_caller_date_filter");
-      if (savedDate && ["ALL", "TODAY", "YESTERDAY", "OLDER"].includes(savedDate)) {
-        setDateFilter(savedDate as any);
-      }
+      // Always start with ALL dates visible so stale date filters never hide leads
+      setDateFilter("ALL");
+      localStorage.removeItem("astraventa_caller_date_filter");
       const savedCaller = localStorage.getItem("astraventa_caller_selected_caller");
       if (savedCaller && initialCallerFilter === "ALL") {
         setCallerFilter(savedCaller);
@@ -856,12 +857,8 @@ export function CallerClient({
       const fu = lead.nextFollowUp || extractFollowUp(lead.notes);
       if (!fu || !isFollowUpOverdue(fu)) return false;
     } else if (statusFilter === "TO_CALL") {
-      // Keep leads dialed in the current session in view so callers can verify notes and don't panic
-      const isRecentlyDialed = recentlyDialedIds.has(lead.companyId);
-      if (!isRecentlyDialed) {
-        const wanted = STATUS_FILTER_TO_KEY["TO_CALL"];
-        if (deriveCallStatus(lead).key !== wanted) return false;
-      }
+      const wanted = STATUS_FILTER_TO_KEY["TO_CALL"];
+      if (deriveCallStatus(lead).key !== wanted) return false;
     } else if (statusFilter !== "ALL") {
       const wanted = STATUS_FILTER_TO_KEY[statusFilter];
       if (wanted) {
@@ -1105,6 +1102,87 @@ export function CallerClient({
             `✓ ${targetLead.name}: ${res.autoRescheduleReason} (${formatFollowUpLabel(res.nextFollowUp, targetLead.state).text})`
           );
         }
+      }
+    });
+  };
+
+  const handleResetLead = (targetLead: CallerLeadView) => {
+    const timeStr = new Date().toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const resetLine = `[${timeStr} • ${actor.trim() || activeActorName} (Ready to Call)]: Lead outcome reset to Ready to Call`;
+    const cleanExisting = stripFollowUpTagFromNotes(targetLead.notes);
+    const optimisticNotes = `${resetLine}${cleanExisting ? `\n${cleanExisting}` : ""}`;
+    const nowIso = new Date().toISOString();
+
+    setQueue((prev) =>
+      prev.map((item) =>
+        item.companyId === targetLead.companyId
+          ? {
+              ...item,
+              status: "APPROVED",
+              nextFollowUp: null,
+              notes: optimisticNotes,
+              updatedAt: nowIso,
+            }
+          : item
+      )
+    );
+    showToast(`✓ Reset ${targetLead.name} back to Ready to Call.`);
+
+    startTransition(async () => {
+      const res = await resetLeadCallStatusAction({
+        companyId: targetLead.companyId,
+        clearFollowUp: true,
+        reason: "Lead outcome reset to Ready to Call",
+      });
+      if (res.ok) {
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.companyId === targetLead.companyId
+              ? {
+                  ...item,
+                  status: (res.nextStatus as LifecycleStatus) || "APPROVED",
+                  nextFollowUp: null,
+                  notes: res.updatedNotes ?? optimisticNotes,
+                  updatedAt: nowIso,
+                }
+              : item
+          )
+        );
+      } else {
+        showToast(res.error || "Failed to reset lead");
+      }
+    });
+  };
+
+  const handleDeleteCallLogEntry = (targetLead: CallerLeadView, logIndex: number) => {
+    startTransition(async () => {
+      const res = await deleteCallLogEntryAction({
+        companyId: targetLead.companyId,
+        logIndex,
+      });
+      if (res.ok) {
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.companyId === targetLead.companyId
+              ? {
+                  ...item,
+                  status: (res.nextStatus as LifecycleStatus) || item.status,
+                  notes: res.updatedNotes ?? item.notes,
+                  nextFollowUp:
+                    res.nextStatus === "APPROVED" ? null : item.nextFollowUp,
+                  updatedAt: new Date().toISOString(),
+                }
+              : item
+          )
+        );
+        showToast(`✓ Removed call log entry from ${targetLead.name}.`);
+      } else {
+        showToast(res.error || "Failed to delete call log entry");
       }
     });
   };
@@ -1663,6 +1741,8 @@ export function CallerClient({
           onRescheduleFollowUp={handleCockpitRescheduleFollowUp}
           onSmartFieldChange={handleSmartFieldChange}
           onOpenEditLead={openEditModal}
+          onResetLead={handleResetLead}
+          onDeleteCallLog={handleDeleteCallLogEntry}
           onSwitchToFullCrm={isOwner ? (filterStatus) => {
             if (filterStatus) setStatusFilterAndPersist(filterStatus);
             setViewModeAndPersist("SHEET");
@@ -2412,6 +2492,16 @@ export function CallerClient({
                       </div>
 
                       <div className="flex flex-wrap items-center justify-start md:justify-end gap-2">
+                        {deriveCallStatus(lead).key !== "UNTOUCHED" && (
+                          <button
+                            type="button"
+                            onClick={() => handleResetLead(lead)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/15 hover:bg-rose-500/25 px-3 py-2 text-xs font-bold text-rose-200 transition"
+                            title="Reset lead outcome and clear callbacks back to Ready to Call"
+                          >
+                            <span>↺ Reset to Fresh</span>
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => openLogCallModal(lead)}
@@ -2420,88 +2510,6 @@ export function CallerClient({
                           <PhoneCall className="w-3.5 h-3.5" />
                           <span>Log Call &amp; Outcome</span>
                         </button>
-                      </div>
-                    </div>
-
-                    {/* Niche-Specific Smart Qualification Fields & Custom Columns */}
-                    <div className="space-y-2 rounded-xl border border-zinc-800/80 bg-[#09090b]/80 p-3.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                          {nicheName} Qualification Profile (Click any field to update)
-                        </span>
-                        {canEditContacts && marketId && (
-                          <button
-                            type="button"
-                            onClick={() => setIsAddingColumn(true)}
-                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 hover:text-emerald-300"
-                          >
-                            <Plus className="w-3 h-3" />
-                            <span>Add Custom Field</span>
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                        {smartFields.map((field) => {
-                          const currentVal = resolveSmartFieldValue(lead, field);
-                          const isPositive =
-                            currentVal.includes("Confirmed") ||
-                            currentVal.includes("Active") ||
-                            (currentVal !== "Ask on Call" && currentVal !== "Verify on Call");
-                          const allOpts = field.options.includes(currentVal)
-                            ? field.options
-                            : [currentVal, ...field.options];
-
-                          return (
-                            <div
-                              key={field.key}
-                              className="rounded-lg border border-zinc-800/90 bg-[#121215] p-2.5 flex flex-col justify-between gap-1"
-                            >
-                              <div className="flex items-center justify-between gap-1">
-                                <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 truncate">
-                                  {field.label}
-                                </span>
-                                {field.isCustom && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteCustomColumn(field.key)}
-                                    className="text-zinc-500 hover:text-rose-400 transition"
-                                    title={`Remove custom field "${field.label}"`}
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </button>
-                                )}
-                              </div>
-                              {canEditContacts ? (
-                                <select
-                                  value={currentVal}
-                                  onChange={(e) =>
-                                    handleSmartFieldChange(lead, field, e.target.value)
-                                  }
-                                  className={`w-full rounded-md border px-2 py-1 text-xs font-semibold focus:outline-none cursor-pointer transition ${
-                                    isPositive
-                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                                      : "border-zinc-800 bg-[#09090b] text-zinc-300 hover:border-zinc-700"
-                                  }`}
-                                >
-                                  {allOpts.map((opt) => (
-                                    <option
-                                      key={opt}
-                                      value={opt}
-                                      className="bg-[#121215] text-white"
-                                    >
-                                      {opt}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <span className="text-xs font-semibold text-zinc-200">
-                                  {currentVal}
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
                       </div>
                     </div>
 

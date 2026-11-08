@@ -229,6 +229,8 @@ const REFINE_VOICEMAIL =
   /\b(left\s*(a\s*)?(voice\s*mail|vm|message)|went\s*to\s*voice\s*mail|sent\s*to\s*voice\s*mail|voice\s*mail|answering\s*machine|mailbox\s*full)\b/i;
 const REFINE_GATEKEEPER =
   /\b(gatekeeper|refused\s*(to\s*)?(transfer|put\s*(me\s*)?through)|wouldn'?t\s*(transfer|put\s*(me\s*)?through)|not\s*putting\s*(me\s*)?through|took\s*a\s*message|receptionist\s*(said|picked|answered|took|refused)|front\s*desk\s*(said|answered|picked|refused))\b/i;
+const REFINE_NO_ANSWER =
+  /\b(no\s*one\s*picked\s*up|nobody\s*picked\s*up|no\s*one\s*answered|nobody\s*answered|no\s*answer|didn'?t\s*pick\s*up|didn'?t\s*answer|rang\s*out)\b/i;
 
 /**
  * The caller picked the generic "Connected / Spoke" but the note clearly says something more
@@ -244,6 +246,7 @@ export function refineConnectedOutcome(text: string | null | undefined): CallOut
   if (REFINE_DEAD_NUMBER.test(t)) return "WRONG_NUMBER";
   if (REFINE_VOICEMAIL.test(t)) return "CALL_COMPLETED";
   if (REFINE_GATEKEEPER.test(t)) return "GATEKEEPER_BLOCKED";
+  if (REFINE_NO_ANSWER.test(t)) return "NO_ANSWER";
   return null;
 }
 
@@ -287,7 +290,7 @@ export function inferOutcomeFromText(text: string | null | undefined): CallOutco
 
   // 2. Not Interested / DNC (Explicit refusal)
   if (
-    /\b(not\s*interested|no\s*interest|declined|hung\s*up|do\s*not\s*call|dnc|remove\s*(me|from\s*list|number)|stop\s*calling|don't\s*need|no\s*need|already\s*(have|satisfied|got|using)|said\s*no|mana\s*kar\s*diya|not\s*looking|rejected|spam|uninterested)\b/i.test(
+    /\b(not\s*interested|no\s*interest|declined|hung\s*up|hanged\s*up|do\s*not\s*call|dnc|remove\s*(me|from\s*list|number)|stop\s*calling|don't\s*need|no\s*need|already\s*(have|satisfied|got|using|integrated)|happy\s*with\s*(whatever|what)\s*they\s*have|handle\s*(the\s*)?calls\s*themsel(f|ves)|said\s*no|mana\s*kar\s*diya|not\s*looking|rejected|spam|uninterested)\b/i.test(
       t
     )
   ) {
@@ -296,7 +299,7 @@ export function inferOutcomeFromText(text: string | null | undefined): CallOutco
 
   // 3. Wrong / Dead / Disconnected Number
   if (
-    /\b(wrong\s*number|invalid\s*number|disconnected|not\s*in\s*service|bad\s*number|out\s*of\s*service|fax\s*line|dead\s*line|changed\s*number|wrong\s*person|wrong\s*company|galat\s*number|number\s*band|no\s*longer\s*(works|in\s*business|there))\b/i.test(
+    /\b(wrong\s*number|wrong\s*lead|invalid\s*number|disconnected|not\s*in\s*service|bad\s*number|out\s*of\s*service|fax\s*line|dead\s*line|changed\s*number|wrong\s*person|wrong\s*company|galat\s*number|number\s*band|no\s*longer\s*(works|in\s*business|there))\b/i.test(
       t
     )
   ) {
@@ -314,20 +317,21 @@ export function inferOutcomeFromText(text: string | null | undefined): CallOutco
 
   // 5. No Answer / Rang Out / Busy Signal
   if (
-    /\b(no\s*answer|didn't\s*answer|did\s*not\s*answer|rang\s*out|no\s*pick\s*up|didn't\s*pick\s*up|did\s*not\s*pick\s*up|not\s*picking|busy\s*signal|line\s*busy|busy\s*tone|unanswered|no\s*response|call\s*(dropped|disconnect)|cut\s*the\s*call)\b/i.test(
+    /\b(no\s*answer|didn't\s*answer|did\s*not\s*answer|no\s*one\s*(picked\s*up|answered|is\s*available|was\s*available)|nobody\s*(picked\s*up|answered)|rang\s*out|no\s*pick\s*up|didn't\s*pick\s*up|did\s*not\s*pick\s*up|not\s*picking|busy\s*signal|line\s*busy|busy\s*tone|unanswered|no\s*response|call\s*(dropped|disconnect|ended)|cut\s*the\s*call|office\s*(is\s*)?closed|unavailable\s*to\s*take|^\s*unavailable\s*$)\b/i.test(
       t
     ) ||
     t === "na" ||
     t === "n/a" ||
     t === "rnr" ||
-    t === "ringing"
+    t === "ringing" ||
+    t === "unavailable"
   ) {
     return "NO_ANSWER";
   }
 
   // 6. Gatekeeper / Receptionist Blocked
   if (
-    /\b(gatekeeper|receptionist|front\s*desk|secretary|assistant|office\s*manager|wouldn't\s*transfer|refused\s*(to\s*)?(transfer|put\s*through)|not\s*putting\s*through|in\s*a\s*meeting|not\s*available|busy\s*right\s*now|out\s*of\s*office|took\s*a\s*message|send\s*email\s*to\s*(info|office)|boss\s*(is\s*)?busy|owner\s*(is\s*)?(unavailable|not\s*in|away|out)|manager\s*not\s*in)\b/i.test(
+    /\b(gatekeeper|receptionist|front\s*desk|secretary|assistant|office\s*manager|wouldn't\s*transfer|refused\s*(to\s*)?(transfer|put\s*through)|not\s*putting\s*through|in\s*a\s*meeting|not\s*available|isn't\s*available|wasn't\s*available|busy\s*(right\s*now|with\s*other)|out\s*of\s*office|took\s*a\s*message|send\s*email\s*to\s*(info|office)|contact\s*them\s*on\s*email|gave\s*me\s*the\s*email|boss\s*(is\s*)?busy|owner\s*(is\s*|was\s*|isn't\s*|wasn't\s*)?(unavailable|not\s*available|available|not\s*in|away|out)|manager\s*not\s*in)\b/i.test(
       t
     )
   ) {
@@ -364,24 +368,37 @@ export interface ParsedCallLogEntry {
   text: string;
 }
 
-const CALL_LOG_LINE = /^\[([^•\u2022\]]+)(?:[•\u2022]\s*([^(]+))?(?:\(([^)]+)\))?\]:\s*(.*)$/;
+const CALL_LOG_LINE = /^\[([^•\u2022\]]+)(?:[•\u2022]\s*([^(]+))?(?:\(([^)]+)\))?\]?:?\s*(.*)$/;
+const LEGACY_CALL_DATE_LINE = /^\[Call\s+([^\]]+)\]:?\s*(.*)$/i;
 const FOLLOW_UP_NOTE_LINE = /^\[Follow-Up Note\s+([^\]]+)\]\s*(.*)$/i;
 
-function isSystemBattlecardOrTagLine(line: string): boolean {
+export function isSystemBattlecardOrTagLine(line: string): boolean {
   if (!line) return true;
-  if (/^\[(?:Next )?Follow-?up Scheduled:\s*[^\]]+\]$/i.test(line)) return true;
-  if (/\((?:Ready to Call|Number Corrected|Outcome Reset)\)\]/i.test(line)) return true;
+  const clean = line.replace(/^[🎯📍🔥📞💡⚡]+\s*/u, "").trim();
+  if (/^\[(?:Next )?Follow-?up Scheduled:\s*[^\]]+\]$/i.test(clean)) return true;
+  if (/\((?:Ready to Call|Number Corrected|Outcome Reset)\)\]/i.test(clean)) return true;
+  if (clean.startsWith("--- COLD CALLER") || clean.startsWith("--- BATTLECARD")) return true;
+  if (
+    (clean.startsWith('"Hey ') || clean.startsWith('"Hi ')) &&
+    (clean.includes("The reason for my call:") ||
+      clean.includes("We deploy custom") ||
+      clean.includes("automated instant response system"))
+  ) {
+    return true;
+  }
   return (
-    line.startsWith("BATTLECARD:") ||
-    line.startsWith("15-SECOND OPENING SCRIPT:") ||
-    line.startsWith("Focus:") ||
-    line.startsWith("Local Market:") ||
-    line.startsWith("Gatekeeper Strategy:") ||
-    line.startsWith("Reputation:") ||
-    line.startsWith("Authority:") ||
-    line.startsWith("PITCH ANGLE:") ||
-    line.startsWith("Verified Direct") ||
-    line.startsWith("Added directly to Leads CRM")
+    clean.startsWith("BATTLECARD:") ||
+    clean.startsWith("15-SECOND OPENING SCRIPT:") ||
+    clean.startsWith("Decision Maker:") ||
+    clean.startsWith("Growth Signal:") ||
+    clean.startsWith("Focus:") ||
+    clean.startsWith("Local Market:") ||
+    clean.startsWith("Gatekeeper Strategy:") ||
+    clean.startsWith("Reputation:") ||
+    clean.startsWith("Authority:") ||
+    clean.startsWith("PITCH ANGLE:") ||
+    clean.startsWith("Verified Direct") ||
+    clean.startsWith("Added directly to Leads CRM")
   );
 }
 
@@ -394,9 +411,42 @@ export function parseCallLog(notes: string | null | undefined): ParsedCallLogEnt
 
   for (const rawLine of cleanedNotes.split("\n")) {
     const line = rawLine.trim();
-    if (!line || isSystemBattlecardOrTagLine(line)) continue;
+    if (!line) continue;
+
+    // If a lead was explicitly reset to "(Ready to Call)", stop parsing older pre-reset call history below it
+    if (/\(Ready to Call\)\]/i.test(line)) {
+      break;
+    }
+
+    if (isSystemBattlecardOrTagLine(line)) continue;
 
     if (line.startsWith("[")) {
+      const legacyCall = line.match(LEGACY_CALL_DATE_LINE);
+      if (legacyCall) {
+        const noteText = (legacyCall[2] || "").trim();
+        const outcome = inferOutcomeFromText(noteText) ?? "CONNECTED";
+        out.push({
+          timestampRaw: (legacyCall[1] || "").trim(),
+          author: "",
+          outcome,
+          text: noteText,
+        });
+        continue;
+      }
+
+      const fm = line.match(FOLLOW_UP_NOTE_LINE);
+      if (fm) {
+        const noteText = (fm[2] || "").trim();
+        const outcome = inferOutcomeFromText(noteText) ?? "CONNECTED";
+        out.push({
+          timestampRaw: (fm[1] || "").trim(),
+          author: "",
+          outcome,
+          text: noteText,
+        });
+        continue;
+      }
+
       const m = line.match(CALL_LOG_LINE);
       if (m) {
         const labelOutcome = outcomeKeyFromLabel(m[3]) || inferOutcomeFromText(m[3]);
@@ -418,18 +468,6 @@ export function parseCallLog(notes: string | null | undefined): ParsedCallLogEnt
           });
           continue;
         }
-      }
-      const fm = line.match(FOLLOW_UP_NOTE_LINE);
-      if (fm) {
-        const noteText = (fm[2] || "").trim();
-        const outcome = inferOutcomeFromText(noteText) ?? "CONNECTED";
-        out.push({
-          timestampRaw: (fm[1] || "").trim(),
-          author: "",
-          outcome,
-          text: noteText,
-        });
-        continue;
       }
     }
 
@@ -569,6 +607,9 @@ export function inspectCallerSmartFields(
       strVal = String(vObj.value ?? "").trim();
       isHumanConfirmed =
         vObj.provenance === "HUMAN_CONFIRMED" || vObj.sourceType === "manual_entry";
+      if ((vObj.provenance || vObj.sourceType) && !isHumanConfirmed) {
+        continue;
+      }
     } else if (typeof rawVal === "string" || typeof rawVal === "number") {
       strVal = String(rawVal).trim();
     }
@@ -646,7 +687,7 @@ export function deriveCallStatus(lead: {
     key = "MEETING_BOOKED";
   } else if (lastLog) {
     if (
-      (status === "CONNECTED" || status === "PAIN_FOUND") &&
+      status === "PAIN_FOUND" &&
       CALL_STATUS_DEFS[lastLog.outcome].depth < 3
     ) {
       key = "CONNECTED";
@@ -672,7 +713,7 @@ export function deriveCallStatus(lead: {
     key = "UNTOUCHED";
   }
 
-  const attempts = Math.max(log.length, key !== "UNTOUCHED" ? 1 : 0);
+  const attempts = key === "UNTOUCHED" ? 0 : Math.max(log.length, 1);
 
   return {
     key,
@@ -911,9 +952,8 @@ export function computeLiveCrmTelemetry(
                 (c.email && c.email.toLowerCase() === authorLower)
             )
           : undefined;
-        const targetCallerSummary = matchedCaller
-          ? callerMap[matchedCaller.id]
-          : assignedSummary;
+        const targetCallerSummary =
+          assignedSummary ?? (matchedCaller ? callerMap[matchedCaller.id] : undefined);
 
         teamTotals.callsLogged++;
         if (targetCallerSummary) targetCallerSummary.callsLogged++;
