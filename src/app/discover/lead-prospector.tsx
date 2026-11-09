@@ -40,6 +40,7 @@ import {
   updateRuleTargetingAction,
   getActiveRulesForDiscoveryAction,
   saveSearchApiKeyAction,
+  purgeJunkAndOptimizeStorageAction,
 } from "./actions";
 import { switchMarketAction } from "@/app/actions/tenant";
 import { autoDistributeLeadsAction } from "@/app/caller/actions";
@@ -963,148 +964,159 @@ export function LeadProspector({
           </div>
         </div>
 
-        {/* 1-Click Campaign & ICP Intent Presets (Zero Dump Data • Strict Sub-Niche Control) */}
-        {(() => {
-          const activeMarketPresets = getFilteredPresetsForMarket(nicheInfo);
-          const hasMultipleGroups =
-            new Set(activeMarketPresets.map((p) => p.filterGroup)).size > 1;
-          const visiblePresets =
-            selectedPresetGroup === "all"
-              ? activeMarketPresets
-              : activeMarketPresets.filter((p) => p.filterGroup === selectedPresetGroup);
-
-          return (
-            <div className="p-4 rounded-xl bg-[#09090b] border border-zinc-800/90 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                <div className="text-xs font-bold text-white flex items-center gap-2">
-                  <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  <span>
-                    1-Click ICP &amp; AI Offer Intent Presets (Strict {activeNicheName} Sub-Niches • Zero Dump Data)
-                  </span>
-                </div>
-                <span className="text-[11px] text-zinc-400">
-                  Select a tailored profile or refine individual ICP parameters below
-                </span>
+        {/* Custom ICP & High-Ticket Client Targeting Studio (Replaces rigid 1-click preset clutter) */}
+        <div className="p-5 rounded-2xl bg-gradient-to-b from-[#0d0e12] via-[#090a0d] to-[#060608] border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/[0.06] pb-3">
+            <div>
+              <div className="text-xs font-bold text-zinc-100 flex items-center gap-2 tracking-wide uppercase">
+                <SlidersHorizontal className="w-3.5 h-3.5 text-zinc-300" />
+                <span>Custom High-Ticket ICP &amp; Direct Owner Targeting ({activeNicheName})</span>
               </div>
-
-              {/* Sub-filter group pills when in Real Estate / STR */}
-              {hasMultipleGroups && (
-                <div className="flex flex-wrap items-center gap-1.5 pt-0.5 border-b border-zinc-850 pb-2">
-                  <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 mr-1">
-                    Filter Sub-Niche:
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectSubNicheTab("all", activeMarketPresets)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
-                      selectedPresetGroup === "all"
-                        ? "bg-zinc-800 text-white font-bold"
-                        : "text-zinc-400 hover:text-zinc-200"
-                    }`}
-                  >
-                    All ({activeMarketPresets.length})
-                  </button>
-                  {activeMarketPresets.some((p) => p.filterGroup === "str_concierge") && (
-                    <button
-                      type="button"
-                      onClick={() => handleSelectSubNicheTab("str_concierge", activeMarketPresets)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
-                        selectedPresetGroup === "str_concierge"
-                          ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
-                          : "text-zinc-400 hover:text-zinc-200"
-                      }`}
-                    >
-                      🌙 24/7 AI Concierge &amp; STR
-                    </button>
-                  )}
-                  {activeMarketPresets.some((p) => p.filterGroup === "corporate_mtr") && (
-                    <button
-                      type="button"
-                      onClick={() => handleSelectSubNicheTab("corporate_mtr", activeMarketPresets)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
-                        selectedPresetGroup === "corporate_mtr"
-                          ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
-                          : "text-zinc-400 hover:text-zinc-200"
-                      }`}
-                    >
-                      🏢 Corporate &amp; Mid-Term (MTR)
-                    </button>
-                  )}
-                  {activeMarketPresets.some((p) => p.filterGroup === "property_mgmt") && (
-                    <button
-                      type="button"
-                      onClick={() => handleSelectSubNicheTab("property_mgmt", activeMarketPresets)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
-                        selectedPresetGroup === "property_mgmt"
-                          ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
-                          : "text-zinc-400 hover:text-zinc-200"
-                      }`}
-                    >
-                      🔑 50+ Doors PM
-                    </button>
-                  )}
-                  {activeMarketPresets.some((p) => p.filterGroup === "commercial") && (
-                    <button
-                      type="button"
-                      onClick={() => handleSelectSubNicheTab("commercial", activeMarketPresets)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
-                        selectedPresetGroup === "commercial"
-                          ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
-                          : "text-zinc-400 hover:text-zinc-200"
-                      }`}
-                    >
-                      🏢 Commercial Only
-                    </button>
-                  )}
-                  {activeMarketPresets.some((p) => p.filterGroup === "residential") && (
-                    <button
-                      type="button"
-                      onClick={() => handleSelectSubNicheTab("residential", activeMarketPresets)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
-                        selectedPresetGroup === "residential"
-                          ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
-                          : "text-zinc-400 hover:text-zinc-200"
-                      }`}
-                    >
-                      🏡 Residential Teams
-                    </button>
-                  )}
-                </div>
-              )}
-
-              <div className="flex flex-wrap gap-2">
-                {visiblePresets.map((preset) => {
-                  const isSelected = selectedPresetId
-                    ? selectedPresetId === preset.id
-                    : editSubNiche === preset.subNiche && preset.subNiche !== "";
-                  return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      disabled={isRunningDiscovery}
-                      onClick={() => handleApplyIntentPreset(preset)}
-                      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                        isSelected
-                          ? "bg-amber-500/20 text-amber-300 border-amber-500/60 shadow-sm ring-1 ring-amber-500/30"
-                          : "bg-zinc-900/90 text-zinc-300 border-zinc-800 hover:border-zinc-600 hover:text-white"
-                      }`}
-                      title={preset.description}
-                    >
-                      <span>{preset.label}</span>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                          isSelected ? "bg-amber-500/25 text-amber-200" : "bg-zinc-800 text-zinc-300"
-                        }`}
-                      >
-                        {preset.badge}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                Define your exact custom ICP keywords, target US states/cities, and anti-dump exclusions. Only verified live companies with valid NANP phone numbers pass.
+              </p>
             </div>
-          );
-        })()}
+            <div className="flex items-center gap-2 shrink-0">
+              {canEditRules && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const res = await purgeJunkAndOptimizeStorageAction();
+                    if (res.ok) setSuccessBanner(res.message || "Supabase storage optimized.");
+                    else setErrorMsg(res.error || "Storage optimization failed.");
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.07] text-[11px] font-semibold text-zinc-300 transition cursor-pointer"
+                  title="Purge heavy crawled HTML from disqualified domains while keeping domain blocklist tombstones"
+                >
+                  Optimize Supabase Storage
+                </button>
+              )}
+              {canEditRules && (
+                <button
+                  type="button"
+                  disabled={savingFilters}
+                  onClick={handleSaveFilters}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-b from-white to-zinc-200 text-black font-bold text-[11px] shadow-sm hover:from-zinc-100 hover:to-zinc-300 transition cursor-pointer"
+                >
+                  {savingFilters ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                  <span>Save Custom ICP</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
+            <div className="md:col-span-6 space-y-1.5">
+              <label className="text-zinc-300 font-semibold block">
+                Custom Target ICP Keywords (Comma-separated)
+              </label>
+              <input
+                type="text"
+                value={editKeywords}
+                onChange={(e) => setEditKeywords(e.target.value)}
+                placeholder="e.g. residential property management company, real estate brokerage, luxury vacation rental management"
+                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
+              />
+            </div>
+
+            <div className="md:col-span-3 space-y-1.5">
+              <label className="text-zinc-300 font-semibold block">
+                Target US States
+              </label>
+              <input
+                type="text"
+                value={editStates}
+                onChange={(e) => setEditStates(e.target.value)}
+                placeholder="e.g. TX, FL, AZ, NC, TN, GA"
+                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
+              />
+            </div>
+
+            <div className="md:col-span-3 space-y-1.5">
+              <label className="text-zinc-300 font-semibold block">
+                Target Cities <span className="text-zinc-500 font-normal">(Optional)</span>
+              </label>
+              <input
+                type="text"
+                value={editCities}
+                onChange={(e) => setEditCities(e.target.value)}
+                placeholder="e.g. Dallas, Miami, Scottsdale"
+                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
+            <div className="md:col-span-8 space-y-1.5">
+              <label className="text-zinc-300 font-semibold flex items-center justify-between">
+                <span>Strict Negative Exclusions (Agencies, Directories &amp; Low-Quality Leads Blocked)</span>
+              </label>
+              <input
+                type="text"
+                value={editNegativeKeywords}
+                onChange={(e) => setEditNegativeKeywords(e.target.value)}
+                placeholder="web design, digital marketing agency, seo agency, software vendor, directory, mortgage, title company"
+                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
+              />
+            </div>
+
+            <div className="md:col-span-4 space-y-1.5">
+              <label className="text-zinc-300 font-semibold block">
+                Minimum ICP Quality Score: <span className="text-white font-mono">{editMinScore}/100</span>
+              </label>
+              <input
+                type="range"
+                min="50"
+                max="90"
+                step="5"
+                value={editMinScore}
+                onChange={(e) => setEditMinScore(Number(e.target.value))}
+                className="w-full accent-zinc-200 mt-2.5"
+              />
+            </div>
+          </div>
+
+          {/* High-Ticket Real Estate Quick-Fill Templates (Clean Monochrome Platinum Chips) */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <span className="text-[10px] uppercase tracking-wider font-semibold text-zinc-500 mr-1">
+              Quick-Fill High-Ticket ICP:
+            </span>
+            {[
+              {
+                label: "Property Management (50+ Doors)",
+                kw: "residential property management company, full service property management, single family property management, buildium property management, appfolio property management",
+                sub: "property_management",
+              },
+              {
+                label: "Real Estate Brokerages & Teams",
+                kw: "independent real estate brokerage, luxury real estate brokerage, real estate team broker owner, boutique real estate agency",
+                sub: "residential_real_estate",
+              },
+              {
+                label: "STR & Vacation Rental Managers",
+                kw: "vacation rental management company, short term rental property management, luxury cabin and villa management, direct booking vacation rentals",
+                sub: "airbnb_str",
+              },
+              {
+                label: "Commercial Real Estate (CRE)",
+                kw: "commercial real estate brokerage, commercial property management firm, retail and office leasing brokerage, industrial real estate broker",
+                sub: "commercial_real_estate",
+              },
+            ].map((tpl) => (
+              <button
+                key={tpl.label}
+                type="button"
+                onClick={() => {
+                  setEditKeywords(tpl.kw);
+                  setEditSubNiche(tpl.sub);
+                }}
+                className="px-2.5 py-1 rounded-lg border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.08] hover:border-white/[0.18] text-[11px] font-medium text-zinc-300 transition cursor-pointer"
+              >
+                {tpl.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Owner-Controlled Must-Have Quality Gate */}
         <div className="p-4 rounded-xl bg-[#09090b] border border-zinc-800/90 space-y-3">

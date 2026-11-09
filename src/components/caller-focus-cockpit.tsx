@@ -120,71 +120,71 @@ const DISPOSITION_BUTTONS: Array<{
     key: "NO_ANSWER",
     hotkey: "1",
     label: "No Answer",
-    sublabel: "Log attempt • No callback forced",
+    sublabel: "Log attempt • Moves to Retry Pool",
     accentClass:
-      "border-white/10 bg-[#09090b]/80 hover:border-slate-500 text-slate-200",
+      "border-white/[0.08] bg-[#08090c] hover:border-white/[0.2] hover:bg-white/[0.03] text-zinc-200",
     activeClass:
-      "border-slate-300 bg-slate-500/25 text-white ring-2 ring-slate-400 shadow-md",
+      "border-zinc-200 bg-white/[0.1] text-white ring-1 ring-white/40 shadow-sm",
   },
   {
     key: "CALL_COMPLETED",
     hotkey: "2",
     label: "Left Voicemail",
-    sublabel: "Log voicemail • No callback forced",
+    sublabel: "Log voicemail • Moves to Retry Pool",
     accentClass:
-      "border-white/10 bg-[#09090b]/80 hover:border-violet-500 text-violet-200",
+      "border-white/[0.08] bg-[#08090c] hover:border-white/[0.2] hover:bg-white/[0.03] text-zinc-200",
     activeClass:
-      "border-violet-300 bg-violet-500/25 text-white ring-2 ring-violet-400 shadow-md",
+      "border-zinc-200 bg-white/[0.1] text-white ring-1 ring-white/40 shadow-sm",
   },
   {
     key: "GATEKEEPER_BLOCKED",
     hotkey: "3",
-    label: "Receptionist / GK",
-    sublabel: "Log GK • Set callback if needed",
+    label: "Receptionist / Gatekeeper",
+    sublabel: "Stopped at front desk • Set callback if needed",
     accentClass:
-      "border-white/10 bg-[#09090b]/80 hover:border-amber-500 text-amber-200",
+      "border-white/[0.08] bg-[#08090c] hover:border-white/[0.2] hover:bg-white/[0.03] text-zinc-200",
     activeClass:
-      "border-amber-300 bg-amber-500/25 text-white ring-2 ring-amber-400 shadow-md",
+      "border-zinc-200 bg-white/[0.1] text-white ring-1 ring-white/40 shadow-sm",
   },
   {
     key: "CONNECTED",
     hotkey: "4",
-    label: "Spoke to Owner",
-    sublabel: "Owner spoke • Set callback if needed",
+    label: "Spoke with Owner",
+    sublabel: "Reached decision maker • Set callback",
     accentClass:
-      "border-white/10 bg-[#09090b]/80 hover:border-sky-500 text-sky-200",
+      "border-white/[0.1] bg-[#0a0b0f] hover:border-white/[0.25] hover:bg-white/[0.04] text-zinc-100",
     activeClass:
-      "border-sky-300 bg-sky-500/30 text-white ring-2 ring-sky-400 shadow-md",
+      "border-white bg-white/[0.14] text-white ring-1 ring-white/60 shadow-sm",
   },
   {
     key: "MEETING_BOOKED",
     hotkey: "5",
-    label: "Meeting Booked 🎉",
-    sublabel: "Demo / appointment confirmed",
+    label: "Meeting Booked",
+    sublabel: "Demo / appointment confirmed with Owner",
     accentClass:
-      "border-emerald-500/30 bg-emerald-950/20 hover:border-emerald-400 text-emerald-200",
+      "border-emerald-500/25 bg-emerald-950/15 hover:border-emerald-400/50 text-emerald-200",
     activeClass:
-      "border-emerald-300 bg-emerald-500/30 text-white ring-2 ring-emerald-400 shadow-md",
+      "border-emerald-300/80 bg-emerald-500/20 text-white ring-1 ring-emerald-400/60 shadow-sm",
   },
   {
     key: "NOT_INTERESTED",
     hotkey: "6",
     label: "Not Interested",
-    sublabel: "Owner declined",
+    sublabel: "Owner declined • Closes lead",
     accentClass:
-      "border-white/10 bg-[#09090b]/80 hover:border-rose-500 text-rose-200",
+      "border-white/[0.08] bg-[#08090c] hover:border-white/[0.18] text-zinc-300",
     activeClass:
-      "border-rose-300 bg-rose-500/25 text-white ring-2 ring-rose-400 shadow-md",
+      "border-zinc-300 bg-white/[0.1] text-white ring-1 ring-white/40 shadow-sm",
   },
   {
     key: "WRONG_NUMBER",
     hotkey: "7",
     label: "Wrong Number",
-    sublabel: "Disconnected / bad number",
+    sublabel: "Invalid / disconnected • Closes lead",
     accentClass:
-      "border-white/10 bg-[#09090b]/80 hover:border-pink-500 text-pink-200",
+      "border-white/[0.08] bg-[#08090c] hover:border-white/[0.18] text-zinc-300",
     activeClass:
-      "border-pink-300 bg-pink-500/25 text-white ring-2 ring-pink-400 shadow-md",
+      "border-zinc-300 bg-white/[0.1] text-white ring-1 ring-white/40 shadow-sm",
   },
 ];
 
@@ -909,22 +909,22 @@ export function CallerFocusCockpit({
       {/* =================================================================== */}
       {/* 1. COMPACT CALLER HUD BAR: NAVIGATION, STREAM TABS & LIVE STATS     */}
       {/* =================================================================== */}
-      <div className="rounded-xl border border-white/10 bg-[#121215]/90 backdrop-blur-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2 shadow-sm">
+      <div className="rounded-2xl border border-white/[0.1] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#07080a] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.14)] px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           {/* Lead Counter + Prev / Next Navigation */}
-          <div className="inline-flex items-center gap-1 rounded-full border border-emerald-500/35 bg-emerald-950/25 p-0.5 pl-2.5 text-xs font-bold text-emerald-300 shadow-sm">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="pr-1">
+          <div className="inline-flex items-center gap-1 rounded-full border border-white/[0.14] bg-white/[0.04] p-0.5 pl-2.5 text-xs font-semibold text-zinc-100 shadow-sm">
+            <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            <span className="pr-1 font-mono text-[11px]">
               {pinnedLeadId
                 ? "Selected Lead"
-                : `Lead ${safePosition} of ${Math.max(1, totalInScope)}`}
+                : `Card ${safePosition} of ${Math.max(1, totalInScope)}`}
             </span>
             <button
               type="button"
               onClick={handlePrevLead}
               disabled={!pinnedLeadId && uncontactedStream.length <= 1}
               title="Previous lead in queue (Shortcut: [)"
-              className="p-1 rounded-full hover:bg-emerald-500/20 text-emerald-200 disabled:opacity-30 transition cursor-pointer"
+              className="p-1 rounded-full hover:bg-white/[0.08] text-zinc-200 disabled:opacity-30 transition cursor-pointer"
             >
               <ChevronLeft className="w-3.5 h-3.5" />
             </button>
@@ -933,31 +933,15 @@ export function CallerFocusCockpit({
               onClick={handleNextOrSkipLead}
               disabled={!pinnedLeadId && uncontactedStream.length <= 1}
               title="Skip / Next lead in queue (Shortcut: ])"
-              className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-emerald-500/20 hover:bg-emerald-500/30 text-[10px] font-bold text-emerald-200 disabled:opacity-30 transition cursor-pointer"
+              className="inline-flex items-center gap-0.5 px-2.5 py-0.5 rounded-full bg-white/[0.08] hover:bg-white/[0.14] text-[10px] font-semibold text-zinc-100 disabled:opacity-30 transition cursor-pointer"
             >
               <span>Next</span>
               <ChevronRight className="w-3 h-3" />
             </button>
           </div>
 
-          {/* Stream Scope Selector: All Callable | Fresh | Callbacks (Always Visible) */}
-          <div className="flex items-center gap-1 bg-black/60 border border-white/10 rounded-full p-0.5 text-[11px]">
-            <button
-              type="button"
-              onClick={() => {
-                setStreamScope("ALL");
-                setPinnedLeadId(null);
-                setCursorIndex(0);
-              }}
-              title="Active calling stream (Due callbacks + Fresh leads + Retries)"
-              className={`px-2.5 py-0.5 rounded-full font-semibold transition cursor-pointer ${
-                streamScope === "ALL"
-                  ? "bg-zinc-800 text-white font-bold shadow-sm"
-                  : "text-zinc-400 hover:text-white"
-              }`}
-            >
-              Stream ({activeCallableStream.length})
-            </button>
+          {/* Queue Scope Selector: Fresh Uncalled | Callbacks | Active Dialable | Retries */}
+          <div className="flex flex-wrap items-center gap-1 bg-[#050507] border border-white/[0.09] rounded-full p-0.5 text-[11px]">
             <button
               type="button"
               onClick={() => {
@@ -965,14 +949,14 @@ export function CallerFocusCockpit({
                 setPinnedLeadId(null);
                 setCursorIndex(0);
               }}
-              title="Only untouched leads that have never been dialed"
-              className={`px-2.5 py-0.5 rounded-full font-semibold transition cursor-pointer ${
+              title="Untouched leads that have never been dialed yet"
+              className={`px-2.5 py-1 rounded-full font-semibold transition cursor-pointer ${
                 streamScope === "FRESH"
-                  ? "bg-emerald-500 text-black font-extrabold shadow-sm"
-                  : "text-emerald-400/90 hover:text-emerald-300"
+                  ? "bg-gradient-to-b from-white to-zinc-200 text-black font-bold shadow-sm"
+                  : "text-zinc-300 hover:text-white"
               }`}
             >
-              Fresh ({freshUncalledCount})
+              Fresh Uncalled ({freshUncalledCount})
             </button>
             <button
               type="button"
@@ -981,18 +965,16 @@ export function CallerFocusCockpit({
                 setPinnedLeadId(null);
                 setCursorIndex(0);
               }}
-              title="Only intentional scheduled callbacks (Overdue, Due Today, and Upcoming)"
-              className={`px-2.5 py-0.5 rounded-full font-semibold transition cursor-pointer inline-flex items-center gap-1 ${
+              title="Scheduled callbacks (Due Today, This Week, This Month)"
+              className={`px-2.5 py-1 rounded-full font-semibold transition cursor-pointer inline-flex items-center gap-1.5 ${
                 streamScope === "CALLBACKS"
-                  ? "bg-amber-400 text-black font-extrabold shadow-sm"
-                  : mandatoryDueCount > 0
-                  ? "text-rose-300 hover:text-rose-200 font-bold"
-                  : "text-amber-300/90 hover:text-amber-200"
+                  ? "bg-gradient-to-b from-white to-zinc-200 text-black font-bold shadow-sm"
+                  : "text-zinc-300 hover:text-white"
               }`}
             >
               <span>Callbacks ({callbacksTotalCount})</span>
               {mandatoryDueCount > 0 && (
-                <span className="inline-flex h-1.5 w-1.5 rounded-full bg-rose-400 animate-ping" />
+                <span className="inline-flex h-1.5 w-1.5 rounded-full bg-amber-400" />
               )}
             </button>
             {retriesCount > 0 && (
@@ -1003,16 +985,32 @@ export function CallerFocusCockpit({
                   setPinnedLeadId(null);
                   setCursorIndex(0);
                 }}
-                title="Previously dialed leads (No Answer / Voicemail / GK) eligible for retry"
-                className={`px-2.5 py-0.5 rounded-full font-semibold transition cursor-pointer ${
+                title="Previously dialed leads (No Answer / Voicemail / Receptionist) ready for retry"
+                className={`px-2.5 py-1 rounded-full font-semibold transition cursor-pointer ${
                   streamScope === "RETRIES"
-                    ? "bg-sky-400 text-black font-extrabold shadow-sm"
-                    : "text-sky-300/90 hover:text-sky-200"
+                    ? "bg-gradient-to-b from-white to-zinc-200 text-black font-bold shadow-sm"
+                    : "text-zinc-300 hover:text-white"
                 }`}
               >
-                Retries ({retriesCount})
+                Retry Pool ({retriesCount})
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => {
+                setStreamScope("ALL");
+                setPinnedLeadId(null);
+                setCursorIndex(0);
+              }}
+              title="All active dialable leads (Fresh Uncalled + Due Callbacks + Retries, excluding Closed/Dead)"
+              className={`px-2.5 py-1 rounded-full font-semibold transition cursor-pointer ${
+                streamScope === "ALL"
+                  ? "bg-gradient-to-b from-white to-zinc-200 text-black font-bold shadow-sm"
+                  : "text-zinc-400 hover:text-white"
+              }`}
+            >
+              All Active ({activeCallableStream.length})
+            </button>
           </div>
 
           {sessionStreak > 0 && (
@@ -1527,49 +1525,33 @@ export function CallerFocusCockpit({
       {/* =================================================================== */}
       {/* 3. MAIN SPLIT FOCUS COCKPIT (LEFT: INTEL & SCRIPT | RIGHT: OUTCOME) */}
       {/* =================================================================== */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
         {/* ----------------------------------------------------------------- */}
-        {/* LEFT COLUMN (7 cols): LEAD DETAILS, DIALER, QUALIFICATION, SCRIPT */}
+        {/* LEFT COLUMN (7 cols): PLATINUM LEAD CARD, DIALER, MICRO-TAGS      */}
         {/* ----------------------------------------------------------------- */}
-        <div className="lg:col-span-7 rounded-2xl border border-white/10 bg-[#121215]/90 backdrop-blur-xl p-3.5 space-y-3 shadow-lg">
+        <div className="lg:col-span-7 rounded-2xl border border-white/[0.1] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.14),0_20px_50px_rgba(0,0,0,0.85)] p-4 sm:p-5 space-y-3.5">
           {/* Top Status & Prospect Local Time Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.08] pb-2.5">
             <div className="flex flex-wrap items-center gap-1.5">
-              <span
-                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${
-                  activeRankedItem.tier === "MANDATORY_FOLLOW_UP_DUE"
-                    ? "border-amber-500/50 bg-amber-500/15 text-amber-200"
-                    : activeRankedItem.tier === "PRIME_WINDOW_FRESH"
-                    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                    : "border-white/10 bg-white/5 text-zinc-200"
-                }`}
-              >
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.12] bg-white/[0.04] px-2.5 py-0.5 text-[10px] font-semibold text-zinc-200">
+                <span className="h-1.5 w-1.5 rounded-full bg-zinc-300" />
                 <span>{activeRankedItem.reasonBadge}</span>
               </span>
 
-              <span
-                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${
-                  activeRankedItem.localTime.windowStatus === "PRIME_WINDOW"
-                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                    : activeRankedItem.localTime.windowStatus ===
-                      "GATEKEEPER_BYPASS"
-                    ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
-                    : "border-white/10 bg-black/40 text-zinc-400"
-                }`}
-              >
-                <Clock className="w-3 h-3" />
+              <span className="inline-flex items-center gap-1 rounded-full border border-white/[0.1] bg-[#050507] px-2.5 py-0.5 text-[10px] font-medium text-zinc-300">
+                <Clock className="w-3 h-3 text-zinc-400" />
                 <span>{activeRankedItem.localTime.windowLabel}</span>
               </span>
 
               {activeFollowUpRaw && (
                 <span
-                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${
+                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${
                     activeFollowUpInfo.isOverdue
-                      ? "border-rose-500/40 bg-rose-500/15 text-rose-200"
-                      : "border-amber-500/40 bg-amber-500/15 text-amber-200"
+                      ? "border-rose-400/35 bg-rose-950/30 text-rose-200"
+                      : "border-white/[0.15] bg-white/[0.06] text-zinc-100"
                   }`}
                 >
-                  <Calendar className="w-3 h-3" />
+                  <Calendar className="w-3 h-3 text-zinc-300" />
                   <span>Callback: {activeFollowUpInfo.text}</span>
                   {onRescheduleFollowUp && (
                     <button
@@ -1582,7 +1564,7 @@ export function CallerFocusCockpit({
                           false
                         )
                       }
-                      className="ml-0.5 rounded-full hover:bg-black/30 p-0.5 text-current opacity-80 hover:opacity-100 cursor-pointer"
+                      className="ml-0.5 rounded-full hover:bg-black/40 p-0.5 text-current opacity-80 hover:opacity-100 cursor-pointer"
                       title="Clear scheduled callback"
                     >
                       <X className="w-2.5 h-2.5" />
@@ -1597,9 +1579,9 @@ export function CallerFocusCockpit({
                 <button
                   type="button"
                   onClick={() => setPinnedLeadId(null)}
-                  className="rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-0.5 text-[10px] font-semibold text-zinc-300 hover:text-white cursor-pointer"
+                  className="rounded-full border border-white/[0.12] bg-white/[0.04] px-2.5 py-0.5 text-[10px] font-semibold text-zinc-300 hover:text-white cursor-pointer"
                 >
-                  ← Back to Stream
+                  ← Back to Queue
                 </button>
               )}
               {(activeRankedItem.derivedStatus !== "UNTOUCHED" ||
@@ -1617,18 +1599,18 @@ export function CallerFocusCockpit({
                         return next;
                       });
                     }}
-                    className="inline-flex items-center gap-1 rounded-full border border-rose-500/40 bg-rose-500/15 hover:bg-rose-500/25 px-2.5 py-0.5 text-[10px] font-bold text-rose-200 transition cursor-pointer"
+                    className="inline-flex items-center gap-1 rounded-full border border-white/[0.12] bg-white/[0.04] hover:bg-white/[0.08] px-2.5 py-0.5 text-[10px] font-semibold text-zinc-300 hover:text-white transition cursor-pointer"
                     title="Reset this lead back to Ready to Call (clears mistaken outcome or follow-up)"
                   >
-                    <RotateCcw className="w-3 h-3 text-rose-300" />
+                    <RotateCcw className="w-3 h-3 text-zinc-400" />
                     <span>Reset to Fresh</span>
                   </button>
                 )}
-              {canEditContacts && (
+              {isOwner && canEditContacts && (
                 <button
                   type="button"
                   onClick={() => onOpenEditLead(activeLead)}
-                  className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-black/40 hover:bg-zinc-800 px-2.5 py-0.5 text-[10px] font-medium text-zinc-300 hover:text-white transition cursor-pointer"
+                  className="inline-flex items-center gap-1 rounded-full border border-white/[0.1] bg-[#050507] hover:bg-white/[0.06] px-2.5 py-0.5 text-[10px] font-medium text-zinc-300 hover:text-white transition cursor-pointer"
                 >
                   <Pencil className="w-3 h-3 text-zinc-400" />
                   <span>Edit Lead</span>
@@ -1637,10 +1619,10 @@ export function CallerFocusCockpit({
             </div>
           </div>
 
-          {/* Company Title + Location & Links Row */}
-          <div className="space-y-1">
+          {/* Company Title + Compact Platinum Micro-Tags Row */}
+          <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
+              <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
                 {activeLead.name}
               </h2>
               <CallStatusBadge
@@ -1648,32 +1630,61 @@ export function CallerFocusCockpit({
                 showAttempts
                 showLastCalled
               />
-              {typeof activeLead.icpScore === "number" && (
-                <span className="rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
-                  Score {activeLead.icpScore}
-                </span>
-              )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400">
-              <span className="inline-flex items-center gap-1 text-zinc-300 font-medium">
-                <Building2 className="w-3.5 h-3.5 text-zinc-500" />
+            {/* Compact Platinum Micro-Tags (Chote Chote Tags) */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 rounded-md border border-white/[0.09] bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium text-zinc-300">
+                <Building2 className="w-2.5 h-2.5 text-zinc-400" />
+                <span>{activeLead.marketName || nicheName}</span>
+              </span>
+
+              <span className="inline-flex items-center gap-1 rounded-md border border-white/[0.09] bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium text-zinc-300">
+                <MapPin className="w-2.5 h-2.5 text-zinc-400" />
                 <span>
                   {activeLead.city
                     ? `${activeLead.city}, ${activeLead.state}`
-                    : activeLead.state || "United States"}
+                    : activeLead.state || "US"}
                 </span>
               </span>
 
-              <a
-                href={mapsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:text-white inline-flex items-center gap-1 transition text-zinc-400"
-              >
-                <MapPin className="w-3.5 h-3.5 text-zinc-500" />
-                <span>Google Maps</span>
-              </a>
+              {cleanDialPhone && (
+                <span className="inline-flex items-center gap-1 rounded-md border border-white/[0.09] bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium text-zinc-300">
+                  <Phone className="w-2.5 h-2.5 text-emerald-400/90" />
+                  <span>
+                    {/^(1?8(?:00|88|77|66|55|44|33))/.test(cleanDialPhone)
+                      ? "Toll-Free Line"
+                      : dmName
+                      ? "Verified Direct / Local Line"
+                      : "Verified Local Line"}
+                  </span>
+                </span>
+              )}
+
+              {typeof activeLead.icpScore === "number" && (
+                <span className="inline-flex items-center gap-1 rounded-md border border-white/[0.09] bg-white/[0.03] px-2 py-0.5 text-[10px] font-mono font-semibold text-zinc-200">
+                  <span>ICP {activeLead.icpScore}/100</span>
+                </span>
+              )}
+
+              {activeLead.software && activeLead.software !== "UNKNOWN" && (
+                <span className="inline-flex items-center rounded-md border border-white/[0.09] bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium text-zinc-300">
+                  CRM: {activeLead.software}
+                </span>
+              )}
+
+              {activeLead.facts?.["doors_managed"] && (
+                <span className="inline-flex items-center rounded-md border border-white/[0.09] bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium text-zinc-300">
+                  {activeLead.facts["doors_managed"]} Doors
+                </span>
+              )}
+
+              {(activeLead.facts?.["google_ads"] === "YES" ||
+                activeLead.facts?.["bleeding_ads"] === "YES") && (
+                <span className="inline-flex items-center rounded-md border border-white/[0.12] bg-white/[0.05] px-2 py-0.5 text-[10px] font-medium text-zinc-200">
+                  Paid Ads Active
+                </span>
+              )}
 
               {activeLead.website && (
                 <a
@@ -1684,38 +1695,48 @@ export function CallerFocusCockpit({
                   }
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="hover:text-white inline-flex items-center gap-1 transition text-sky-400"
+                  className="inline-flex items-center gap-1 rounded-md border border-white/[0.09] bg-white/[0.03] hover:bg-white/[0.07] px-2 py-0.5 text-[10px] font-medium text-zinc-300 hover:text-white transition"
                 >
                   <span>
                     {activeLead.website
                       .replace(/^https?:\/\//i, "")
+                      .replace(/^www\./i, "")
                       .replace(/\/$/, "")}
                   </span>
-                  <ExternalLink className="w-3 h-3" />
+                  <ExternalLink className="w-2.5 h-2.5 text-zinc-400" />
                 </a>
               )}
+
+              <a
+                href={mapsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-md border border-white/[0.09] bg-white/[0.03] hover:bg-white/[0.07] px-2 py-0.5 text-[10px] font-medium text-zinc-400 hover:text-white transition"
+              >
+                <span>Maps</span>
+              </a>
 
               {dmEmail && (
                 <a
                   href={`mailto:${dmEmail}`}
-                  className="hover:text-white inline-flex items-center gap-1 transition text-zinc-400"
+                  className="inline-flex items-center gap-1 rounded-md border border-white/[0.09] bg-white/[0.03] hover:bg-white/[0.07] px-2 py-0.5 text-[10px] font-medium text-zinc-300 hover:text-white transition"
                 >
-                  <Mail className="w-3.5 h-3.5 text-zinc-500" />
-                  <span className="truncate max-w-[180px]">{dmEmail}</span>
+                  <Mail className="w-2.5 h-2.5 text-zinc-400" />
+                  <span className="truncate max-w-[160px]">{dmEmail}</span>
                 </a>
               )}
             </div>
           </div>
 
-          {/* HERO DIALER & DECISION MAKER CARD */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 rounded-xl border border-emerald-500/30 bg-gradient-to-r from-black/80 via-emerald-950/20 to-black/80 px-3.5 py-2.5 items-center shadow-sm">
+          {/* HERO DIALER & DECISION MAKER PLATINUM STRIP (Spacebar to Copy Only — No Phone App Clutter) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-white/[0.1] bg-[#060709] px-4 py-3 items-center shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
             <div>
-              <div className="text-[10px] uppercase tracking-wider font-semibold text-zinc-400">
+              <div className="text-[10px] uppercase tracking-wider font-semibold text-zinc-500">
                 Decision Maker
               </div>
               <div className="text-sm font-bold text-white mt-0.5 flex items-center gap-1.5">
                 <span>{dmName || "Owner / Managing Principal"}</span>
-                {canEditContacts && (
+                {isOwner && canEditContacts && (
                   <button
                     type="button"
                     onClick={() => onOpenEditLead(activeLead)}
@@ -1733,102 +1754,90 @@ export function CallerFocusCockpit({
 
             <div className="flex flex-col sm:items-end gap-1">
               {cleanDialPhone ? (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      copyText(cleanDialPhone, `phone_${activeLead.companyId}`)
-                    }
-                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold px-3.5 py-1.5 text-sm font-mono tracking-wider transition shadow-md cursor-pointer"
-                    title="Click or press Spacebar to copy clean phone number"
-                  >
-                    <Phone className="w-3.5 h-3.5 fill-black" />
-                    <span>{cleanDialPhone}</span>
-                    {copiedKey === `phone_${activeLead.companyId}` ? (
-                      <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px] font-sans font-bold">
-                        Copied!
-                      </span>
-                    ) : (
-                      <Copy className="w-3.5 h-3.5 opacity-75" />
-                    )}
-                  </button>
-
-                  <a
-                    href={`tel:${cleanDialPhone}`}
-                    className="inline-flex items-center justify-center p-2 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-emerald-400 transition"
-                    title="Dial in phone app (tel:)"
-                  >
-                    <PhoneCall className="w-4 h-4" />
-                  </a>
-                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    copyText(cleanDialPhone, `phone_${activeLead.companyId}`)
+                  }
+                  className="inline-flex items-center gap-2.5 rounded-xl bg-gradient-to-b from-white via-zinc-100 to-zinc-300 hover:from-white hover:to-zinc-200 text-black font-bold px-4 py-2 text-sm font-mono tracking-wider transition shadow-[0_1px_2px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,1)] cursor-pointer"
+                  title="Press Spacebar or click to copy phone number"
+                >
+                  <Phone className="w-3.5 h-3.5 text-black" />
+                  <span>{rawDialPhone || cleanDialPhone}</span>
+                  {copiedKey === `phone_${activeLead.companyId}` ? (
+                    <span className="rounded bg-black/80 text-white px-1.5 py-0.5 text-[10px] font-sans font-semibold">
+                      Copied
+                    </span>
+                  ) : (
+                    <Copy className="w-3.5 h-3.5 text-zinc-700" />
+                  )}
+                </button>
               ) : (
+                isOwner &&
                 canEditContacts && (
                   <button
                     type="button"
                     onClick={() => onOpenEditLead(activeLead)}
-                    className="text-xs font-semibold text-amber-300 underline cursor-pointer"
+                    className="text-xs font-semibold text-zinc-300 underline cursor-pointer"
                   >
                     + Add Phone Number
                   </button>
                 )
               )}
-              <span className="text-[10px] text-zinc-400">
-                <kbd className="px-1 py-0.2 rounded bg-black/60 border border-white/10 text-zinc-300 font-mono">
+              <span className="text-[10px] text-zinc-500">
+                Press{" "}
+                <kbd className="px-1.5 py-0.2 rounded bg-white/[0.06] border border-white/[0.1] text-zinc-300 font-mono">
                   Space
                 </kbd>{" "}
-                copy number &bull;{" "}
-                <kbd className="px-1 py-0.2 rounded bg-black/60 border border-white/10 text-zinc-300 font-mono">
+                to copy number &bull;{" "}
+                <kbd className="px-1.5 py-0.2 rounded bg-white/[0.06] border border-white/[0.1] text-zinc-300 font-mono">
                   1–7
                 </kbd>{" "}
-                outcome &bull;{" "}
-                <kbd className="px-1 py-0.2 rounded bg-black/60 border border-white/10 text-zinc-300 font-mono">
-                  [ / ]
-                </kbd>{" "}
-                prev/next
+                log outcome
               </span>
             </div>
           </div>
 
-          {/* 3 FLASH BATTLECARDS */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            <div className="rounded-xl border border-rose-500/30 bg-gradient-to-b from-rose-950/20 to-black/40 p-2.5 space-y-1">
-              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-rose-300">
-                <Target className="w-3 h-3 text-rose-400 shrink-0" />
+          {/* 3 FLASH BATTLECARDS (SLEEK MONOCHROME PLATINUM) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+            <div className="rounded-xl border border-white/[0.08] bg-[#07080b] p-3 space-y-1">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                <Target className="w-3 h-3 text-zinc-300 shrink-0" />
                 <span>Why Call (Pain Point)</span>
               </div>
-              <p className="text-xs text-zinc-100 font-medium leading-snug">
+              <p className="text-xs text-zinc-200 font-medium leading-snug">
                 {battlecard.painTrigger}
               </p>
             </div>
 
-            <div className="rounded-xl border border-sky-500/30 bg-gradient-to-b from-sky-950/20 to-black/40 p-2.5 space-y-1">
-              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-sky-300">
-                <Building2 className="w-3 h-3 text-sky-400 shrink-0" />
+            <div className="rounded-xl border border-white/[0.08] bg-[#07080b] p-3 space-y-1">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                <Building2 className="w-3 h-3 text-zinc-300 shrink-0" />
                 <span>Company Profile</span>
               </div>
-              <p className="text-xs text-zinc-100 font-medium leading-snug">
+              <p className="text-xs text-zinc-200 font-medium leading-snug">
                 {battlecard.scaleAndTech}
               </p>
             </div>
 
-            <div className="rounded-xl border border-amber-500/30 bg-gradient-to-b from-amber-950/20 to-black/40 p-2.5 space-y-1">
-              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-300">
-                <Shield className="w-3 h-3 text-amber-400 shrink-0" />
-                <span>Receptionist Tip</span>
+            <div className="rounded-xl border border-white/[0.08] bg-[#07080b] p-3 space-y-1">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                <Shield className="w-3 h-3 text-zinc-300 shrink-0" />
+                <span>Receptionist Transfer</span>
               </div>
-              <p className="text-xs text-zinc-100 font-medium leading-snug">
+              <p className="text-xs text-zinc-200 font-medium leading-snug">
                 {battlecard.gatekeeperTip}
               </p>
             </div>
           </div>
 
-          {/* SCRIPT & LIVE OBJECTION SWITCHER (READABLE HEIGHT, NO MICRO-SCROLLBAR) */}
-          <div className="rounded-xl border border-indigo-500/30 bg-gradient-to-b from-indigo-950/20 to-black/40 p-3 space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-indigo-500/20 pb-1.5">
+          {/* HYPER-PERSONALIZED CALL SCRIPT & OBJECTION SWITCHER */}
+          <div className="rounded-xl border border-white/[0.09] bg-[#07080b] p-3.5 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-white/[0.07] pb-2">
               <div className="flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                <span className="text-xs font-bold text-indigo-200">
-                  Call Script &amp; Objections
+                <Sparkles className="w-3.5 h-3.5 text-zinc-300" />
+                <span className="text-xs font-bold text-zinc-100">
+                  Live Personalized Script &amp; Rebuttals
                 </span>
               </div>
 
@@ -1837,7 +1846,7 @@ export function CallerFocusCockpit({
                   { key: "OPENING" as const, label: "Opener" },
                   { key: "GATEKEEPER" as const, label: "Receptionist" },
                   { key: "OBJ_BUSY" as const, label: "Busy" },
-                  { key: "OBJ_CURRENT_SYSTEM" as const, label: "Have CRM" },
+                  { key: "OBJ_CURRENT_SYSTEM" as const, label: "Have CRM / Staff" },
                   { key: "OBJ_SEND_EMAIL" as const, label: "Send Email" },
                   { key: "OBJ_PRICE" as const, label: "Pricing" },
                 ].map((tab) => (
@@ -1847,8 +1856,8 @@ export function CallerFocusCockpit({
                     onClick={() => setActiveScriptTab(tab.key)}
                     className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold transition cursor-pointer ${
                       activeScriptTab === tab.key
-                        ? "bg-indigo-500 text-white shadow-sm"
-                        : "bg-black/50 text-indigo-200 hover:text-white border border-indigo-500/20"
+                        ? "bg-white text-black font-bold shadow-sm"
+                        : "bg-white/[0.04] text-zinc-300 hover:text-white border border-white/[0.08]"
                     }`}
                   >
                     {tab.label}
@@ -1862,7 +1871,7 @@ export function CallerFocusCockpit({
                       `script_${activeScriptTab}`
                     )
                   }
-                  className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-black/40 text-zinc-300 hover:text-white border border-white/10 inline-flex items-center gap-1 cursor-pointer"
+                  className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/[0.04] text-zinc-300 hover:text-white border border-white/[0.08] inline-flex items-center gap-1 cursor-pointer"
                   title="Copy script text"
                 >
                   {copiedKey === `script_${activeScriptTab}` ? (
@@ -1874,19 +1883,19 @@ export function CallerFocusCockpit({
               </div>
             </div>
 
-            <div className="p-2.5 rounded-lg bg-black/60 border border-indigo-500/20 text-indigo-100 text-xs sm:text-[13px] leading-relaxed font-sans select-text max-h-40 overflow-y-auto">
+            <div className="p-3 rounded-lg bg-[#040406] border border-white/[0.07] text-zinc-100 text-xs sm:text-[13px] leading-relaxed font-sans select-text">
               {battlecard.scripts[activeScriptTab]}
             </div>
           </div>
 
-          {/* CALL LOG TIMELINE (READABLE PROPORTIONS) */}
+          {/* CALL LOG TIMELINE */}
           {callHistory.length > 0 && (
-            <div className="rounded-xl border border-white/10 bg-black/40 p-2.5 space-y-1.5">
+            <div className="rounded-xl border border-white/[0.08] bg-[#07080b] p-3 space-y-2">
               <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 flex flex-wrap items-center justify-between gap-2">
                 <span>Previous Call History ({callHistory.length})</span>
                 <div className="flex items-center gap-2">
                   {activeFollowUpRaw && (
-                    <span className="text-amber-300 font-semibold">
+                    <span className="text-zinc-200 font-semibold">
                       Next Callback: {activeFollowUpInfo.text}
                     </span>
                   )}
@@ -1901,10 +1910,10 @@ export function CallerFocusCockpit({
                           return next;
                         });
                       }}
-                      className="text-[10px] font-bold text-rose-300 hover:text-rose-200 underline cursor-pointer normal-case"
+                      className="text-[10px] font-semibold text-zinc-400 hover:text-white underline cursor-pointer normal-case"
                       title="Reset lead outcome and clear all active call history back to Ready to Call"
                     >
-                      ↺ Reset Lead to Fresh
+                      Reset Lead to Fresh
                     </button>
                   )}
                 </div>
@@ -1915,7 +1924,7 @@ export function CallerFocusCockpit({
                   return (
                     <div
                       key={idx}
-                      className="flex items-start justify-between gap-2 text-xs p-1.5 rounded-lg bg-[#121215] border border-white/5"
+                      className="flex items-start justify-between gap-2 text-xs p-2 rounded-lg bg-[#0b0c10] border border-white/[0.06]"
                     >
                       <div className="min-w-0">
                         <span
@@ -1951,26 +1960,26 @@ export function CallerFocusCockpit({
         {/* ----------------------------------------------------------------- */}
         {/* RIGHT COLUMN (5 cols): OUTCOME, SMART FOLLOW-UP & NOTES CONSOLE   */}
         {/* ----------------------------------------------------------------- */}
-        <div className="lg:col-span-5 rounded-2xl border border-white/10 bg-[#121215]/90 backdrop-blur-xl p-3.5 space-y-3 shadow-lg">
-          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+        <div className="lg:col-span-5 rounded-2xl border border-white/[0.1] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.14),0_20px_50px_rgba(0,0,0,0.85)] p-4 sm:p-5 space-y-3.5">
+          <div className="flex items-center justify-between border-b border-white/[0.08] pb-2.5">
             <div>
               <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                <PhoneCall className="w-3.5 h-3.5 text-emerald-400" />
+                <PhoneCall className="w-3.5 h-3.5 text-zinc-300" />
                 <span>Log Call Outcome</span>
               </h3>
               <p className="text-[11px] text-zinc-400 mt-0.5">
-                Pick outcome (1–7) &bull; Check callback time &bull; Press Enter
+                Select outcome (1–7) &bull; Optional callback &bull; Press Enter
               </p>
             </div>
             {selectedOutcome && (
-              <span className="inline-flex items-center rounded-full bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">
+              <span className="inline-flex items-center rounded-full bg-white/[0.08] border border-white/[0.16] px-2.5 py-0.5 text-[10px] font-bold text-white">
                 {CALL_STATUS_DEFS[selectedOutcome].label}
               </span>
             )}
           </div>
 
           {/* 7 DISPOSITION BUTTONS */}
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-2 gap-2">
             {DISPOSITION_BUTTONS.map((btn) => {
               const isSelected = selectedOutcome === btn.key;
               return (
@@ -1984,7 +1993,7 @@ export function CallerFocusCockpit({
                 >
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-xs font-bold">{btn.label}</span>
-                    <kbd className="px-1.5 py-0.2 rounded bg-black/50 border border-white/10 text-[10px] font-mono opacity-80">
+                    <kbd className="px-1.5 py-0.2 rounded bg-black/60 border border-white/10 text-[10px] font-mono opacity-80">
                       {btn.hotkey}
                     </kbd>
                   </div>
@@ -1998,10 +2007,10 @@ export function CallerFocusCockpit({
           {selectedOutcome && quickChips.length > 0 && (
             <div className="space-y-1.5 animate-in fade-in duration-150">
               <div className="text-[10px] font-semibold text-zinc-400 flex items-center gap-1">
-                <MessageSquare className="w-3 h-3 text-emerald-400" />
-                <span>1-Click Call Notes:</span>
+                <MessageSquare className="w-3 h-3 text-zinc-300" />
+                <span>1-Click Quick Notes:</span>
               </div>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1.5">
                 {quickChips.map((chip) => {
                   const isUsed = noteText.includes(chip);
                   return (
@@ -2017,10 +2026,10 @@ export function CallerFocusCockpit({
                             : chip
                         );
                       }}
-                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-medium border transition cursor-pointer ${
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-medium border transition cursor-pointer ${
                         isUsed
-                          ? "border-emerald-400 bg-emerald-500/20 text-emerald-200"
-                          : "border-white/10 bg-black/40 text-zinc-300 hover:border-white/20 hover:text-white"
+                          ? "border-white bg-white text-black font-bold"
+                          : "border-white/[0.1] bg-[#07080b] text-zinc-300 hover:border-white/[0.25] hover:text-white"
                       }`}
                     >
                       + {chip}
@@ -2031,22 +2040,22 @@ export function CallerFocusCockpit({
             </div>
           )}
 
-          {/* FOLLOW-UP SCHEDULER (ALWAYS VISIBLE FOR NON-TERMINAL OUTCOMES OR EXISTING CALLBACKS) */}
+          {/* FOLLOW-UP SCHEDULER (DAILY, WEEKLY & MONTHLY PRESETS) */}
           {(!selectedOutcome ||
             (selectedOutcome !== "NOT_INTERESTED" &&
               selectedOutcome !== "WRONG_NUMBER")) && (
-            <div className="rounded-xl border border-amber-500/30 bg-gradient-to-b from-amber-950/20 to-black/40 p-2.5 space-y-2 animate-in fade-in duration-150">
-              <div className="flex flex-wrap items-center justify-between gap-1">
-                <span className="text-[11px] font-bold text-amber-200 flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Schedule Callback (Optional)</span>
+            <div className="rounded-xl border border-white/[0.09] bg-[#07080b] p-3 space-y-2 animate-in fade-in duration-150">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                <span className="text-[11px] font-bold text-zinc-200 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-zinc-300" />
+                  <span>Schedule Follow-Up (Optional)</span>
                 </span>
                 <div className="flex flex-wrap items-center gap-1">
                   {[
                     { label: "+3h", preset: "LATER_TODAY" as const },
                     { label: "Tomorrow", preset: "TOMORROW" as const },
                     { label: "+2d", preset: "TWO_DAYS" as const },
-                    { label: "Next Wk", preset: "NEXT_WEEK" as const },
+                    { label: "Next Week", preset: "NEXT_WEEK" as const },
                   ].map((p) => (
                     <button
                       key={p.preset}
@@ -2062,8 +2071,8 @@ export function CallerFocusCockpit({
                       }}
                       className={`rounded-full px-2 py-0.5 text-[10px] font-semibold border transition cursor-pointer ${
                         followUpPresetUsed === p.preset
-                          ? "bg-amber-400 text-black border-amber-300 font-bold"
-                          : "border-white/10 bg-black/50 text-amber-300 hover:bg-zinc-900"
+                          ? "bg-white text-black border-white font-bold"
+                          : "border-white/[0.1] bg-[#0c0d12] text-zinc-300 hover:text-white"
                       }`}
                     >
                       {p.label}
@@ -2077,7 +2086,7 @@ export function CallerFocusCockpit({
                         setFollowUpPresetUsed("CLEARED");
                         setAutoCadenceReason(null);
                       }}
-                      className="rounded-full px-2 py-0.5 text-[10px] font-semibold border border-white/10 bg-black/50 text-zinc-400 hover:text-white transition cursor-pointer"
+                      className="rounded-full px-2 py-0.5 text-[10px] font-semibold border border-white/[0.1] bg-[#0c0d12] text-zinc-400 hover:text-white transition cursor-pointer"
                       title="Clear callback date"
                     >
                       Clear
@@ -2095,7 +2104,7 @@ export function CallerFocusCockpit({
                     setFollowUpPresetUsed("CUSTOM");
                     setAutoCadenceReason(null);
                   }}
-                  className="flex-1 px-2.5 py-1.5 rounded-lg bg-black/60 border border-white/10 text-xs text-white focus:outline-none focus:border-amber-400"
+                  className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#040406] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-zinc-400"
                 />
                 {!selectedOutcome &&
                   onRescheduleFollowUp &&
@@ -2111,7 +2120,7 @@ export function CallerFocusCockpit({
                           false
                         )
                       }
-                      className="px-2.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-black font-bold text-[11px] shrink-0 transition cursor-pointer"
+                      className="px-3 py-1.5 rounded-lg bg-white hover:bg-zinc-200 text-black font-bold text-[11px] shrink-0 transition cursor-pointer"
                       title="Save callback time without logging a call"
                     >
                       Save Callback
@@ -2120,9 +2129,9 @@ export function CallerFocusCockpit({
               </div>
 
               {followUpDate ? (
-                <div className="flex items-center justify-between text-[10px] text-amber-200/90 px-0.5">
+                <div className="flex items-center justify-between text-[10px] text-zinc-200 px-0.5">
                   <span>
-                    📅{" "}
+                    Scheduled:{" "}
                     <strong>
                       {formatFollowUpLabel(followUpDate, activeLead.state).text}
                     </strong>
@@ -2134,8 +2143,8 @@ export function CallerFocusCockpit({
                   )}
                 </div>
               ) : (
-                <div className="text-[10px] text-zinc-400 px-0.5">
-                  No callback scheduled — only pick a time above if this lead needs a follow-up.
+                <div className="text-[10px] text-zinc-500 px-0.5">
+                  Optional: pick a callback time above only if the prospect requested a follow-up.
                 </div>
               )}
             </div>
@@ -2151,12 +2160,12 @@ export function CallerFocusCockpit({
               value={noteText}
               onChange={(e) => setNoteText(e.target.value)}
               placeholder="Write summary (e.g. spoke to receptionist Sarah, owner in after 2pm)..."
-              className="w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-xs text-white placeholder-zinc-500 focus:border-zinc-500 focus:outline-none resize-y"
+              className="w-full rounded-xl border border-white/[0.1] bg-[#040406] px-3 py-2 text-xs text-white placeholder-zinc-600 focus:border-zinc-400 focus:outline-none resize-y"
             />
           </div>
 
           {validationHint && (
-            <div className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-xl px-3 py-2">
+            <div className="text-xs text-rose-200 bg-rose-950/30 border border-rose-500/30 rounded-xl px-3 py-2">
               {validationHint}
             </div>
           )}
@@ -2172,16 +2181,16 @@ export function CallerFocusCockpit({
               }
               commitDisposition(selectedOutcome);
             }}
-            className={`w-full inline-flex items-center justify-center gap-2 rounded-xl font-extrabold py-2.5 px-3 text-xs transition shadow-md cursor-pointer ${
+            className={`w-full inline-flex items-center justify-center gap-2 rounded-xl font-bold py-2.5 px-3 text-xs transition shadow-md cursor-pointer ${
               selectedOutcome
-                ? "bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/25 ring-2 ring-emerald-400/50"
-                : "bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700/60"
+                ? "bg-gradient-to-b from-white via-zinc-100 to-zinc-300 hover:from-white hover:to-zinc-200 text-black shadow-[0_1px_2px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,1)]"
+                : "bg-white/[0.04] text-zinc-500 cursor-not-allowed border border-white/[0.07]"
             }`}
           >
             <CheckCircle2 className="w-4 h-4" />
             <span>
               {selectedOutcome
-                ? `Save "${CALL_STATUS_DEFS[selectedOutcome].label}" & Next Lead → (Enter)`
+                ? `Log "${CALL_STATUS_DEFS[selectedOutcome].label}" & Next Lead → (Enter)`
                 : "Select Call Outcome (1–7) Above"}
             </span>
           </button>

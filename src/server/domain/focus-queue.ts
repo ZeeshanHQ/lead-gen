@@ -350,10 +350,10 @@ export function rankLeadsForFocusStream<
         tier: "MANDATORY_FOLLOW_UP_DUE",
         reasonBadge:
           overdueMinutes > 60
-            ? `🔔 Follow-Up Overdue (${Math.floor(overdueMinutes / 60)}h ${overdueMinutes % 60}m)`
+            ? `Follow-Up Overdue (${Math.floor(overdueMinutes / 60)}h ${overdueMinutes % 60}m)`
             : overdueMinutes > 0
-            ? `🔔 Follow-Up Due (${overdueMinutes}m ago)`
-            : "🔔 Follow-Up Due Right Now",
+            ? `Follow-Up Due (${overdueMinutes}m ago)`
+            : "Follow-Up Due Now",
         isMandatoryFollowUpLock: true,
         isHeldBack: false,
         overdueMinutes,
@@ -369,7 +369,7 @@ export function rankLeadsForFocusStream<
         ...base,
         priorityScore: 50_000 - minsUntil * 10 + icp,
         tier: "UPCOMING_FOLLOW_UP",
-        reasonBadge: `⏰ Callback in ${minsUntil}m`,
+        reasonBadge: `Callback in ${minsUntil}m`,
         isMandatoryFollowUpLock: false,
         isHeldBack: false,
         overdueMinutes: 0,
@@ -386,7 +386,7 @@ export function rankLeadsForFocusStream<
         ...base,
         priorityScore: 1_000 - Math.min(900, Math.floor(minsUntil / 60)),
         tier: "SCHEDULED_FOLLOW_UP",
-        reasonBadge: "📅 Scheduled Callback",
+        reasonBadge: "Scheduled Callback",
         isMandatoryFollowUpLock: false,
         isHeldBack: true,
         overdueMinutes: 0,
@@ -406,12 +406,12 @@ export function rankLeadsForFocusStream<
 
       const badge =
         localTime.windowStatus === "PRIME_WINDOW"
-          ? `⚡ Prime Local Window (${localTime.localTimeFormatted})`
+          ? `Prime Local Window (${localTime.localTimeFormatted})`
           : localTime.windowStatus === "GATEKEEPER_BYPASS"
-          ? `🛡️ GK Bypass Hour (${localTime.localTimeFormatted})`
+          ? `Owner Direct Window (${localTime.localTimeFormatted})`
           : hasAdSpendSignal
-          ? "🔥 High-Intent Ad Spender"
-          : `🎯 Fresh Verified Lead (${icp}/100)`;
+          ? "Active Paid Ads Signal"
+          : `Fresh Verified Lead (${icp}/100)`;
 
       ranked.push({
         ...base,
@@ -445,7 +445,7 @@ export function rankLeadsForFocusStream<
       ...base,
       priorityScore: retryScore,
       tier: "CADENCE_RETRY_DUE",
-      reasonBadge: `🔄 ${derived.attempts} ${derived.attempts === 1 ? "Call" : "Calls"} Logged (${derived.def.label})`,
+      reasonBadge: `${derived.attempts} ${derived.attempts === 1 ? "Call" : "Calls"} Logged (${derived.def.label})`,
       isMandatoryFollowUpLock: false,
       isHeldBack: false,
       overdueMinutes: 0,
@@ -493,26 +493,33 @@ export function buildFlashBattlecard(input: {
   const location = [input.city, input.state].filter(Boolean).join(", ") || "your area";
   const facts = input.facts || {};
 
-  // 1. Pain Trigger Bullet
-  let painTrigger = `Inbound inquiries and after-hours calls in ${location} wait hours for follow-up.`;
-  if (facts["google_ads"] === "YES" && facts["zillow_advertiser"] === "YES") {
-    painTrigger = "🔥 Active Google Ads and Zillow spend: uncalled after-hours inquiries leak high-value deals.";
-  } else if (facts["google_ads"] === "YES" || facts["bleeding_ads"] === "YES") {
-    painTrigger = "🔥 Active paid ad traffic detected: slow speed to lead costs high-ticket appointments.";
-  } else if (input.financing === "YES" || input.replacement === "YES") {
-    painTrigger = "High-ticket replacement and financing active: open bids require instant 24/7 follow-up.";
+  // 1. Pain Trigger Bullet (Hyper-personalized to Real Estate / PM / STR / Brokerage)
+  const nicheLower = `${input.nicheName || ""} ${input.researchSummary || ""} ${Object.values(facts).join(" ")}`.toLowerCase();
+  const isStr = /\b(str|airbnb|vrbo|vacation\s*rental|short[- ]term|guest|guesty|hostaway)\b/i.test(nicheLower);
+  const isPm = /\b(property\s*management|doors|tenant|leasing|appfolio|buildium|yardi|rent\s*manager)\b/i.test(nicheLower);
+  const doorsCount = facts["doors_managed"] || null;
+  const swName = input.software && input.software !== "UNKNOWN" ? input.software.toUpperCase() : null;
+
+  let painTrigger = isStr
+    ? `Late-night guest & direct-booking inquiries in ${location} go unanswered after 6 PM, losing high-margin direct bookings to Airbnb/OTAs.`
+    : isPm
+    ? `Owner-acquisition & tenant leasing calls in ${location} hit voicemail during peak hours${doorsCount ? ` across ${doorsCount} doors` : ""}.`
+    : `Inbound Zillow/Realtor & buyer/seller calls in ${location} wait hours for callbacks — 78% list with the first broker who answers live.`;
+
+  if (facts["google_ads"] === "YES" || facts["bleeding_ads"] === "YES") {
+    painTrigger = `Active paid ad traffic in ${location}: missed inbound calls leak high-commission management & listing deals.`;
   }
 
   // 2. Scale & Tech Bullet
   const techParts: string[] = [];
-  if (input.software && input.software !== "UNKNOWN") {
-    techParts.push(`Tech: ${input.software.toUpperCase()}`);
+  if (swName) {
+    techParts.push(`Stack: ${swName}`);
   }
-  if (facts["doors_managed"]) {
-    techParts.push(`${facts["doors_managed"]} Doors Managed`);
+  if (doorsCount) {
+    techParts.push(`${doorsCount} Doors Managed`);
   }
   if (facts["employees"]) {
-    techParts.push(`${facts["employees"]} Team/Techs`);
+    techParts.push(`${facts["employees"]} Staff`);
   }
   if (facts["avg_property_value"]) {
     techParts.push(facts["avg_property_value"]);
@@ -520,28 +527,32 @@ export function buildFlashBattlecard(input: {
   const scaleAndTech =
     techParts.length > 0
       ? techParts.join(" • ")
-      : `Established ${input.nicheName || "Local"} Operator in ${location}`;
+      : `Verified ${input.nicheName || "Real Estate"} Operator in ${location}`;
 
   // 3. Gatekeeper Strategy Bullet
   const gatekeeperTip = firstName
-    ? `Say casually: "Hey, is ${firstName} around? It's regarding the ${input.companyName} client intake setup."`
-    : `Ask casually: "Hey, who handles new client intake over there? Is the owner in?"`;
+    ? `Say casually with downward inflection: "Hey, is ${firstName} in? It's regarding ${input.companyName}'s inbound owner & leasing line."`
+    : `Ask casually: "Hey, who oversees new property owner intake at ${input.companyName}? Are they in?"`;
+
+  const dynamicOpener = isStr
+    ? `"Hey ${firstName || "there"}, I was looking at ${input.companyName}'s vacation rentals in ${location} — quick question: when a guest or property owner calls after hours, does someone pick up live in under 30 seconds, or does it roll to voicemail? We deploy a 24/7 AI Voice Concierge that answers every call live and books direct stays & owner consults on your calendar. Worth a 10-minute look this week?"`
+    : isPm
+    ? `"Hey ${firstName || "there"}, saw ${input.companyName} manages properties across ${location}${swName ? ` on ${swName}` : ""} — quick question: when a landlord or prospective tenant calls after 5 PM or while your team is on showings, who catches that call live? We plug a 24/7 AI Voice Concierge into your phone line that qualifies property owners and books consults directly on your calendar. Open to a 10-minute live demo Thursday?"`
+    : input.openingScript;
 
   return {
     painTrigger,
     scaleAndTech,
     gatekeeperTip,
     scripts: {
-      OPENING: input.openingScript,
+      OPENING: dynamicOpener,
       GATEKEEPER: firstName
-        ? `"Hey there, is ${firstName} available for 30 seconds? Tell them it is ${
-            input.nicheName ? "regarding their after-hours inquiry pipeline" : "a quick operations question"
-          } for ${input.companyName}."`
-        : `"Hey there, who is the best person to speak with regarding ${input.companyName}'s client scheduling? Are they in right now?"`,
-      OBJ_BUSY: `"Totally get it, ${dmDisplay}, caught you right mid-day. Give me 15 seconds: we install a 24/7 AI intake engine that replies to missed calls and web leads in 10 seconds and books them on your calendar. Worth a 5-minute look this Thursday, or is Friday better?"`,
-      OBJ_CURRENT_SYSTEM: `"That is actually why I called. Our engine plugs right alongside your existing CRM to catch the after-hours and weekend leads that slip through. If we could add 3 to 5 extra booked jobs a month without extra ad spend, would you be open to a quick walkthrough?"`,
-      OBJ_SEND_EMAIL: `"Happy to shoot that over right now. Just so it is tailored: are you guys currently more focused on catching missed after-hours calls, or following up on open estimates automatically?"`,
-      OBJ_PRICE: `"It is a fraction of a single closed job, and if it does not book qualified appointments in the first 30 days, you do not pay. Let us do a quick screen share on Thursday so you can see it live: morning or afternoon?"`,
+        ? `"Hey there — is ${firstName} available for 20 seconds? Just let them know it's regarding ${input.companyName}'s inbound owner & listing inquiries in ${location}."`
+        : `"Hey there — who handles new owner & listing inquiries at ${input.companyName}? Are they available for 20 seconds?"`,
+      OBJ_BUSY: `"Totally respect that, ${dmDisplay} — I'll be gone in 15 seconds. We install a 24/7 Voice AI Receptionist for ${location} ${isPm ? "property managers" : isStr ? "vacation rental operators" : "brokerages"} that answers missed calls in 2 rings, qualifies landlords/buyers, and books them straight onto your calendar. Worth a 10-minute live demo tomorrow, or is Thursday better?"`,
+      OBJ_CURRENT_SYSTEM: `"That's actually why I reached out — we don't replace ${swName || "your current CRM or front desk"}. We only catch the overflow, evening, and weekend calls your team misses and push qualified appointments straight into ${swName || "your calendar"}. If it adds 2 to 4 extra signed management/listing agreements a month, would you be opposed to seeing a 5-minute demo?"`,
+      OBJ_SEND_EMAIL: `"I'll send that right over to your inbox. So I send the exact 60-second voice demo relevant to ${input.companyName} — is your bigger priority right now signing more property owners/listings, or automating tenant & guest calls?"`,
+      OBJ_PRICE: `"It costs less than a single lost management agreement or commission, and if it doesn't book qualified appointments in the first 30 days, you don't pay a cent. Let's do a 10-minute live test call where you can actually speak to the AI yourself — does tomorrow morning or afternoon work better?"`,
     },
   };
 }

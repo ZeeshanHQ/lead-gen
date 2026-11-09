@@ -479,7 +479,7 @@ export function SettingsForm({
   function handleSaveMyProfile(e: React.FormEvent) {
     e.preventDefault();
     startTransition(async () => {
-      const res = await updateMyProfileAction({ name: myName, title: myTitle });
+      const res = await updateMyProfileAction({ name: myName });
       if (typeof window !== "undefined") {
         localStorage.setItem("astraventa_caller_default_view", defaultCrmView);
       }
@@ -574,15 +574,19 @@ export function SettingsForm({
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-zinc-300 mb-1">
-                Job Title
+              <label className="block text-xs font-medium text-zinc-300 mb-1 flex items-center justify-between">
+                <span>Job Title</span>
+                <span className="text-[10px] font-mono text-zinc-500 flex items-center gap-1">
+                  <Lock className="w-2.5 h-2.5" /> Assigned by Owner
+                </span>
               </label>
               <input
                 type="text"
-                value={myTitle}
-                onChange={(e) => setMyTitle(e.target.value)}
-                placeholder="e.g., Sales Specialist"
-                className="w-full rounded-lg border border-zinc-800 bg-[#09090b] px-3 py-2 text-xs text-white focus:border-zinc-600 focus:outline-none"
+                readOnly
+                disabled
+                value={initialActiveMember.title || rolePreset.label}
+                title="Only the Workspace Owner can change your Job Title"
+                className="w-full rounded-lg border border-zinc-800/70 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400 cursor-not-allowed"
               />
             </div>
           </div>

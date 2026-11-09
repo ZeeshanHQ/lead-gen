@@ -70,13 +70,21 @@ export interface AuditCallInput {
   createdAtMs: number;
 }
 
-export type Timeframe = "ALL" | "TODAY" | "YESTERDAY" | "LAST_7_DAYS" | "LAST_30_DAYS";
+export type Timeframe =
+  | "ALL"
+  | "TODAY"
+  | "YESTERDAY"
+  | "LAST_7_DAYS"
+  | "LAST_14_DAYS"
+  | "LAST_30_DAYS"
+  | "CUSTOM";
 export type Scope = "ALL" | "UNASSIGNED" | string;
 
 export interface FunnelFilters {
   scope: Scope;
   timeframe: Timeframe;
   nowMs: number;
+  customDays?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +160,9 @@ export function buildCallEvents(
     }
 
     if (noteLogs.length > 0) {
+      let hasDerivedMatch = false;
       for (const [idx, entry] of noteLogs.entries()) {
+        if (entry.outcome === derived.key) hasDerivedMatch = true;
         const matchedAudit = leadAudits[idx];
         const actorName = entry.author || matchedAudit?.actor || "Caller";
         const memberId =
@@ -184,11 +194,31 @@ export function buildCallEvents(
           });
         }
       }
+      if (!hasDerivedMatch && derived.key !== "UNTOUCHED" && derived.def.depth > noteLogs[0]!.outcome.length * 0) {
+        const maxLoggedDepth = Math.max(...noteLogs.map((n) => CALL_STATUS_DEFS[n.outcome].depth));
+        if (derived.def.depth > maxLoggedDepth) {
+          const assignedMember = lead.assignedMemberId
+            ? members.find((m) => m.id === lead.assignedMemberId)
+            : undefined;
+          const fallbackTs = lead.updatedAtMs ?? nowMs;
+          events.push({
+            id: `${lead.id}#derived-upgrade`,
+            companyId: lead.id,
+            actor: assignedMember?.name || "Caller",
+            memberId: lead.assignedMemberId,
+            outcome: derived.key,
+            atMs: Number.isFinite(fallbackTs) ? fallbackTs : nowMs,
+            source: "note",
+          });
+        }
+      }
       continue;
     }
 
     if (leadAudits.length > 0) {
+      let maxAuditDepth = 0;
       for (const a of leadAudits) {
+        maxAuditDepth = Math.max(maxAuditDepth, CALL_STATUS_DEFS[a.resolvedOutcome].depth);
         events.push({
           id: a.id,
           companyId: lead.id,
@@ -197,6 +227,21 @@ export function buildCallEvents(
           outcome: a.resolvedOutcome,
           atMs: Number.isFinite(a.createdAtMs) ? a.createdAtMs : nowMs,
           source: "audit",
+        });
+      }
+      if (derived.key !== "UNTOUCHED" && derived.def.depth > maxAuditDepth) {
+        const assignedMember = lead.assignedMemberId
+          ? members.find((m) => m.id === lead.assignedMemberId)
+          : undefined;
+        const fallbackTs = lead.updatedAtMs ?? nowMs;
+        events.push({
+          id: `${lead.id}#derived-audit-upgrade`,
+          companyId: lead.id,
+          actor: assignedMember?.name || "Caller",
+          memberId: lead.assignedMemberId,
+          outcome: derived.key,
+          atMs: Number.isFinite(fallbackTs) ? fallbackTs : nowMs,
+          source: "note",
         });
       }
       continue;
@@ -377,7 +422,11 @@ function emptyOutcomeCounts(): Record<CallOutcomeKey, number> {
   return Object.fromEntries(ALL_OUTCOME_KEYS.map((k) => [k, 0])) as Record<CallOutcomeKey, number>;
 }
 
-function timeframeRange(tf: Timeframe, nowMs: number): { from: number; to: number } | null {
+function timeframeRange(
+  tf: Timeframe,
+  nowMs: number,
+  customDays?: number
+): { from: number; to: number } | null {
   if (tf === "ALL") return null;
   const todayKey = zonedDayKey(nowMs, CALLER_TIMEZONE);
   const startOfToday = Date.parse(`${todayKey}T00:00:00+05:00`);
@@ -385,6 +434,11 @@ function timeframeRange(tf: Timeframe, nowMs: number): { from: number; to: numbe
   if (tf === "TODAY") return { from: startOfToday, to: Infinity };
   if (tf === "YESTERDAY") return { from: startOfToday - DAY, to: startOfToday };
   if (tf === "LAST_7_DAYS") return { from: startOfToday - 6 * DAY, to: Infinity };
+  if (tf === "LAST_14_DAYS") return { from: startOfToday - 13 * DAY, to: Infinity };
+  if (tf === "CUSTOM") {
+    const days = Math.max(1, Math.min(365, Math.round(customDays || 7)));
+    return { from: startOfToday - (days - 1) * DAY, to: Infinity };
+  }
   return { from: startOfToday - 29 * DAY, to: Infinity };
 }
 
@@ -423,8 +477,8 @@ export function computeFunnel(
   members: FunnelMember[],
   filters: FunnelFilters
 ): FunnelResult {
-  const { scope, timeframe, nowMs } = filters;
-  const range = timeframeRange(timeframe, nowMs);
+  const { scope, timeframe, nowMs, customDays } = filters;
+  const range = timeframeRange(timeframe, nowMs, customDays);
 
   const scopedAllLeads = allLeads.filter((l) => {
     if (scope === "ALL") return true;

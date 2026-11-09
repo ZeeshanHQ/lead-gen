@@ -1101,3 +1101,34 @@ export async function saveSearchApiKeyAction(apiKey: string) {
     return { ok: false, error: err.message || "Failed to update API key." };
   }
 }
+
+export async function purgeJunkAndOptimizeStorageAction() {
+  try {
+    const db = await getDb();
+    const { companySourceRefs, evidence, contacts } = await import("@/server/db/schema");
+    const disqualifiedRows = await db
+      .select({ id: companies.id })
+      .from(companies)
+      .where(eq(companies.status, "DISQUALIFIED"));
+
+    const ids = disqualifiedRows.map((r) => r.id);
+    if (ids.length > 0) {
+      await Promise.all([
+        db.delete(companySourceRefs).where(inArray(companySourceRefs.companyId, ids)),
+        db.delete(evidence).where(inArray(evidence.companyId, ids)),
+        db.delete(contacts).where(inArray(contacts.companyId, ids)),
+      ]);
+    }
+
+    revalidatePath("/discover");
+    revalidatePath("/caller");
+    revalidatePath("/");
+    return {
+      ok: true,
+      purgedCount: ids.length,
+      message: `Optimized Supabase storage across ${ids.length} rejected/junk domain tombstones (freed crawled evidence & source payloads while retaining domain blocklist).`,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to optimize storage." };
+  }
+}

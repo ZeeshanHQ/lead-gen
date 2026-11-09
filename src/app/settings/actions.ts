@@ -80,12 +80,14 @@ export async function updateMyProfileAction(input: { name: string; title?: strin
     if (!activeMember || activeMember.id === "guest") {
       return { ok: false, error: "Unauthorized" };
     }
+    const isOwner = activeMember.role === "OWNER";
     const member = await updateTeamMemberAccess(
       db,
       activeMember.id,
       {
         name: input.name.trim() || activeMember.name,
-        title: input.title?.trim() ?? activeMember.title,
+        // Lock job title for non-owners so only the Owner's assigned title remains
+        title: isOwner ? (input.title?.trim() ?? activeMember.title) : activeMember.title,
       },
       activeMember.name
     );

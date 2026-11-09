@@ -1,6 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { companies, leadScores, markets, researchRules } from "../db/schema";
+import { companies, leadScores, markets, researchRules, companySourceRefs, evidence as evidenceTable, contacts as contactsTable } from "../db/schema";
+import { isOffNicheSearchResult } from "../providers/tavily_plan";
+import { normalizeUsPhone } from "../domain/normalize";
 import {
   calculateLeadScore,
   defaultHvacRuleConfig,
@@ -313,28 +315,15 @@ export async function researchCompany(
       state: refreshed.state,
       contacts: evalCompany.contacts,
     });
-    const minScore = activeRule?.scoring?.minScore ?? 50;
-    const isAutoQualified = earlyGate.passed && evaluation.verdict !== "FAIL" && scoreBreakdown.icpScore >= minScore;
-    const finalStatus =
-      evaluation.verdict === "FAIL" || !earlyGate.passed
-        ? "DISQUALIFIED"
-        : isAutoQualified
-          ? "APPROVED"
-          : "NEEDS_REVIEW";
+    // Unreachable websites (0 crawled pages) are strictly DISQUALIFIED so dead domains or unverified numbers never enter CRM
+    const finalStatus = "DISQUALIFIED" as const;
 
     await db
       .update(companies)
       .set({
         status: finalStatus,
         updatedAt: new Date(),
-        ...(isAutoQualified ? { approvedAt: new Date(), approvedBy: "AI Engine (Auto-Qualified)" } : {}),
-        ...(finalStatus === "DISQUALIFIED"
-          ? {
-              researchSummary: earlyGate.passed
-                ? "Not added to CRM — website could not be reached."
-                : `Not added to CRM — missing required: ${earlyGate.reasons.join(", ")}`,
-            }
-          : {}),
+        researchSummary: `Not added to CRM — website could not be reached (${crawlErrors[0] || "unreachable"}).`,
       })
       .where(eq(companies.id, companyId));
 
@@ -485,8 +474,22 @@ export async function researchCompany(
 
   const primaryDm = currentContacts.find((c) => c.verified && isDecisionMaker(c.roleClass as any)) || currentContacts[0];
   const crawledTextSummary = pages.map((p) => `${p.title || ""} ${p.cleanText || ""}`).join(" ").slice(0, 12000);
+  const marketCfg = (marketRow?.config as Record<string, unknown>) || {};
+  const kwList = [
+    ...(Array.isArray(activeRule?.discovery?.keywords) ? activeRule.discovery.keywords : []),
+    ...(Array.isArray(marketCfg.keywords) ? (marketCfg.keywords as string[]) : []),
+  ];
+
+  const candidateRawPhone =
+    updates.phoneDisplay ||
+    refreshed.phoneDisplay ||
+    refreshed.phoneE164 ||
+    evalCompany.contacts.find((c) => c.phone)?.phone ||
+    null;
+  const verifiedNanpPhone = normalizeUsPhone(candidateRawPhone);
+
   const gateResult = evaluateGate(activeRule?.gate, {
-    phone: updates.phoneDisplay || refreshed.phoneDisplay || refreshed.phoneE164,
+    phone: verifiedNanpPhone ? verifiedNanpPhone.display : null,
     website: refreshed.website,
     websiteAlive: true,
     city: updates.city || refreshed.city,
@@ -495,22 +498,27 @@ export async function researchCompany(
     facts: evalCompany.facts,
     searchText: `${refreshed.name} ${refreshed.website || ""} ${crawledTextSummary}`,
   });
+
+  const postCrawlOffNiche =
+    kwList.length > 0 &&
+    isOffNicheSearchResult({
+      title: `${refreshed.name} ${pages[0]?.title || ""}`,
+      domain: refreshed.domain || refreshed.website || "",
+      targetKeyword: kwList.join(" "),
+      content: crawledTextSummary.slice(0, 3500),
+      negativeKeywords: activeRule?.discovery?.negativeKeywords,
+    });
+
   const isHardOffNiche =
+    postCrawlOffNiche ||
     evalCompany.facts.off_niche_vendor?.value === "YES" ||
     evalCompany.facts.niche_verified?.value === "NO" ||
     evalCompany.facts.casual_host_only?.value === "YES";
   const finalStatus =
-    !gateResult.passed || evaluation.verdict === "FAIL" || isHardOffNiche
+    !gateResult.passed || evaluation.verdict === "FAIL" || isHardOffNiche || !verifiedNanpPhone
       ? "DISQUALIFIED"
       : "NEEDS_REVIEW";
   updates.status = finalStatus;
-
-  // Synthesize Cold Caller Battlecard & 15-second opening pitch hook
-  const marketCfg = (marketRow?.config as Record<string, unknown>) || {};
-  const kwList = [
-    ...(Array.isArray(activeRule?.discovery?.keywords) ? activeRule.discovery.keywords : []),
-    ...(Array.isArray(marketCfg.keywords) ? (marketCfg.keywords as string[]) : []),
-  ];
 
   const battlecard = buildColdCallerBattlecard({
     companyName: refreshed.name,
@@ -534,6 +542,20 @@ export async function researchCompany(
   }
 
   await db.update(companies).set(updates).where(eq(companies.id, companyId));
+
+  // Supabase Free-Tier Storage Optimization: purge heavy evidence/source/contact payloads for disqualified leads
+  // while keeping the lightweight company domain row as a permanent anti-recrawl tombstone.
+  if (finalStatus === "DISQUALIFIED") {
+    try {
+      await Promise.all([
+        db.delete(companySourceRefs).where(eq(companySourceRefs.companyId, companyId)),
+        db.delete(evidenceTable).where(eq(evidenceTable.companyId, companyId)),
+        db.delete(contactsTable).where(eq(contactsTable.companyId, companyId)),
+      ]);
+    } catch {
+      // Non-fatal cleanup
+    }
+  }
 
   // Insert lead score row
   await db.insert(leadScores).values({

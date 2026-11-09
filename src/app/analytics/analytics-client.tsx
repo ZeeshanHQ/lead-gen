@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { LeadRow } from "@/server/repo/queue";
 import type { TeamMember } from "@/server/domain/team";
 import {
@@ -312,10 +313,12 @@ export function SalesFunnelClient({
   activeMemberId,
   activeMemberName,
 }: SalesFunnelClientProps) {
+  const router = useRouter();
   const [selectedCallerId, setSelectedCallerId] = useState<string>(() =>
     isOwner ? "ALL" : activeMemberId || "ALL"
   );
   const [timeframe, setTimeframe] = useState<Timeframe>("ALL");
+  const [customDays, setCustomDays] = useState<number>(3);
   const [activeTab, setActiveTab] = useState<AnalyticsTab>("OVERVIEW");
   const [viewMode, setViewMode] = useState<FunnelViewMode>("BOTH");
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
@@ -325,23 +328,35 @@ export function SalesFunnelClient({
   const timeframeLabel = useMemo(() => {
     switch (timeframe) {
       case "TODAY":
-        return "Today";
+        return "Today (1d)";
       case "YESTERDAY":
         return "Yesterday";
       case "LAST_7_DAYS":
         return "7 Days";
+      case "LAST_14_DAYS":
+        return "14 Days";
       case "LAST_30_DAYS":
         return "30 Days";
+      case "CUSTOM":
+        return `Last ${customDays}d`;
       default:
         return "All Time";
     }
-  }, [timeframe]);
+  }, [timeframe, customDays]);
 
-  // Live Clock Tick (every 10 seconds)
+  // Live Clock Tick (every 10 seconds) + Real-time Router Refresh (every 20 seconds)
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 10000);
-    return () => clearInterval(timer);
-  }, []);
+    const refreshTimer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        router.refresh();
+      }
+    }, 20000);
+    return () => {
+      clearInterval(timer);
+      clearInterval(refreshTimer);
+    };
+  }, [router]);
 
   // 1. Adapt leads to pure domain FunnelLead[]
   const funnelLeads: FunnelLead[] = useMemo(() => {
@@ -393,9 +408,10 @@ export function SalesFunnelClient({
       scope: effectiveScope,
       timeframe,
       nowMs,
+      customDays,
     };
     return computeFunnel(funnelLeads, rawEvents, funnelMembers, filters);
-  }, [funnelLeads, rawEvents, funnelMembers, effectiveScope, timeframe, nowMs]);
+  }, [funnelLeads, rawEvents, funnelMembers, effectiveScope, timeframe, nowMs, customDays]);
 
   // Lead Penetration Rate: dialed leads / total pool
   const poolPenetrationRate =
@@ -553,40 +569,58 @@ export function SalesFunnelClient({
             )}
 
             {/* Timeframe Selector */}
-            <div className="flex items-center rounded-lg bg-[#09090c] border border-zinc-800 p-0.5">
+            <div className="flex flex-wrap items-center gap-1.5 rounded-xl bg-[#050608] border border-white/[0.1] p-1">
               {(
                 [
                   { id: "ALL", label: "All Time" },
-                  { id: "TODAY", label: "Today" },
+                  { id: "TODAY", label: "1 Day (Today)" },
                   { id: "YESTERDAY", label: "Yesterday" },
                   { id: "LAST_7_DAYS", label: "7 Days" },
+                  { id: "LAST_14_DAYS", label: "14 Days" },
                   { id: "LAST_30_DAYS", label: "30 Days" },
+                  { id: "CUSTOM", label: "Custom Days" },
                 ] as const
               ).map((tf) => (
                 <button
                   key={tf.id}
                   type="button"
                   onClick={() => setTimeframe(tf.id)}
-                  className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
                     timeframe === tf.id
-                      ? "bg-zinc-800 text-white shadow-sm"
+                      ? "bg-gradient-to-b from-white via-zinc-100 to-zinc-300 text-black font-bold shadow-sm"
                       : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
                   {tf.label}
                 </button>
               ))}
+              {timeframe === "CUSTOM" && (
+                <div className="inline-flex items-center gap-1 pl-1.5 pr-2 py-0.5 rounded-lg bg-white/[0.04] border border-white/[0.12]">
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={customDays}
+                    onChange={(e) =>
+                      setCustomDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))
+                    }
+                    className="w-12 bg-transparent text-xs font-mono font-bold text-white text-center focus:outline-none"
+                    title="Enter custom number of days (1 to 365)"
+                  />
+                  <span className="text-[10px] font-mono text-zinc-400">days</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
 
         {/* Live Synchronized Clocks Bar (PKT vs US Territories) */}
-        <div className="pt-3 border-t border-zinc-800/80 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 text-xs">
+        <div className="pt-3 border-t border-white/[0.08] grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 text-xs">
           {/* Pakistan Caller Shift Clock */}
-          <div className="p-2.5 rounded-xl border border-emerald-500/30 bg-emerald-950/20 flex flex-col justify-between">
+          <div className="p-2.5 rounded-xl border border-white/[0.12] bg-[#07080b] flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
-                <span>🇵🇰</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-200 flex items-center gap-1.5">
+                <Clock className="w-3 h-3 text-emerald-400" />
                 <span>Caller Base ({CALLER_TZ_LABEL})</span>
               </span>
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
@@ -594,7 +628,7 @@ export function SalesFunnelClient({
             <div className="text-base font-black font-mono text-white mt-1">
               {formatClock(nowMs, CALLER_TIMEZONE)}
             </div>
-            <div className="text-[10px] text-emerald-400/80 mt-0.5">Karachi / Lahore Shift</div>
+            <div className="text-[10px] text-zinc-400 mt-0.5">Karachi / Lahore Shift</div>
           </div>
 
           {/* US Eastern (ET) */}
@@ -669,19 +703,19 @@ export function SalesFunnelClient({
       </div>
 
       {/* ------------------------------------------------------------------- */}
-      {/* CORE KPI METRIC CARDS                                              */}
+      {/* CORE KPI METRIC CARDS (Plain Everyday Language • 100% CRM Parity)   */}
       {/* ------------------------------------------------------------------- */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {/* Metric 1: Total Leads in Pool */}
-        <div className="p-4 rounded-xl border border-zinc-800 bg-[#101014]">
+        <div className="p-4 rounded-xl border border-white/[0.09] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709]">
           <div className="text-[11px] text-zinc-400 flex items-center justify-between gap-1.5">
-            <span className="flex items-center gap-1.5">
+            <span className="flex items-center gap-1.5 font-semibold text-zinc-300">
               <Target className="w-3.5 h-3.5 text-zinc-400" />
-              <span>{timeframe === "ALL" ? "Lead Pool" : `Lead Pool (${timeframeLabel})`}</span>
+              <span>{timeframe === "ALL" ? "Total Leads Pool" : `Leads (${timeframeLabel})`}</span>
             </span>
             {timeframe !== "ALL" && (
               <span className="text-[10px] text-zinc-500 font-mono">
-                Total: {funnelResult.totalPool}
+                All: {funnelResult.totalPool}
               </span>
             )}
           </div>
@@ -689,80 +723,82 @@ export function SalesFunnelClient({
             {funnelResult.pool}
           </div>
           <div className="text-[11px] text-zinc-400 mt-0.5">
-            <span className="text-emerald-400 font-bold">{poolPenetrationRate}%</span> dialed (
-            {funnelResult.dial.dialedLeads} leads)
+            <span className="text-emerald-400 font-bold">{funnelResult.dial.dialedLeads} Called</span> •{" "}
+            <span>{Math.max(0, funnelResult.pool - funnelResult.dial.dialedLeads)} Uncalled</span>
           </div>
         </div>
 
         {/* Metric 2: Total Dials Logged */}
-        <div className="p-4 rounded-xl border border-zinc-800 bg-[#101014]">
-          <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+        <div className="p-4 rounded-xl border border-white/[0.09] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709]">
+          <div className="text-[11px] text-zinc-300 font-semibold flex items-center gap-1.5">
             <PhoneCall className="w-3.5 h-3.5 text-sky-400" />
-            <span>Total Dials</span>
+            <span>Total Call Logs</span>
           </div>
           <div className="text-2xl font-black font-mono text-white mt-1">
             {funnelResult.dial.total}
           </div>
           <div className="text-[11px] text-zinc-400 mt-0.5">
-            avg {funnelResult.dial.avgAttempts} attempts / lead
+            Avg {funnelResult.dial.avgAttempts} calls per dialed lead
           </div>
         </div>
 
-        {/* Metric 3: Pick Rate */}
-        <div className="p-4 rounded-xl border border-zinc-800 bg-[#101014]">
-          <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+        {/* Metric 3: Human Answered (Owner + Gatekeeper) */}
+        <div className="p-4 rounded-xl border border-white/[0.09] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709]">
+          <div className="text-[11px] text-zinc-300 font-semibold flex items-center gap-1.5">
             <PhoneForwarded className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Pick Rate</span>
+            <span>Human Answered</span>
           </div>
-          <div className="text-2xl font-black font-mono text-indigo-400 mt-1">
-            {funnelResult.dial.pickRate}%
+          <div className="text-2xl font-black font-mono text-white mt-1">
+            {funnelResult.stages[1]?.count ?? funnelResult.dial.human}
+            <span className="text-sm font-bold text-indigo-400 ml-1.5">
+              ({funnelResult.dial.pickRate}%)
+            </span>
           </div>
           <div className="text-[11px] text-zinc-400 mt-0.5">
-            {funnelResult.dial.human} answered calls
+            {funnelResult.stages[2]?.count ?? funnelResult.dial.owner} Owner +{" "}
+            {funnelResult.statusCounts.GATEKEEPER_BLOCKED || 0} Front Desk
           </div>
         </div>
 
-        {/* Metric 4: Gatekeeper Bypass */}
-        <div className="p-4 rounded-xl border border-zinc-800 bg-[#101014]">
-          <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-orange-400" />
-            <span>GK Bypass Rate</span>
+        {/* Metric 4: Spoke with Owner (Decision Maker) */}
+        <div className="p-4 rounded-xl border border-white/[0.09] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709]">
+          <div className="text-[11px] text-zinc-300 font-semibold flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5 text-sky-400" />
+            <span>Spoke with Owner</span>
           </div>
-          <div className="text-2xl font-black font-mono text-orange-400 mt-1">
-            {gatekeeperBypassRate}%
+          <div className="text-2xl font-black font-mono text-sky-400 mt-1">
+            {funnelResult.stages[2]?.count ?? funnelResult.dial.owner}
           </div>
           <div className="text-[11px] text-zinc-400 mt-0.5">
-            {funnelResult.dial.owner} reached decision makers
+            <span className="text-zinc-200 font-semibold">{gatekeeperBypassRate}%</span> bypassed front desk
           </div>
         </div>
 
         {/* Metric 5: Meetings Booked */}
-        <div className="p-4 rounded-xl border border-emerald-500/40 bg-emerald-950/20">
+        <div className="p-4 rounded-xl border border-emerald-500/35 bg-gradient-to-b from-[#0d1914] via-[#09110e] to-[#060709]">
           <div className="text-[11px] text-emerald-400 flex items-center gap-1.5 font-bold">
             <CalendarCheck className="w-3.5 h-3.5 text-emerald-400" />
             <span>Meetings Booked</span>
           </div>
           <div className="text-2xl font-black font-mono text-emerald-400 mt-1">
-            {funnelResult.dial.meetings}
+            {funnelResult.stages[4]?.count ?? funnelResult.dial.meetings}
           </div>
-          <div className="text-[11px] text-emerald-300 mt-0.5 font-semibold">
-            {funnelResult.dial.dialsPerMeeting > 0
-              ? `1 per ${funnelResult.dial.dialsPerMeeting} dials`
-              : "0 booked in timeframe"}
+          <div className="text-[11px] text-emerald-300/90 mt-0.5 font-semibold">
+            {closingRate}% close rate from Owner talks
           </div>
         </div>
 
-        {/* Metric 6: Overdue Follow-ups Alert */}
+        {/* Metric 6: Follow-Up & Callback Queue */}
         <div
           className={`p-4 rounded-xl border ${
             funnelResult.followUps.overdue > 0
-              ? "border-rose-500/40 bg-rose-950/20"
-              : "border-zinc-800 bg-[#101014]"
+              ? "border-rose-500/35 bg-gradient-to-b from-[#190d10] via-[#0f080a] to-[#060709]"
+              : "border-white/[0.09] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709]"
           }`}
         >
-          <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+          <div className="text-[11px] text-zinc-300 font-semibold flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>Active Follow-Ups</span>
+            <span>Scheduled Callbacks</span>
           </div>
           <div
             className={`text-2xl font-black font-mono mt-1 ${
@@ -774,11 +810,118 @@ export function SalesFunnelClient({
           <div className="text-[11px] text-zinc-400 mt-0.5">
             {funnelResult.followUps.overdue > 0 ? (
               <span className="text-rose-400 font-bold">
-                ⚠️ {funnelResult.followUps.overdue} Overdue
+                {funnelResult.followUps.overdue} Overdue •{" "}
+                {Math.max(0, funnelResult.followUps.scheduled - funnelResult.followUps.overdue)} Upcoming
               </span>
             ) : (
-              <span className="text-zinc-500">All follow-ups current</span>
+              <span className="text-zinc-400">
+                {Math.max(0, funnelResult.followUps.scheduled - funnelResult.followUps.overdue)} Upcoming
+              </span>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------------------- */}
+      {/* OWNER AI DIAGNOSTIC & FOLLOW-UP CADENCE TRACKER                     */}
+      {/* ------------------------------------------------------------------- */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Card 1: Lead & Phone Quality Diagnostic */}
+        <div className="rounded-2xl border border-white/[0.09] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709] p-4 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-mono uppercase tracking-[0.14em] text-zinc-400 font-bold">
+              1. Lead &amp; Phone Number Quality
+            </span>
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                (funnelResult.statusCounts.WRONG_NUMBER || 0) <= Math.max(2, Math.round(funnelResult.pool * 0.05))
+                  ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
+                  : "bg-amber-500/10 text-amber-300 border-amber-500/30"
+              }`}
+            >
+              {funnelResult.pool > 0
+                ? `${100 - Math.round(((funnelResult.statusCounts.WRONG_NUMBER || 0) / funnelResult.pool) * 100)}% Valid Lines`
+                : "100% Valid"}
+            </span>
+          </div>
+          <p className="text-xs text-zinc-300 leading-relaxed">
+            Out of <strong>{funnelResult.dial.dialedLeads}</strong> leads called,{" "}
+            <strong>{funnelResult.stages[1]?.count ?? funnelResult.dial.human}</strong> connected with a live human and only{" "}
+            <strong>{funnelResult.statusCounts.WRONG_NUMBER || 0}</strong> were marked Wrong Number.
+          </p>
+          <div className="pt-1 flex items-center justify-between text-[11px] text-zinc-400 border-t border-white/[0.06]">
+            <span>No-Answer Retry Pool: <strong className="text-white">{funnelResult.statusCounts.NO_ANSWER || 0}</strong></span>
+            <Link href="/discover" className="text-zinc-200 hover:text-white underline font-semibold">
+              Extract Direct Lines →
+            </Link>
+          </div>
+        </div>
+
+        {/* Card 2: Caller Execution & Pitch Conversion Diagnosis */}
+        <div className="rounded-2xl border border-white/[0.09] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709] p-4 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-mono uppercase tracking-[0.14em] text-zinc-400 font-bold">
+              2. Caller Execution &amp; Pitch Diagnosis
+            </span>
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-white/[0.05] text-zinc-200 border border-white/[0.1]">
+              {closingRate}% Close Rate
+            </span>
+          </div>
+          <p className="text-xs text-zinc-300 leading-relaxed">
+            {funnelResult.stages[2]?.count
+              ? `Callers spoke with ${funnelResult.stages[2].count} Owners, faced ${
+                  funnelResult.statusCounts.NOT_INTERESTED || 0
+                } objections, and booked ${funnelResult.stages[4]?.count || 0} meetings. ${
+                  (funnelResult.statusCounts.GATEKEEPER_BLOCKED || 0) > 10
+                    ? "Coach callers to ask for the Owner by first name to reduce Front Desk blocks."
+                    : "Owner reach rate is strong — focus on locking 15-min calendar times on the spot."
+                }`
+              : `${Math.max(0, funnelResult.pool - funnelResult.dial.dialedLeads)} fresh uncalled leads are waiting in queue. Start calling during US Golden Hours.`}
+          </p>
+          <div className="pt-1 flex items-center justify-between text-[11px] text-zinc-400 border-t border-white/[0.06]">
+            <span>Front Desk Blocked: <strong className="text-orange-300">{funnelResult.statusCounts.GATEKEEPER_BLOCKED || 0}</strong></span>
+            <Link href="/caller" className="text-zinc-200 hover:text-white underline font-semibold">
+              Open Calling Console →
+            </Link>
+          </div>
+        </div>
+
+        {/* Card 3: Weekly & Monthly Follow-Up Cadence Tracker */}
+        <div className="rounded-2xl border border-white/[0.09] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709] p-4 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-mono uppercase tracking-[0.14em] text-zinc-400 font-bold">
+              3. Follow-Up &amp; Callback Tracker
+            </span>
+            <Link
+              href="/caller?status=FOLLOW_UP"
+              className="text-[10px] font-mono font-bold text-amber-300 hover:text-amber-200 underline"
+            >
+              View All ({funnelResult.followUps.scheduled})
+            </Link>
+          </div>
+          <div className="grid grid-cols-3 gap-2 pt-0.5">
+            <div className="p-2 rounded-lg bg-[#050608] border border-white/[0.07] text-center">
+              <div className={`text-base font-black font-mono ${funnelResult.followUps.overdue > 0 ? "text-rose-400" : "text-zinc-300"}`}>
+                {funnelResult.followUps.overdue}
+              </div>
+              <div className="text-[10px] text-zinc-400">Overdue</div>
+            </div>
+            <div className="p-2 rounded-lg bg-[#050608] border border-white/[0.07] text-center">
+              <div className="text-base font-black font-mono text-amber-300">
+                {Math.max(0, funnelResult.followUps.scheduled - funnelResult.followUps.overdue)}
+              </div>
+              <div className="text-[10px] text-zinc-400">Upcoming</div>
+            </div>
+            <div className="p-2 rounded-lg bg-[#050608] border border-white/[0.07] text-center">
+              <div className="text-base font-black font-mono text-sky-300">
+                {funnelResult.followUps.ownerNoNextStep}
+              </div>
+              <div className="text-[10px] text-zinc-400">Needs Follow-Up</div>
+            </div>
+          </div>
+          <div className="pt-1 flex items-center justify-between text-[11px] text-zinc-400 border-t border-white/[0.06]">
+            <span>Warm Callbacks Pending: <strong className="text-white">{funnelResult.statusCounts.CALL_COMPLETED || 0}</strong></span>
+            <span>Spoke / Active: <strong className="text-sky-300">{funnelResult.statusCounts.CONNECTED || 0}</strong></span>
           </div>
         </div>
       </div>
@@ -1109,7 +1252,7 @@ export function SalesFunnelClient({
                     : "text-zinc-400 hover:text-zinc-200"
                 }`}
               >
-                🇵🇰 Caller Shift Clock (PKT)
+                Caller Shift Clock (PKT)
               </button>
             </div>
           </div>
@@ -1126,7 +1269,7 @@ export function SalesFunnelClient({
                   8:30 AM – 10:00 AM &amp; 4:00 PM – 5:30 PM (Prospect Local)
                 </div>
                 <div className="text-xs text-amber-300 font-mono mt-0.5">
-                  🇵🇰 Pakistan Caller Shift: 5:30 PM – 7:00 PM &amp; 1:00 AM – 2:30 AM PKT
+                  Pakistan Caller Shift: 5:30 PM – 7:00 PM &amp; 1:00 AM – 2:30 AM PKT
                 </div>
                 <p className="text-[11px] text-zinc-400 mt-2">
                   Owners &amp; executives answer desk phones before admin staff arrives in the morning
@@ -1287,7 +1430,7 @@ export function SalesFunnelClient({
                     <td className="px-4 py-3.5">
                       {c.overdueFollowUps > 0 ? (
                         <span className="text-rose-400 font-bold">
-                          ⚠️ {c.overdueFollowUps} Overdue
+                          {c.overdueFollowUps} Overdue
                         </span>
                       ) : (
                         <span className="text-zinc-500">0 Overdue</span>

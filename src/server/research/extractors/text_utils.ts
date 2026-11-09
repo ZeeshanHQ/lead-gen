@@ -64,25 +64,48 @@ export function extractJsonLd(html: string): any[] {
  */
 export function extractPhonesFromHtml(html: string): string[] {
   const $ = cheerio.load(html);
-  const phones = new Set<string>();
+  const scoredPhones = new Map<string, number>();
+  const recordPhone = (display: string, score: number) => {
+    const existing = scoredPhones.get(display);
+    if (existing === undefined || score > existing) {
+      scoredPhones.set(display, score);
+    }
+  };
+  const isTollFree = (display: string) => /^\(?8(?:00|88|77|66|55|44|33)\)?/.test(display);
 
   // Check tel: links
   $('a[href^="tel:"]').each((_, el) => {
     const raw = $(el).attr("href")?.replace(/^tel:/i, "") || "";
+    const context = `${$(el).text()} ${$(el).parent().text()}`.slice(0, 160);
+    if (/\b(fax|facsimile|f\s*:)\b/i.test(context)) return;
     const norm = normalizeUsPhone(raw);
-    if (norm) phones.add(norm.display);
+    if (!norm) return;
+    const directBoost = /\b(cell|mobile|direct|owner|broker|text|sms)\b/i.test(context) ? 30 : 0;
+    const baseScore = isTollFree(norm.display) ? 40 : 90;
+    recordPhone(norm.display, baseScore + directBoost);
   });
 
-  // Regex scan body text
+  // Regex scan body text while rejecting fax / MLS / license numbers
   const text = $("body").text();
   const phoneRegex = /(?:\+?1[-.\s]?)?\(?([2-9][0-8][0-9])\)?[-.\s]?([2-9][0-9]{2})[-.\s]?([0-9]{4})/g;
   let m;
   while ((m = phoneRegex.exec(text)) !== null) {
+    const startIdx = Math.max(0, m.index - 28);
+    const prefix = text.slice(startIdx, m.index);
+    if (/\b(fax|facsimile|f\s*:|mls\s*#?|lic(?:ense)?\s*#?|dre\s*#?|bre\s*#?|parcel|tax\s*id)\s*[-:#]?\s*$/i.test(prefix)) {
+      continue;
+    }
     const norm = normalizeUsPhone(m[0]);
-    if (norm) phones.add(norm.display);
+    if (!norm) continue;
+    const surrounding = text.slice(startIdx, Math.min(text.length, m.index + m[0].length + 40));
+    const directBoost = /\b(cell|mobile|direct|owner|broker|call|phone|tel|office)\b/i.test(surrounding) ? 15 : 0;
+    const baseScore = isTollFree(norm.display) ? 20 : 65;
+    recordPhone(norm.display, baseScore + directBoost);
   }
 
-  return Array.from(phones);
+  return Array.from(scoredPhones.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([phone]) => phone);
 }
 
 /**

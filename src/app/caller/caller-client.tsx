@@ -2,6 +2,7 @@
 
 import React, { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { type CallerLeadView } from "@/server/repo/caller";
 import {
   logCallFeedbackAction,
@@ -171,6 +172,7 @@ export function CallerClient({
   initialRuleConfig = {},
   canEditRules = false,
 }: CallerClientProps) {
+  const router = useRouter();
   const [queue, setQueue] = useState<CallerLeadView[]>(initialQueue);
   const [customColumns, setCustomColumns] = useState<CustomCrmColumn[]>(initialCustomColumns);
   const [search, setSearch] = useState("");
@@ -443,15 +445,34 @@ export function CallerClient({
           setStatusFilter(savedStatus);
         }
       }
-      // Always start with ALL dates visible so stale date filters never hide leads
+      // Always start with ALL dates and ALL callers visible (unless URL query specified) so stale localStorage never mismatches Dashboard/Analytics
       setDateFilter("ALL");
       localStorage.removeItem("astraventa_caller_date_filter");
-      const savedCaller = localStorage.getItem("astraventa_caller_selected_caller");
-      if (savedCaller && initialCallerFilter === "ALL") {
-        setCallerFilter(savedCaller);
+      if (!initialCallerFilter || initialCallerFilter === "ALL") {
+        setCallerFilter("ALL");
+        localStorage.removeItem("astraventa_caller_selected_caller");
       }
     } catch {}
-  }, [initialStatusFilter, initialCallerFilter, activeMember?.role, queue]);
+  }, [initialStatusFilter, initialCallerFilter, activeMember?.role]);
+
+  // Real-time background data rotation (syncs queue when server props refresh & polls every 20s when tab is active)
+  React.useEffect(() => {
+    setQueue(initialQueue);
+  }, [initialQueue]);
+
+  React.useEffect(() => {
+    const refreshLive = () => {
+      if (document.visibilityState === "visible") {
+        router.refresh();
+      }
+    };
+    const interval = setInterval(refreshLive, 20_000);
+    window.addEventListener("focus", refreshLive);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", refreshLive);
+    };
+  }, [router]);
 
   const setViewModeAndPersist = (mode: "FOCUS" | "CARDS" | "SHEET") => {
     if (!isOwner && mode !== "FOCUS") return;
@@ -1325,75 +1346,129 @@ export function CallerClient({
     <div className={effectiveViewMode === "FOCUS" ? "space-y-2" : "space-y-4"}>
       {/* Top Header */}
       {effectiveViewMode === "FOCUS" ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-          {/* iOS Bubble Group: Branding + Niche + Live Total Counter */}
-          <div className="flex items-center gap-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#121215]/90 px-3 py-1 shadow-sm">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
-              <span className="text-xs font-bold text-white tracking-wide">Sales Calling CRM</span>
-              <span className="text-zinc-600">|</span>
-              <span className="text-xs font-semibold text-zinc-300">{nicheName}</span>
-              <span className="text-zinc-600">|</span>
-              <span className="text-xs font-mono font-bold text-emerald-400">{totalCount} Leads</span>
+        <div className="flex flex-wrap items-center justify-between gap-2.5 px-1">
+          {/* Platinum Status Bar: Branding + Niche + Exact Scoped Breakdown */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex flex-wrap items-center gap-2 rounded-full border border-white/[0.1] bg-gradient-to-b from-[#131419] to-[#08090c] px-3.5 py-1.5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)]">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <span className="text-xs font-bold text-white tracking-wide">
+                {isOwner ? "Calling Console" : `My Calling Console (${activeMember?.name || "Caller"})`}
+              </span>
+              <span className="text-zinc-700">|</span>
+              <span className="text-xs font-medium text-zinc-300">{nicheName}</span>
+              <span className="text-zinc-700">|</span>
+              <span className="text-xs font-mono font-bold text-white" title="Total unique companies in selected scope">
+                {totalCount} Total Pool
+              </span>
+              <span className="text-[11px] font-mono text-zinc-400">
+                ({toCallCount} Uncalled &bull; {totalCount - toCallCount} Called)
+              </span>
             </div>
+
+            {/* Owner Caller Scope Switcher right in Calling Console so Owner always sees All Team vs Caller */}
+            {isOwner && teamCallers.length > 0 && (
+              <div className="inline-flex items-center gap-1 rounded-full border border-white/[0.1] bg-[#07080b] p-0.5 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setCallerFilterAndPersist("ALL")}
+                  className={`px-2.5 py-1 rounded-full font-semibold transition cursor-pointer ${
+                    callerFilter === "ALL"
+                      ? "bg-white text-black font-bold shadow-sm"
+                      : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  All Team ({activeQueue.length})
+                </button>
+                {teamCallers.map((c) => {
+                  const cCount = fullQueueTelemetry.callerMap[c.id]?.assigned ?? 0;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setCallerFilterAndPersist(c.id)}
+                      className={`px-2.5 py-1 rounded-full font-semibold transition cursor-pointer ${
+                        callerFilter === c.id
+                          ? "bg-white text-black font-bold shadow-sm"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      {c.name} ({cCount})
+                    </button>
+                  );
+                })}
+                {unassignedCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCallerFilterAndPersist("UNASSIGNED")}
+                    className={`px-2.5 py-1 rounded-full font-semibold transition cursor-pointer ${
+                      callerFilter === "UNASSIGNED"
+                        ? "bg-white text-black font-bold shadow-sm"
+                        : "text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    Unassigned ({unassignedCount})
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* View Mode Switcher: STRICTLY OWNER ONLY. Callers never see any switchers! */}
+          {/* View Mode Switcher: STRICTLY OWNER ONLY (Sleek Platinum Monochrome — No Neon Green or Lightning Emoji) */}
           {isOwner && (
-            <div className="inline-flex items-center p-0.5 rounded-full bg-[#121215] border border-white/10 text-xs shadow-sm">
+            <div className="inline-flex items-center p-0.5 rounded-full bg-[#07080b] border border-white/[0.1] text-xs shadow-sm">
               <button
                 type="button"
                 onClick={() => setViewModeAndPersist("FOCUS")}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500 text-black font-extrabold shadow-sm transition"
+                className="flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-gradient-to-b from-white via-zinc-100 to-zinc-300 text-black font-bold shadow-sm transition cursor-pointer"
               >
-                <Zap className="w-3 h-3 fill-black" />
-                <span>Calling Console ⚡</span>
+                <Phone className="w-3 h-3 text-black" />
+                <span>Calling Console</span>
               </button>
               <button
                 type="button"
                 onClick={() => setViewModeAndPersist("SHEET")}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-full text-zinc-400 hover:text-white transition"
+                className="flex items-center gap-1.5 px-3.5 py-1 rounded-full text-zinc-400 hover:text-white transition cursor-pointer"
               >
                 <FileSpreadsheet className="w-3 h-3" />
-                <span>Lead Table</span>
+                <span>Data Table</span>
               </button>
             </div>
           )}
         </div>
       ) : (
-        <div className="rounded-xl border border-zinc-800/80 bg-[#121215] p-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="rounded-2xl border border-white/[0.1] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.14)] p-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-[#09090b] px-2.5 py-0.5 text-[11px] text-zinc-200 font-medium">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.1] bg-white/[0.03] px-2.5 py-0.5 text-[11px] text-zinc-200 font-medium">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                 {nicheName}
               </span>
-              <span className="inline-flex items-center rounded-md border border-zinc-800 bg-[#09090b] px-2 py-0.5 text-[11px] font-semibold text-emerald-400">
-                {totalCount} Leads
+              <span className="inline-flex items-center rounded-md border border-white/[0.1] bg-white/[0.03] px-2 py-0.5 text-[11px] font-mono font-semibold text-white">
+                {totalCount} Leads ({toCallCount} Uncalled &bull; {totalCount - toCallCount} Called)
               </span>
             </div>
             <h1 className="mt-1 text-lg font-bold text-white tracking-tight">
-              Leads CRM &amp; Data Manager
+              Leads CRM &amp; Data Table
             </h1>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             {isOwner && (
-              <div className="flex items-center p-0.5 rounded-lg bg-[#09090b] border border-zinc-800 text-xs font-medium">
+              <div className="flex items-center p-0.5 rounded-full bg-[#060709] border border-white/[0.1] text-xs font-medium">
                 <button
                   type="button"
                   onClick={() => setViewModeAndPersist("FOCUS")}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-emerald-400 hover:text-emerald-300 font-semibold transition"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-zinc-300 hover:text-white font-semibold transition cursor-pointer"
                 >
-                  <Zap className="w-3.5 h-3.5" />
-                  <span>Calling Console ⚡</span>
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>Calling Console</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setViewModeAndPersist("SHEET")}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-zinc-800 text-white font-semibold transition"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-b from-white via-zinc-100 to-zinc-300 text-black font-bold transition cursor-pointer"
                 >
-                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-black" />
                   <span>Data Table</span>
                 </button>
               </div>

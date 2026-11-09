@@ -479,6 +479,14 @@ export function CrmLeadSheet({
   };
 
   const smartFields = getSmartFieldsForNiche(nicheCategory, nicheName, customColumns);
+  const customOnlySmartFields = React.useMemo(
+    () => smartFields.filter((f) => Boolean(f.isCustom)),
+    [smartFields]
+  );
+  const builtInSmartFields = React.useMemo(
+    () => smartFields.filter((f) => !f.isCustom),
+    [smartFields]
+  );
 
   React.useEffect(() => {
     setLeads(initialLeads);
@@ -587,7 +595,7 @@ export function CrmLeadSheet({
   const canImport = isOwner || Boolean(permissions?.discoverLeads || permissions?.exportAndSync);
   const canExport = isOwner || Boolean(permissions?.exportAndSync);
   const canCall = isOwner || !permissions || Boolean(permissions.callerWorkbench);
-  const canEdit = isOwner || Boolean(permissions?.editContacts);
+  const canEdit = Boolean(isOwner);
   const canEditNotes =
     isOwner || Boolean(permissions?.editContacts) || Boolean(permissions?.callerWorkbench);
 
@@ -2120,7 +2128,7 @@ export function CrmLeadSheet({
                   <th className="px-3 py-3 whitespace-nowrap min-w-[130px]">Assigned Caller</th>
                 )}
                 <th className="px-3 py-3 whitespace-nowrap min-w-[175px]">Call Status</th>
-                {smartFields.map((field) => (
+                {customOnlySmartFields.map((field) => (
                   <th key={field.key} className="px-3 py-3 whitespace-nowrap min-w-[125px]">
                     <div className="flex items-center gap-1.5">
                       <span>{field.label}</span>
@@ -2178,7 +2186,7 @@ export function CrmLeadSheet({
                   <React.Fragment key={lead.id}>
                     {isNewBatch && (
                       <tr className="bg-zinc-950 border-y border-zinc-800/80 sticky top-0 z-10">
-                        <td colSpan={(isOwner || canManageSettings ? 8 : 7) + smartFields.length} className="px-4 py-2">
+                        <td colSpan={(isOwner || canManageSettings ? 8 : 7) + customOnlySmartFields.length} className="px-4 py-2">
                           <div className="flex items-center justify-between text-xs font-bold">
                             <div className="flex items-center gap-2">
                               <span
@@ -2260,6 +2268,31 @@ export function CrmLeadSheet({
                               <span>Web</span>
                             </a>
                           )}
+                        </div>
+                        {/* Compact Platinum Micro-Tags (replaces cluttered qualification columns) */}
+                        <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                          <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.08] text-[9px] font-mono font-semibold text-zinc-300">
+                            ICP {lead.icpScore || 75}
+                          </span>
+                          {builtInSmartFields
+                            .map((f) => ({ label: f.shortLabel, val: resolveSmartFieldValue(lead, f) }))
+                            .filter(
+                              (item) =>
+                                item.val &&
+                                item.val !== "Ask on Call" &&
+                                item.val !== "Verify on Call" &&
+                                item.val !== "UNKNOWN"
+                            )
+                            .slice(0, 3)
+                            .map((item) => (
+                              <span
+                                key={item.label}
+                                className="px-1.5 py-0.5 rounded bg-white/[0.03] border border-white/[0.08] text-[9px] font-medium text-zinc-300 truncate max-w-[130px]"
+                                title={`${item.label}: ${item.val}`}
+                              >
+                                {item.val.replace(/\s*✓$/, "")}
+                              </span>
+                            ))}
                         </div>
                       </td>
 
@@ -2470,8 +2503,8 @@ export function CrmLeadSheet({
                         })()}
                       </td>
 
-                      {/* Niche-Specific Smart Qualification Fields + Custom Columns */}
-                      {smartFields.map((field) => {
+                      {/* Custom User-Added Columns Only */}
+                      {customOnlySmartFields.map((field) => {
                         const val = resolveSmartFieldValue(lead, field);
                         const isPositive =
                           val.includes("✓") ||
@@ -2512,7 +2545,7 @@ export function CrmLeadSheet({
                         {lead.nextFollowUp ? (
                           <button
                             type="button"
-                            onClick={() => canEdit && openFollowUpModal(lead)}
+                            onClick={() => (canCall || canEdit) && openFollowUpModal(lead)}
                             className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
                               followUpInfo.isOverdue
                                 ? "border-rose-500/40 bg-rose-500/15 text-rose-200 hover:bg-rose-500/25"
@@ -2526,7 +2559,7 @@ export function CrmLeadSheet({
                         ) : (
                           <button
                             type="button"
-                            onClick={() => canEdit && openFollowUpModal(lead)}
+                            onClick={() => (canCall || canEdit) && openFollowUpModal(lead)}
                             className="inline-flex items-center gap-1 rounded-lg border border-dashed border-zinc-700 bg-zinc-900/50 hover:bg-zinc-800 hover:border-zinc-600 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:text-zinc-200 transition"
                           >
                             <Plus className="w-3 h-3" />

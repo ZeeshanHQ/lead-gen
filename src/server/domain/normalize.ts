@@ -41,10 +41,30 @@ export function normalizeUsPhone(raw: string | null | undefined): NormalizedPhon
 
   // NANP rules: area code and exchange cannot start with 0 or 1.
   if (/^[01]/.test(area) || /^[01]/.test(exchange)) return null;
-  // N11 service codes (411, 911 ...) are not valid area codes.
+  // N11 service codes (211, 311, 411, 511, 611, 711, 811, 911) are not valid area or exchange codes.
   if (area[1] === "1" && area[2] === "1") return null;
-  // 555-01XX is reserved for fictional use; 555-0100..0199 can never be a real line.
-  if (exchange === "555" && /^01\d\d$/.test(line)) return null;
+  if (exchange[1] === "1" && exchange[2] === "1") return null;
+  // Reject 555 area code, 900/976 pay-per-call area codes, and NANP 555-01XX fictional/directory ranges.
+  if (area === "555" || area === "900" || area === "976") return null;
+  if (exchange === "555" && (/^01\d\d$/.test(line) || line === "0000" || line === "1212")) return null;
+
+  // Reject dummy/placeholder repeating or sequential 7-digit local numbers
+  const local7 = `${exchange}${line}`;
+  if (/^(\d)\1{6}$/.test(local7)) return null;
+  if (/^(\d)\1{9}$/.test(digits)) return null;
+  if (
+    local7 === "1234567" ||
+    local7 === "2345678" ||
+    local7 === "3456789" ||
+    local7 === "6543210" ||
+    line === "1234"
+  ) {
+    return null;
+  }
+  const isTollFree = /^8(00|88|77|66|55|44|33)$/.test(area);
+  if (!isTollFree && line === "0000" && /^(\d)\1{2}$/.test(exchange)) {
+    return null;
+  }
 
   return {
     e164: `+1${digits}`,
