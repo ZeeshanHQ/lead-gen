@@ -599,7 +599,7 @@ export function LeadProspector({
         isoTime: new Date().toISOString(),
         level: "info",
         stage: "INIT",
-        message: `🚀 Launching live lead discovery for ${nicheInfo?.name || "Active Niche"} (Target: ${finalCount} leads)...`,
+        message: `Launching live lead discovery for ${nicheInfo?.name || "Active Niche"} (Target: ${finalCount} leads)...`,
       },
     ]);
 
@@ -862,14 +862,20 @@ export function LeadProspector({
     setTimeout(() => setCopiedPhoneId(null), 2000);
   };
 
-  const states: string[] = activeRule?.geography?.states?.length ? activeRule.geography.states : ["TX"];
-  const cities: string[] = activeRule?.geography?.cities?.filter(Boolean) || [];
-  const minScore = activeRule?.scoring?.minScore ?? 60;
+  const states: string[] = editStates
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  const cities: string[] = editCities
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean);
+  const minScore = editMinScore ?? activeRule?.scoring?.minScore ?? 60;
   const activeNicheName = nicheInfo?.name || "Target Niche";
   const locationSummary =
     cities.length > 0
-      ? `${states.join(", ")} • ${cities.slice(0, 3).join(", ")}${cities.length > 3 ? ` +${cities.length - 3}` : ""}`
-      : `${states.join(", ")} (All Major Metro Areas)`;
+      ? `${(states.length ? states : ["TX"]).join(", ")} • ${cities.slice(0, 3).join(", ")}${cities.length > 3 ? ` +${cities.length - 3}` : ""}`
+      : `${(states.length ? states : ["TX"]).join(", ")} (All Major Metro Areas)`;
 
   return (
     <div className="space-y-6">
@@ -943,14 +949,6 @@ export function LeadProspector({
                 )
               )}
             </button>
-            <button
-              type="button"
-              onClick={() => setIsEditingFilters(!isEditingFilters)}
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition shadow-sm"
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5 text-zinc-400" />
-              <span>{isEditingFilters ? "Close ICP & Targeting" : "Customize ICP, Focus & Team Size"}</span>
-            </button>
             <Link
               href="/caller"
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white hover:bg-zinc-200 text-black text-xs font-bold transition shadow-sm"
@@ -964,16 +962,16 @@ export function LeadProspector({
           </div>
         </div>
 
-        {/* Custom ICP & High-Ticket Client Targeting Studio (Replaces rigid 1-click preset clutter) */}
+        {/* Unified Custom High-Ticket ICP, Focus & Scale Studio (Single Source of Truth) */}
         <div className="p-5 rounded-2xl bg-gradient-to-b from-[#0d0e12] via-[#090a0d] to-[#060608] border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/[0.06] pb-3">
             <div>
               <div className="text-xs font-bold text-zinc-100 flex items-center gap-2 tracking-wide uppercase">
                 <SlidersHorizontal className="w-3.5 h-3.5 text-zinc-300" />
-                <span>Custom High-Ticket ICP &amp; Direct Owner Targeting ({activeNicheName})</span>
+                <span>Custom High-Ticket ICP, Focus &amp; Direct Owner Targeting ({activeNicheName})</span>
               </div>
               <p className="text-[11px] text-zinc-400 mt-0.5">
-                Define your exact custom ICP keywords, target US states/cities, and anti-dump exclusions. Only verified live companies with valid NANP phone numbers pass.
+                Single unified configuration directly powering live web discovery, AI extraction, and CRM qualification gates.
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -999,27 +997,68 @@ export function LeadProspector({
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-b from-white to-zinc-200 text-black font-bold text-[11px] shadow-sm hover:from-zinc-100 hover:to-zinc-300 transition cursor-pointer"
                 >
                   {savingFilters ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                  <span>Save Custom ICP</span>
+                  <span>Save &amp; Apply ICP Rules</span>
                 </button>
               )}
             </div>
           </div>
 
+          {/* Row 1: Sub-Vertical Mode + Business Polarity + Target Geography */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
-            <div className="md:col-span-6 space-y-1.5">
+            <div className="md:col-span-4 space-y-1.5">
               <label className="text-zinc-300 font-semibold block">
-                Custom Target ICP Keywords (Comma-separated)
+                Sub-Vertical / Campaign Intent Mode
               </label>
-              <input
-                type="text"
-                value={editKeywords}
-                onChange={(e) => setEditKeywords(e.target.value)}
-                placeholder="e.g. residential property management company, real estate brokerage, luxury vacation rental management"
-                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
-              />
+              <select
+                value={editSubNiche}
+                onChange={(e) => setEditSubNiche(e.target.value)}
+                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-zinc-100 focus:outline-none focus:border-zinc-400"
+              >
+                <option value="">All Verified {activeNicheName} Operators</option>
+                <option value="property_management">
+                  Full-Service Property Management (Long-Term &amp; Multifamily)
+                </option>
+                <option value="airbnb_str">
+                  STR &amp; Vacation Rental Managers (24/7 AI Concierge)
+                </option>
+                <option value="residential_real_estate">
+                  Residential Real Estate Teams &amp; Brokerages
+                </option>
+                <option value="commercial_real_estate">
+                  Commercial Real Estate Brokerage &amp; CRE Leasing
+                </option>
+              </select>
             </div>
 
             <div className="md:col-span-3 space-y-1.5">
+              <label className="text-zinc-300 font-semibold block">
+                Focus Polarity
+              </label>
+              <div className="grid grid-cols-3 gap-1 bg-[#050507] p-1 rounded-xl border border-white/[0.1]">
+                {(
+                  [
+                    { val: "both", label: "Both" },
+                    { val: "residential", label: "Residential" },
+                    { val: "commercial", label: "Commercial" },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.val}
+                    type="button"
+                    onClick={() => setEditBusinessType(opt.val)}
+                    className={`py-1.5 rounded-lg text-[11px] font-semibold transition ${
+                      editBusinessType === opt.val
+                        ? "bg-white text-black font-bold shadow-sm"
+                        : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="md:col-span-2 space-y-1.5">
               <label className="text-zinc-300 font-semibold block">
                 Target US States
               </label>
@@ -1027,7 +1066,7 @@ export function LeadProspector({
                 type="text"
                 value={editStates}
                 onChange={(e) => setEditStates(e.target.value)}
-                placeholder="e.g. TX, FL, AZ, NC, TN, GA"
+                placeholder="e.g. TX, FL, AZ, NC"
                 className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
               />
             </div>
@@ -1046,10 +1085,72 @@ export function LeadProspector({
             </div>
           </div>
 
+          {/* Row 2: Custom Search Keywords + Scale & Team Size */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
+            <div className="md:col-span-6 space-y-1.5">
+              <label className="text-zinc-300 font-semibold block">
+                Custom Target ICP Keywords (Comma-separated)
+              </label>
+              <input
+                type="text"
+                value={editKeywords}
+                onChange={(e) => setEditKeywords(e.target.value)}
+                placeholder="e.g. residential property management company, real estate brokerage, luxury vacation rental management"
+                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
+              />
+            </div>
+
+            <div className="md:col-span-2 space-y-1.5">
+              <label className="text-zinc-300 font-semibold block">
+                Min Team Size
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="500"
+                value={editMinEmployees ?? ""}
+                onChange={(e) => setEditMinEmployees(e.target.value ? Number(e.target.value) : null)}
+                placeholder="e.g. 3+"
+                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
+              />
+            </div>
+
+            <div className="md:col-span-2 space-y-1.5">
+              <label className="text-zinc-300 font-semibold block">
+                Max Team Size
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="1000"
+                value={editMaxEmployees ?? ""}
+                onChange={(e) => setEditMaxEmployees(e.target.value ? Number(e.target.value) : null)}
+                placeholder="e.g. 50"
+                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
+              />
+            </div>
+
+            <div className="md:col-span-2 space-y-1.5">
+              <label className="text-zinc-300 font-semibold block">
+                Min Doors / Units
+              </label>
+              <input
+                type="number"
+                min="5"
+                max="5000"
+                value={editMinDoors ?? ""}
+                onChange={(e) => setEditMinDoors(e.target.value ? Number(e.target.value) : null)}
+                placeholder="e.g. 50+"
+                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
+              />
+            </div>
+          </div>
+
+          {/* Row 3: Strict Negative Exclusions + Minimum ICP Score */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
             <div className="md:col-span-8 space-y-1.5">
               <label className="text-zinc-300 font-semibold flex items-center justify-between">
-                <span>Strict Negative Exclusions (Agencies, Directories &amp; Low-Quality Leads Blocked)</span>
+                <span>Strict Negative Exclusions (Agencies, Directories &amp; Off-Niche Vendors Blocked)</span>
               </label>
               <input
                 type="text"
@@ -1066,7 +1167,7 @@ export function LeadProspector({
               </label>
               <input
                 type="range"
-                min="50"
+                min="40"
                 max="90"
                 step="5"
                 value={editMinScore}
@@ -1076,45 +1177,90 @@ export function LeadProspector({
             </div>
           </div>
 
-          {/* High-Ticket Real Estate Quick-Fill Templates (Clean Monochrome Platinum Chips) */}
+          {/* Row 4: High-Ticket Real Estate Quick-Fill Templates */}
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
             <span className="text-[10px] uppercase tracking-wider font-semibold text-zinc-500 mr-1">
-              Quick-Fill High-Ticket ICP:
+              Quick-Fill ICP Template:
             </span>
             {[
               {
                 label: "Property Management (50+ Doors)",
                 kw: "residential property management company, full service property management, single family property management, buildium property management, appfolio property management",
                 sub: "property_management",
+                bType: "both" as const,
+                doors: 50,
               },
               {
                 label: "Real Estate Brokerages & Teams",
                 kw: "independent real estate brokerage, luxury real estate brokerage, real estate team broker owner, boutique real estate agency",
                 sub: "residential_real_estate",
+                bType: "residential" as const,
+                doors: null,
               },
               {
                 label: "STR & Vacation Rental Managers",
                 kw: "vacation rental management company, short term rental property management, luxury cabin and villa management, direct booking vacation rentals",
                 sub: "airbnb_str",
+                bType: "residential" as const,
+                doors: null,
               },
               {
                 label: "Commercial Real Estate (CRE)",
                 kw: "commercial real estate brokerage, commercial property management firm, retail and office leasing brokerage, industrial real estate broker",
                 sub: "commercial_real_estate",
+                bType: "commercial" as const,
+                doors: null,
               },
-            ].map((tpl) => (
-              <button
-                key={tpl.label}
-                type="button"
-                onClick={() => {
-                  setEditKeywords(tpl.kw);
-                  setEditSubNiche(tpl.sub);
-                }}
-                className="px-2.5 py-1 rounded-lg border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.08] hover:border-white/[0.18] text-[11px] font-medium text-zinc-300 transition cursor-pointer"
-              >
-                {tpl.label}
-              </button>
-            ))}
+            ].map((tpl) => {
+              const isSelected = editSubNiche === tpl.sub && editKeywords === tpl.kw;
+              return (
+                <button
+                  key={tpl.label}
+                  type="button"
+                  onClick={async () => {
+                    setEditKeywords(tpl.kw);
+                    setEditSubNiche(tpl.sub);
+                    setEditBusinessType(tpl.bType);
+                    setEditMinDoors(tpl.doors);
+                    setSuccessBanner(`Applied & saved "${tpl.label}" ICP configuration.`);
+                    if (!canEditRules) return;
+                    const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+                    const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+                    const kwsArr = tpl.kw.split(",").map((k) => k.trim()).filter(Boolean);
+                    const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+                    const res = await updateRuleTargetingAction({
+                      states: statesArr.length > 0 ? statesArr : ["TX"],
+                      cities: citiesArr,
+                      minScore: editMinScore,
+                      keywords: kwsArr,
+                      negativeKeywords: negsArr,
+                      subNiche: tpl.sub,
+                      businessType: tpl.bType,
+                      gate,
+                      minEmployees: editMinEmployees,
+                      maxEmployees: editMaxEmployees,
+                      minDoors: tpl.doors,
+                    });
+                    if (res.ok && res.rule) {
+                      setActiveRule(res.rule);
+                      const refreshed = await getLatestReviewLeadsAction();
+                      if (refreshed.ok && refreshed.leads) {
+                        setLeads(refreshed.leads as any);
+                        setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
+                        setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+                      }
+                    }
+                  }}
+                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
+                    isSelected
+                      ? "bg-white text-black font-bold border-white shadow-sm"
+                      : "border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.08] hover:border-white/[0.18] text-zinc-300"
+                  }`}
+                >
+                  {tpl.label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -1242,229 +1388,6 @@ export function LeadProspector({
             )}
           </div>
         </div>
-
-        {/* Quick Filters Editor (Collapsible) */}
-        {isEditingFilters && (
-          <div className="p-5 rounded-xl bg-[#09090b] border border-zinc-800 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
-            <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2.5">
-              <span className="text-xs font-bold text-white flex items-center gap-2">
-                <SlidersHorizontal className="w-3.5 h-3.5 text-zinc-400" />
-                Location &amp; Keyword Targeting ({activeNicheName})
-              </span>
-              <span className="text-[11px] text-zinc-500">
-                Changes apply immediately to discovery &amp; existing leads.
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="text-zinc-300 font-medium block">
-                  Business Focus Polarity (Strict Commercial vs Residential Filter)
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(
-                    [
-                      { val: "both", label: "Both (All)" },
-                      { val: "commercial", label: "🏢 Commercial Only" },
-                      { val: "residential", label: "🏡 Residential Only" },
-                    ] as const
-                  ).map((opt) => (
-                    <button
-                      key={opt.val}
-                      type="button"
-                      onClick={() => setEditBusinessType(opt.val)}
-                      className={`px-3 py-2 rounded-xl text-xs font-semibold border transition ${
-                        editBusinessType === opt.val
-                          ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-                          : "bg-[#121215] text-zinc-400 border-zinc-800 hover:text-zinc-200"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-zinc-300 font-medium block">
-                  Sub-Vertical / Campaign Intent Mode
-                </label>
-                <select
-                  value={editSubNiche}
-                  onChange={(e) => setEditSubNiche(e.target.value)}
-                  className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 focus:outline-none focus:border-zinc-500"
-                >
-                  <option value="">Standard Niche Discovery (All Verified Operators)</option>
-                  <option value="airbnb_str">
-                    🌙 Airbnb / Short-Term Rental &amp; Vacation Rental Managers (24/7 AI Concierge)
-                  </option>
-                  <option value="commercial_real_estate">
-                    🏢 Commercial Real Estate Brokerage &amp; CRE Leasing Only
-                  </option>
-                  <option value="residential_real_estate">
-                    🏡 Residential Real Estate Teams &amp; Brokerages Only
-                  </option>
-                  <option value="property_management">
-                    🔑 Full-Service Property Management (Long-Term &amp; Multifamily)
-                  </option>
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-1.5 text-xs">
-              <label className="text-zinc-300 font-medium block">
-                Target Search Keywords for {activeNicheName} (Comma-separated)
-              </label>
-              <input
-                type="text"
-                value={editKeywords}
-                onChange={(e) => setEditKeywords(e.target.value)}
-                placeholder={`e.g. ${activeNicheName} company, property management, commercial brokerage`}
-                className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
-              />
-            </div>
-
-            <div className="space-y-1.5 text-xs">
-              <label className="text-zinc-300 font-medium flex items-center justify-between">
-                <span>Negative Keywords / Anti-Dump Exclusions (Strictly Blocked)</span>
-                <span className="text-zinc-500 font-normal">
-                  Web dev, marketing agencies &amp; directories are always blocked automatically
-                </span>
-              </label>
-              <input
-                type="text"
-                value={editNegativeKeywords}
-                onChange={(e) => setEditNegativeKeywords(e.target.value)}
-                placeholder="e.g. web design, marketing agency, seo, single room, sublet, student housing"
-                className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="text-zinc-300 font-medium block">Target States (US State Codes)</label>
-                <input
-                  type="text"
-                  value={editStates}
-                  onChange={(e) => setEditStates(e.target.value)}
-                  placeholder="e.g. TX, FL, GA, CA"
-                  className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-zinc-300 font-medium block">
-                  Target Cities <span className="text-zinc-500 font-normal">(Leave blank for state-wide metros)</span>
-                </label>
-                <input
-                  type="text"
-                  value={editCities}
-                  onChange={(e) => setEditCities(e.target.value)}
-                  placeholder="e.g. Dallas, Houston, Austin, Miami"
-                  className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-zinc-300 font-medium block">
-                  Min ICP Fit Score: <span className="text-white font-bold">{editMinScore} / 100</span>
-                </label>
-                <input
-                  type="range"
-                  min="40"
-                  max="90"
-                  step="5"
-                  value={editMinScore}
-                  onChange={(e) => setEditMinScore(Number(e.target.value))}
-                  className="w-full accent-white mt-2"
-                />
-                <div className="flex justify-between text-[10px] text-zinc-500">
-                  <span>40 (Broad)</span>
-                  <span>60 (Balanced)</span>
-                  <span>80 (Strict)</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-1 border-t border-zinc-800/60">
-              <div className="space-y-1.5">
-                <label className="text-zinc-300 font-medium flex items-center justify-between">
-                  <span className="flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Min Team Size / Staff</span>
-                  </span>
-                  <span className="text-zinc-500 font-normal">e.g. 5 (filter out 1-person solos)</span>
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="500"
-                  value={editMinEmployees ?? ""}
-                  onChange={(e) => setEditMinEmployees(e.target.value ? Number(e.target.value) : null)}
-                  placeholder="e.g. 5"
-                  className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-zinc-300 font-medium flex items-center justify-between">
-                  <span className="flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Max Team Size / Staff</span>
-                  </span>
-                  <span className="text-zinc-500 font-normal">e.g. 50 (boutique sweet-spot)</span>
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={editMaxEmployees ?? ""}
-                  onChange={(e) => setEditMaxEmployees(e.target.value ? Number(e.target.value) : null)}
-                  placeholder="e.g. 50 (leave empty for no upper limit)"
-                  className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5 text-xs pt-1 border-t border-zinc-800/60">
-              <label className="text-zinc-300 font-medium flex items-center justify-between">
-                <span className="flex items-center gap-1.5">
-                  <span className="text-sm">🏢</span>
-                  <span>Min Doors / Units Managed (Property Management)</span>
-                </span>
-                <span className="text-zinc-500 font-normal">e.g. 50+ doors (AppFolio scale)</span>
-              </label>
-              <input
-                type="number"
-                min="10"
-                max="5000"
-                value={editMinDoors ?? ""}
-                onChange={(e) => setEditMinDoors(e.target.value ? Number(e.target.value) : null)}
-                placeholder="e.g. 50 (leave empty for all)"
-                className="w-full bg-[#121215] border border-zinc-800 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500"
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-zinc-800/80">
-              <button
-                type="button"
-                onClick={() => setIsEditingFilters(false)}
-                className="px-3.5 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-white"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={savingFilters}
-                onClick={handleSaveFilters}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white hover:bg-zinc-200 text-black font-semibold text-xs transition shadow-sm"
-              >
-                {savingFilters ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                <span>Save Targeting Rules</span>
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Active Rules Snapshot Bar */}
         <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 p-3.5 rounded-xl bg-[#09090b] border border-zinc-800 text-xs">
@@ -1970,7 +1893,7 @@ export function LeadProspector({
                         (lead as any).hasDirectContact || lead.facts?.direct_mobile_found?.value === "YES" ? (
                           <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold inline-flex items-center gap-1">
                             <Check className="w-2.5 h-2.5" />
-                            <span>📱 Direct / Personal Phone</span>
+                            <span>Direct / Mobile Line</span>
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-medium inline-flex items-center gap-1">
@@ -1981,22 +1904,22 @@ export function LeadProspector({
                       )}
                       {lead.facts?.str_vacation_rental?.value === "YES" && (
                         <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/40 font-semibold inline-flex items-center gap-1">
-                          <span>🌙 Airbnb / STR Portfolio</span>
+                          <span>Airbnb / STR Portfolio</span>
                         </span>
                       )}
                       {lead.facts?.commercial?.value === "YES" && lead.facts?.residential?.value !== "YES" && (
                         <span className="px-2 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-800/60 font-semibold inline-flex items-center gap-1">
-                          <span>🏢 Commercial Focus</span>
+                          <span>Commercial Focus</span>
                         </span>
                       )}
                       {lead.facts?.residential?.value === "YES" && lead.facts?.commercial?.value !== "YES" && (
                         <span className="px-2 py-0.5 rounded bg-teal-950/60 text-teal-300 border border-teal-800/60 font-semibold inline-flex items-center gap-1">
-                          <span>🏡 Residential Focus</span>
+                          <span>Residential Focus</span>
                         </span>
                       )}
                       {lead.facts?.doors_managed?.value && lead.facts.doors_managed.value !== "UNKNOWN" && (
                         <span className="px-2 py-0.5 rounded bg-zinc-900 text-zinc-200 border border-zinc-700 font-semibold inline-flex items-center gap-1">
-                          <span>🏢 ~{lead.facts.doors_managed.value} Doors/Listings</span>
+                          <span>~{lead.facts.doors_managed.value} Doors/Listings</span>
                         </span>
                       )}
                       {lead.facts?.employees?.value && lead.facts.employees.value !== "UNKNOWN" && (
