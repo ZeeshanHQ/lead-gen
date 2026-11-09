@@ -153,6 +153,7 @@ export const ruleConfigSchema = z.object({
     negativeKeywords: z.array(z.string()).optional(),
     subNiche: z.string().optional(),
     strictNicheMatch: z.boolean().optional(),
+    tavilyApiKey: z.string().optional(),
     serviceIntents: z.array(z.string()),
     limits: z.object({
       maxCandidates: int.positive(),

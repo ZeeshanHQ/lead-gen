@@ -505,8 +505,10 @@ export async function researchCompany(
       title: `${refreshed.name} ${pages[0]?.title || ""}`,
       domain: refreshed.domain || refreshed.website || "",
       targetKeyword: kwList.join(" "),
+      subNiche: activeRule?.discovery?.subNiche,
       content: crawledTextSummary.slice(0, 3500),
       negativeKeywords: activeRule?.discovery?.negativeKeywords,
+      businessType: activeRule?.businessType,
     });
 
   const isHardOffNiche =

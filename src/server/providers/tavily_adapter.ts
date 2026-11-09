@@ -217,7 +217,8 @@ export class TavilyAdapter implements DiscoveryAdapter {
   }
 
   async discover(query: DiscoveryQuery, config: Record<string, unknown>): Promise<DiscoveredCandidate[]> {
-    const apiKey = getTavilyApiKey(config);
+    const customKey = (query.rule?.discovery as any)?.tavilyApiKey?.trim();
+    const apiKey = customKey && customKey.length > 5 ? customKey : getTavilyApiKey(config);
     if (!apiKey) {
       throw new Error(
         "Tavily Search API key is not configured. Please set TAVILY_API_KEY in .env.local or configure it in the Sources tab."

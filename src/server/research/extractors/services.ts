@@ -185,7 +185,8 @@ export function extractServices(pages: CrawledPage[], ruleConfig?: RuleConfig): 
 
   // Check if user is explicitly searching for a marketing/web agency
   const targetKeywords = ruleConfig?.discovery?.keywords ?? [];
-  const joinedKeywords = targetKeywords.join(" ").toLowerCase();
+  const subNicheVal = ruleConfig?.discovery?.subNiche ?? "";
+  const joinedKeywords = `${targetKeywords.join(" ")} ${subNicheVal}`.toLowerCase();
   const userWantsMarketingOrTech =
     /\b(web\s*design|web\s*dev|marketing\s*agency|seo|digital\s*marketing|software|saas|it\s*services|advertising\s*agency)\b/i.test(
       joinedKeywords

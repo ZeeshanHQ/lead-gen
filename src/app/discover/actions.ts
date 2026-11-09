@@ -979,6 +979,7 @@ export async function updateRuleTargetingAction(params: {
   keywords?: string[];
   negativeKeywords?: string[];
   subNiche?: string;
+  tavilyApiKey?: string;
   businessType?: "residential" | "commercial" | "both";
   gate?: Partial<LeadGate>;
   minEmployees?: number | null;
@@ -1027,6 +1028,10 @@ export async function updateRuleTargetingAction(params: {
           params.subNiche !== undefined
             ? params.subNiche
             : cfg.discovery?.subNiche || "",
+        tavilyApiKey:
+          params.tavilyApiKey !== undefined
+            ? params.tavilyApiKey
+            : cfg.discovery?.tavilyApiKey || "",
         strictNicheMatch: true,
       },
       scoring: {
@@ -1099,6 +1104,38 @@ export async function saveSearchApiKeyAction(apiKey: string) {
     return { ok: true, message: "Tavily API key updated successfully! You can now run lead discovery." };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to update API key." };
+  }
+}
+
+export async function getTavilyStatusAction() {
+  try {
+    const db = await getDb();
+    const [sourceRow] = await db
+      .select()
+      .from(sources)
+      .where(eq(sources.key, "tavily_search"))
+      .limit(1);
+
+    const config = (sourceRow?.config as Record<string, unknown>) || {};
+    const key =
+      typeof config.apiKey === "string" && config.apiKey.trim().length > 5
+        ? config.apiKey.trim()
+        : process.env.TAVILY_API_KEY || "";
+
+    const isConfigured = key.length > 5;
+    const maskedKey = isConfigured
+      ? `${key.slice(0, 5)}••••••••${key.slice(-4)}`
+      : "";
+
+    return {
+      ok: true,
+      isConfigured,
+      maskedKey,
+      enabled: sourceRow?.enabled ?? isConfigured,
+      lastError: sourceRow?.lastError ?? null,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
   }
 }
 

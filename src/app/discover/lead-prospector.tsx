@@ -28,6 +28,11 @@ import {
   Plus,
   X,
   Terminal,
+  Database,
+  Key,
+  CheckCircle2,
+  Info,
+  Sparkles,
 } from "lucide-react";
 import {
   runLeadDiscoveryAction,
@@ -40,6 +45,7 @@ import {
   updateRuleTargetingAction,
   getActiveRulesForDiscoveryAction,
   saveSearchApiKeyAction,
+  getTavilyStatusAction,
   purgeJunkAndOptimizeStorageAction,
 } from "./actions";
 import { switchMarketAction } from "@/app/actions/tenant";
@@ -220,6 +226,126 @@ export function LeadProspector({
   const [isSavingKey, setIsSavingKey] = useState(false);
   const [keySaveSuccess, setKeySaveSuccess] = useState<string | null>(null);
 
+  const [optimizingStorage, setOptimizingStorage] = useState(false);
+  const [storageFeedback, setStorageFeedback] = useState<{
+    ok: boolean;
+    purgedCount: number;
+    message: string;
+  } | null>(null);
+
+  const [tavilyStatus, setTavilyStatus] = useState<{
+    isConfigured: boolean;
+    maskedKey: string;
+    enabled: boolean;
+  } | null>(null);
+  const [showTavilyDrawer, setShowTavilyDrawer] = useState(false);
+  const [isCustomSubNicheMode, setIsCustomSubNicheMode] = useState<boolean>(() => {
+    const sn = initialRule?.discovery?.subNiche ?? "";
+    return Boolean(
+      sn &&
+        ![
+          "",
+          "property_management",
+          "airbnb_str",
+          "residential_real_estate",
+          "commercial_real_estate",
+        ].includes(sn)
+    );
+  });
+
+  interface CustomIcpPreset {
+    id: string;
+    label: string;
+    kw: string;
+    sub: string;
+    bType: "both" | "residential" | "commercial";
+    doors: number | null;
+  }
+  const [customPresets, setCustomPresets] = useState<CustomIcpPreset[]>([]);
+  const [showSavePresetInput, setShowSavePresetInput] = useState(false);
+  const [presetLabelInput, setPresetLabelInput] = useState("");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("astra_custom_icp_presets");
+      if (saved) setCustomPresets(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await getTavilyStatusAction();
+        if (res.ok) {
+          setTavilyStatus({
+            isConfigured: Boolean(res.isConfigured),
+            maskedKey: res.maskedKey || "",
+            enabled: Boolean(res.enabled),
+          });
+        }
+      } catch {}
+    })();
+  }, []);
+
+  const handleOptimizeStorage = async () => {
+    setOptimizingStorage(true);
+    setStorageFeedback(null);
+    try {
+      const res = await purgeJunkAndOptimizeStorageAction();
+      setOptimizingStorage(false);
+      if (res.ok) {
+        setStorageFeedback({
+          ok: true,
+          purgedCount: res.purgedCount ?? 0,
+          message: res.message || "Supabase storage optimized.",
+        });
+      } else {
+        setStorageFeedback({
+          ok: false,
+          purgedCount: 0,
+          message: res.error || "Storage optimization failed.",
+        });
+      }
+    } catch (err: any) {
+      setOptimizingStorage(false);
+      setStorageFeedback({
+        ok: false,
+        purgedCount: 0,
+        message: err.message || "Storage optimization failed.",
+      });
+    }
+  };
+
+  const handleSaveCustomPreset = () => {
+    const label = presetLabelInput.trim();
+    if (!label) return;
+    const newPreset: CustomIcpPreset = {
+      id: `custom_${Date.now()}`,
+      label,
+      kw: editKeywords,
+      sub: editSubNiche,
+      bType: editBusinessType,
+      doors: editMinDoors,
+    };
+    const updated = [...customPresets, newPreset];
+    setCustomPresets(updated);
+    try {
+      localStorage.setItem("astra_custom_icp_presets", JSON.stringify(updated));
+    } catch {}
+    setPresetLabelInput("");
+    setShowSavePresetInput(false);
+    setSuccessBanner(`Saved custom ICP preset "${label}".`);
+  };
+
+  const handleDeleteCustomPreset = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = customPresets.filter((p) => p.id !== id);
+    setCustomPresets(updated);
+    try {
+      localStorage.setItem("astra_custom_icp_presets", JSON.stringify(updated));
+    } catch {}
+  };
+
   const handleSaveApiKey = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!apiKeyInput.trim()) return;
@@ -229,8 +355,14 @@ export function LeadProspector({
       const res = await saveSearchApiKeyAction(apiKeyInput);
       if (res.ok) {
         setKeySaveSuccess("Tavily API key updated successfully! You can now launch lead discovery.");
+        setTavilyStatus({
+          isConfigured: true,
+          maskedKey: `${apiKeyInput.trim().slice(0, 5)}••••••••${apiKeyInput.trim().slice(-4)}`,
+          enabled: true,
+        });
         setErrorMsg(null);
         setApiKeyInput("");
+        setShowTavilyDrawer(false);
       } else {
         setErrorMsg(res.error || "Failed to save API key.");
       }
@@ -974,19 +1106,37 @@ export function LeadProspector({
                 Single unified configuration directly powering live web discovery, AI extraction, and CRM qualification gates.
               </p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowTavilyDrawer(!showTavilyDrawer)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-semibold transition cursor-pointer ${
+                  tavilyStatus?.isConfigured
+                    ? "border-emerald-500/30 bg-emerald-950/20 text-emerald-300 hover:bg-emerald-950/40"
+                    : "border-amber-500/30 bg-amber-950/20 text-amber-300 hover:bg-amber-950/40"
+                }`}
+                title="View Tavily Search API key status, credits, and live query configuration"
+              >
+                <Key className="w-3 h-3" />
+                <span>
+                  {tavilyStatus?.isConfigured ? `Tavily: ${tavilyStatus.maskedKey}` : "Set Tavily Key"}
+                </span>
+              </button>
+
               {canEditRules && (
                 <button
                   type="button"
-                  onClick={async () => {
-                    const res = await purgeJunkAndOptimizeStorageAction();
-                    if (res.ok) setSuccessBanner(res.message || "Supabase storage optimized.");
-                    else setErrorMsg(res.error || "Storage optimization failed.");
-                  }}
-                  className="px-3 py-1.5 rounded-lg border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.07] text-[11px] font-semibold text-zinc-300 transition cursor-pointer"
-                  title="Purge heavy crawled HTML from disqualified domains while keeping domain blocklist tombstones"
+                  disabled={optimizingStorage}
+                  onClick={handleOptimizeStorage}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.07] text-[11px] font-semibold text-zinc-300 transition cursor-pointer disabled:opacity-50"
+                  title="Purge heavy crawled HTML and contact payload records from disqualified/rejected leads to save Supabase DB storage, while retaining domain blocklist tombstones so junk sites are never re-crawled."
                 >
-                  Optimize Supabase Storage
+                  {optimizingStorage ? (
+                    <Loader2 className="w-3 h-3 animate-spin text-zinc-300" />
+                  ) : (
+                    <Database className="w-3 h-3 text-zinc-400" />
+                  )}
+                  <span>{optimizingStorage ? "Optimizing Storage..." : "Optimize Supabase Storage"}</span>
                 </button>
               )}
               {canEditRules && (
@@ -1003,31 +1153,174 @@ export function LeadProspector({
             </div>
           </div>
 
+          {/* Storage Optimization Feedback Banner */}
+          {storageFeedback && (
+            <div
+              className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 text-xs ${
+                storageFeedback.ok
+                  ? "bg-emerald-950/30 border-emerald-500/40 text-emerald-200"
+                  : "bg-rose-950/30 border-rose-500/40 text-rose-200"
+              }`}
+            >
+              <div className="flex items-start sm:items-center gap-2.5">
+                {storageFeedback.ok ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5 sm:mt-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5 sm:mt-0" />
+                )}
+                <div>
+                  <div className="font-semibold flex items-center gap-2">
+                    <span>
+                      {storageFeedback.ok ? "Supabase Storage Optimized Successfully" : "Storage Optimization Failed"}
+                    </span>
+                    {storageFeedback.ok && (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        0 active/saved leads touched • 100% Safe
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] opacity-80 mt-0.5">{storageFeedback.message}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStorageFeedback(null)}
+                className="p-1 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Tavily API Key & Telemetry Drawer */}
+          {showTavilyDrawer && (
+            <div className="p-4 rounded-xl bg-[#030305] border border-white/[0.1] space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Key className="w-3.5 h-3.5 text-zinc-300" />
+                  <span className="font-semibold text-zinc-200">Tavily Search API Key &amp; Account Health</span>
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded-full font-mono border ${
+                      tavilyStatus?.isConfigured
+                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                        : "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                    }`}
+                  >
+                    {tavilyStatus?.isConfigured ? "Connected" : "No Key Set"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTavilyDrawer(false)}
+                  className="text-zinc-500 hover:text-zinc-200 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <p className="text-[11px] text-zinc-400">
+                Tavily powers live autonomous web discovery across targeted cities and states. You can update or replace your API key at any time without needing to redeploy on Vercel.
+              </p>
+              <form onSubmit={handleSaveApiKey} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                <input
+                  type="text"
+                  placeholder={
+                    tavilyStatus?.isConfigured
+                      ? `Current key: ${tavilyStatus.maskedKey} (paste new key to replace)`
+                      : "tvly-..."
+                  }
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  className="flex-1 bg-black border border-white/[0.15] rounded-xl px-3.5 py-2 text-xs font-mono text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-300"
+                />
+                <button
+                  type="submit"
+                  disabled={isSavingKey || !apiKeyInput.trim()}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-b from-white to-zinc-200 text-black font-bold text-xs shadow transition hover:from-zinc-100 hover:to-zinc-300 disabled:opacity-40 cursor-pointer"
+                >
+                  {isSavingKey ? "Saving..." : "Save & Activate Key"}
+                </button>
+                <a
+                  href="https://app.tavily.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-2 text-center text-xs text-zinc-400 hover:text-zinc-100 underline shrink-0"
+                >
+                  Check Credits on Tavily →
+                </a>
+              </form>
+            </div>
+          )}
+
           {/* Row 1: Sub-Vertical Mode + Business Polarity + Target Geography */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
             <div className="md:col-span-4 space-y-1.5">
-              <label className="text-zinc-300 font-semibold block">
-                Sub-Vertical / Campaign Intent Mode
-              </label>
-              <select
-                value={editSubNiche}
-                onChange={(e) => setEditSubNiche(e.target.value)}
-                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-zinc-100 focus:outline-none focus:border-zinc-400"
-              >
-                <option value="">All Verified {activeNicheName} Operators</option>
-                <option value="property_management">
-                  Full-Service Property Management (Long-Term &amp; Multifamily)
-                </option>
-                <option value="airbnb_str">
-                  STR &amp; Vacation Rental Managers (24/7 AI Concierge)
-                </option>
-                <option value="residential_real_estate">
-                  Residential Real Estate Teams &amp; Brokerages
-                </option>
-                <option value="commercial_real_estate">
-                  Commercial Real Estate Brokerage &amp; CRE Leasing
-                </option>
-              </select>
+              <div className="flex items-center justify-between">
+                <label className="text-zinc-300 font-semibold block">
+                  Sub-Vertical / Campaign Intent
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setIsCustomSubNicheMode(!isCustomSubNicheMode)}
+                  className="text-[10px] text-zinc-400 hover:text-zinc-100 font-mono transition cursor-pointer"
+                >
+                  {isCustomSubNicheMode ? "← Pick Built-In" : "+ Type Custom"}
+                </button>
+              </div>
+
+              {isCustomSubNicheMode ? (
+                <div className="space-y-1">
+                  <input
+                    type="text"
+                    value={editSubNiche}
+                    onChange={(e) => setEditSubNiche(e.target.value)}
+                    placeholder="e.g. Digital Marketing Agency, Commercial Roofing..."
+                    className="w-full bg-[#050507] border border-zinc-400 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-white font-medium"
+                  />
+                  <div className="flex items-center justify-between text-[10px] text-zinc-500 px-1">
+                    <span className="text-zinc-400">Custom niche active (strict filter applied)</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomSubNicheMode(false);
+                        setEditSubNiche("");
+                      }}
+                      className="text-zinc-400 hover:text-zinc-200 underline cursor-pointer"
+                    >
+                      Reset to All Operators
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <select
+                  value={editSubNiche}
+                  onChange={(e) => {
+                    if (e.target.value === "__custom__") {
+                      setIsCustomSubNicheMode(true);
+                      setEditSubNiche("");
+                    } else {
+                      setEditSubNiche(e.target.value);
+                    }
+                  }}
+                  className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-zinc-100 focus:outline-none focus:border-zinc-400"
+                >
+                  <option value="">All Verified {activeNicheName} Operators</option>
+                  <option value="property_management">
+                    Full-Service Property Management (Long-Term &amp; Multifamily)
+                  </option>
+                  <option value="airbnb_str">
+                    STR &amp; Vacation Rental Managers (24/7 AI Concierge)
+                  </option>
+                  <option value="residential_real_estate">
+                    Residential Real Estate Teams &amp; Brokerages
+                  </option>
+                  <option value="commercial_real_estate">
+                    Commercial Real Estate Brokerage &amp; CRE Leasing
+                  </option>
+                  <option value="__custom__">
+                    + Custom Sub-Vertical (Type your own)...
+                  </option>
+                </select>
+              )}
             </div>
 
             <div className="md:col-span-3 space-y-1.5">
@@ -1177,90 +1470,208 @@ export function LeadProspector({
             </div>
           </div>
 
-          {/* Row 4: High-Ticket Real Estate Quick-Fill Templates */}
-          <div className="flex flex-wrap items-center gap-1.5 pt-1">
-            <span className="text-[10px] uppercase tracking-wider font-semibold text-zinc-500 mr-1">
-              Quick-Fill ICP Template:
-            </span>
-            {[
-              {
-                label: "Property Management (50+ Doors)",
-                kw: "residential property management company, full service property management, single family property management, buildium property management, appfolio property management",
-                sub: "property_management",
-                bType: "both" as const,
-                doors: 50,
-              },
-              {
-                label: "Real Estate Brokerages & Teams",
-                kw: "independent real estate brokerage, luxury real estate brokerage, real estate team broker owner, boutique real estate agency",
-                sub: "residential_real_estate",
-                bType: "residential" as const,
-                doors: null,
-              },
-              {
-                label: "STR & Vacation Rental Managers",
-                kw: "vacation rental management company, short term rental property management, luxury cabin and villa management, direct booking vacation rentals",
-                sub: "airbnb_str",
-                bType: "residential" as const,
-                doors: null,
-              },
-              {
-                label: "Commercial Real Estate (CRE)",
-                kw: "commercial real estate brokerage, commercial property management firm, retail and office leasing brokerage, industrial real estate broker",
-                sub: "commercial_real_estate",
-                bType: "commercial" as const,
-                doors: null,
-              },
-            ].map((tpl) => {
-              const isSelected = editSubNiche === tpl.sub && editKeywords === tpl.kw;
-              return (
-                <button
-                  key={tpl.label}
-                  type="button"
-                  onClick={async () => {
-                    setEditKeywords(tpl.kw);
-                    setEditSubNiche(tpl.sub);
-                    setEditBusinessType(tpl.bType);
-                    setEditMinDoors(tpl.doors);
-                    setSuccessBanner(`Applied & saved "${tpl.label}" ICP configuration.`);
-                    if (!canEditRules) return;
-                    const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-                    const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
-                    const kwsArr = tpl.kw.split(",").map((k) => k.trim()).filter(Boolean);
-                    const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
-                    const res = await updateRuleTargetingAction({
-                      states: statesArr.length > 0 ? statesArr : ["TX"],
-                      cities: citiesArr,
-                      minScore: editMinScore,
-                      keywords: kwsArr,
-                      negativeKeywords: negsArr,
-                      subNiche: tpl.sub,
-                      businessType: tpl.bType,
-                      gate,
-                      minEmployees: editMinEmployees,
-                      maxEmployees: editMaxEmployees,
-                      minDoors: tpl.doors,
-                    });
-                    if (res.ok && res.rule) {
-                      setActiveRule(res.rule);
-                      const refreshed = await getLatestReviewLeadsAction();
-                      if (refreshed.ok && refreshed.leads) {
-                        setLeads(refreshed.leads as any);
-                        setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
-                        setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+          {/* Row 4: High-Ticket Real Estate Quick-Fill Templates & Custom Presets */}
+          <div className="space-y-2 pt-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] uppercase tracking-wider font-semibold text-zinc-500 mr-1">
+                Quick-Fill ICP Presets:
+              </span>
+              {[
+                {
+                  label: "Property Management (50+ Doors)",
+                  kw: "residential property management company, full service property management, single family property management, buildium property management, appfolio property management",
+                  sub: "property_management",
+                  bType: "both" as const,
+                  doors: 50,
+                },
+                {
+                  label: "Real Estate Brokerages & Teams",
+                  kw: "independent real estate brokerage, luxury real estate brokerage, real estate team broker owner, boutique real estate agency",
+                  sub: "residential_real_estate",
+                  bType: "residential" as const,
+                  doors: null,
+                },
+                {
+                  label: "STR & Vacation Rental Managers",
+                  kw: "vacation rental management company, short term rental property management, luxury cabin and villa management, direct booking vacation rentals",
+                  sub: "airbnb_str",
+                  bType: "residential" as const,
+                  doors: null,
+                },
+                {
+                  label: "Commercial Real Estate (CRE)",
+                  kw: "commercial real estate brokerage, commercial property management firm, retail and office leasing brokerage, industrial real estate broker",
+                  sub: "commercial_real_estate",
+                  bType: "commercial" as const,
+                  doors: null,
+                },
+              ].map((tpl) => {
+                const isSelected = editSubNiche === tpl.sub && editKeywords === tpl.kw;
+                return (
+                  <button
+                    key={tpl.label}
+                    type="button"
+                    onClick={async () => {
+                      setEditKeywords(tpl.kw);
+                      setEditSubNiche(tpl.sub);
+                      setEditBusinessType(tpl.bType);
+                      setEditMinDoors(tpl.doors);
+                      setIsCustomSubNicheMode(false);
+                      setSuccessBanner(`Applied & saved "${tpl.label}" ICP configuration.`);
+                      if (!canEditRules) return;
+                      const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+                      const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+                      const kwsArr = tpl.kw.split(",").map((k) => k.trim()).filter(Boolean);
+                      const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+                      const res = await updateRuleTargetingAction({
+                        states: statesArr.length > 0 ? statesArr : ["TX"],
+                        cities: citiesArr,
+                        minScore: editMinScore,
+                        keywords: kwsArr,
+                        negativeKeywords: negsArr,
+                        subNiche: tpl.sub,
+                        businessType: tpl.bType,
+                        gate,
+                        minEmployees: editMinEmployees,
+                        maxEmployees: editMaxEmployees,
+                        minDoors: tpl.doors,
+                      });
+                      if (res.ok && res.rule) {
+                        setActiveRule(res.rule);
+                        const refreshed = await getLatestReviewLeadsAction();
+                        if (refreshed.ok && refreshed.leads) {
+                          setLeads(refreshed.leads as any);
+                          setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
+                          setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+                        }
                       }
-                    }
-                  }}
-                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
-                    isSelected
-                      ? "bg-white text-black font-bold border-white shadow-sm"
-                      : "border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.08] hover:border-white/[0.18] text-zinc-300"
-                  }`}
+                    }}
+                    className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
+                      isSelected
+                        ? "bg-white text-black font-bold border-white shadow-sm"
+                        : "border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.08] hover:border-white/[0.18] text-zinc-300"
+                    }`}
+                  >
+                    {tpl.label}
+                  </button>
+                );
+              })}
+
+              {/* Render Saved Custom Presets */}
+              {customPresets.map((cp) => {
+                const isSelected = editSubNiche === cp.sub && editKeywords === cp.kw;
+                return (
+                  <div
+                    key={cp.id}
+                    onClick={async () => {
+                      setEditKeywords(cp.kw);
+                      setEditSubNiche(cp.sub);
+                      setEditBusinessType(cp.bType);
+                      setEditMinDoors(cp.doors);
+                      if (
+                        ![
+                          "",
+                          "property_management",
+                          "airbnb_str",
+                          "residential_real_estate",
+                          "commercial_real_estate",
+                        ].includes(cp.sub)
+                      ) {
+                        setIsCustomSubNicheMode(true);
+                      }
+                      setSuccessBanner(`Applied custom ICP preset "${cp.label}".`);
+                      if (!canEditRules) return;
+                      const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+                      const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+                      const kwsArr = cp.kw.split(",").map((k) => k.trim()).filter(Boolean);
+                      const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+                      const res = await updateRuleTargetingAction({
+                        states: statesArr.length > 0 ? statesArr : ["TX"],
+                        cities: citiesArr,
+                        minScore: editMinScore,
+                        keywords: kwsArr,
+                        negativeKeywords: negsArr,
+                        subNiche: cp.sub,
+                        businessType: cp.bType,
+                        gate,
+                        minEmployees: editMinEmployees,
+                        maxEmployees: editMaxEmployees,
+                        minDoors: cp.doors,
+                      });
+                      if (res.ok && res.rule) {
+                        setActiveRule(res.rule);
+                        const refreshed = await getLatestReviewLeadsAction();
+                        if (refreshed.ok && refreshed.leads) {
+                          setLeads(refreshed.leads as any);
+                          setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
+                          setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+                        }
+                      }
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] transition cursor-pointer ${
+                      isSelected
+                        ? "bg-white text-black font-bold border-white shadow-sm"
+                        : "border-cyan-500/30 bg-cyan-950/20 text-cyan-200 hover:bg-cyan-950/40"
+                    }`}
+                  >
+                    <Sparkles className="w-2.5 h-2.5" />
+                    <span>{cp.label}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeleteCustomPreset(cp.id, e)}
+                      className="text-zinc-400 hover:text-rose-400 ml-0.5 p-0.5 rounded cursor-pointer"
+                      title="Delete preset"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                );
+              })}
+
+              {/* Save Current ICP Button */}
+              {!showSavePresetInput ? (
+                <button
+                  type="button"
+                  onClick={() => setShowSavePresetInput(true)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-dashed border-white/[0.2] hover:border-white/[0.4] text-zinc-400 hover:text-zinc-200 text-[11px] font-medium transition cursor-pointer"
                 >
-                  {tpl.label}
+                  <Plus className="w-3 h-3" />
+                  <span>Save ICP as Preset</span>
                 </button>
-              );
-            })}
+              ) : null}
+            </div>
+
+            {/* Inline Mini-Form to Save Current ICP */}
+            {showSavePresetInput && (
+              <div className="flex items-center gap-2 p-2 rounded-xl bg-black/60 border border-white/[0.15] max-w-md">
+                <input
+                  type="text"
+                  placeholder="Enter preset name (e.g. Austin Luxury Homes)"
+                  value={presetLabelInput}
+                  onChange={(e) => setPresetLabelInput(e.target.value)}
+                  className="flex-1 bg-transparent text-xs text-white placeholder-zinc-500 focus:outline-none font-medium px-2 py-1"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  disabled={!presetLabelInput.trim()}
+                  onClick={handleSaveCustomPreset}
+                  className="px-3 py-1 rounded-lg bg-white text-black text-[11px] font-bold hover:bg-zinc-200 disabled:opacity-40 cursor-pointer"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSavePresetInput(false);
+                    setPresetLabelInput("");
+                  }}
+                  className="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

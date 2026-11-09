@@ -119,8 +119,30 @@ export function buildQueryPlan(input: {
   subNiche?: string;
   negativeKeywords?: string[];
 }): PlannedQuery[] {
-  const keywords = input.keywords.map((k) => k.trim()).filter(Boolean).slice(0, 8);
-  const kwList = keywords.length > 0 ? keywords : ["local business"];
+  const customSubNicheClean = (input.subNiche || "").trim();
+  const isStandardSubNiche = [
+    "",
+    "property_management",
+    "airbnb_str",
+    "airbnb_str_concierge",
+    "airbnb_str_vrm",
+    "airbnb_active_hosts",
+    "corporate_housing_mtr",
+    "str_cohost_hospitality",
+    "residential_real_estate",
+    "residential_re",
+    "commercial_real_estate",
+    "commercial_re",
+  ].includes(customSubNicheClean.toLowerCase());
+
+  const keywords = input.keywords.map((k) => k.trim()).filter(Boolean);
+  if (!isStandardSubNiche && customSubNicheClean.length >= 2) {
+    if (!keywords.some((k) => k.toLowerCase() === customSubNicheClean.toLowerCase())) {
+      keywords.unshift(customSubNicheClean);
+    }
+  }
+
+  const kwList = keywords.length > 0 ? keywords.slice(0, 8) : ["local business"];
 
   const states = (input.states.length > 0 ? input.states : ["TX"]).map((s) => s.trim().toUpperCase());
   const ownerCities = input.cities.map((c) => c.trim()).filter(Boolean);
@@ -293,10 +315,12 @@ export function isOffNicheSearchResult(input: {
   domain?: string;
   url?: string;
   targetKeyword?: string;
+  subNiche?: string;
   negativeKeywords?: string[];
   businessType?: "residential" | "commercial" | "both";
 }): boolean {
   const kwLower = (input.targetKeyword || "").toLowerCase();
+  const subLower = (input.subNiche || "").toLowerCase();
   const titleLower = (input.title || "").toLowerCase();
   const contentLower = (input.content || "").toLowerCase();
   const domainLower = (input.domain || input.url || "").toLowerCase();
@@ -316,7 +340,7 @@ export function isOffNicheSearchResult(input: {
   // 2. Block Web Design, Digital Marketing, SEO, Software, Logistics, Freight, Moving & Staffing vendors unless targeted
   const userWantsMarketingOrTech =
     /\b(web\s*design|web\s*dev|marketing\s*agency|seo|digital\s*marketing|software|saas|it\s*services|advertising\s*agency|logistics|freight|trucking|moving)\b/i.test(
-      kwLower
+      `${kwLower} ${subLower}`
     );
 
   if (!userWantsMarketingOrTech) {
@@ -335,12 +359,59 @@ export function isOffNicheSearchResult(input: {
     ) {
       return true;
     }
+  } else if (fullText.length > 50) {
+    // If the user explicitly wants digital marketing/tech agency, reject pure real estate / property / vacation rental platforms
+    const isPureRealEstateBrokerage =
+      /\b(homes?\s*for\s*sale|mls\s*search|featured\s*listings|real\s*estate\s*agents?|realtor|brokerage|property\s*management|vacation\s*rentals?|book\s*direct)\b/i.test(
+        titleAndDomain
+      ) &&
+      !/\b(marketing|agency|lead\s*generation|seo|social\s*media|advertising|web\s*design|digital\s*strategy|consulting)\b/i.test(
+        fullText
+      );
+    if (isPureRealEstateBrokerage) return true;
   }
 
-  // 3. When targeting Real Estate / STR / Property Management, reject search results that have zero real estate / housing / rental terms
+  // 3. Cross-niche separation: Real Estate Brokerages vs Pure Vacation Rental / STR Platforms
+  const isPureReBrokerageTarget =
+    (subLower === "residential_real_estate" ||
+      subLower === "residential_re" ||
+      /\b(real\s*estate\s*(?:brokerage|team|broker|agent)|realtors?|realty)\b/i.test(`${kwLower} ${subLower}`)) &&
+    !/\b(vacation|airbnb|vrbo|str|short[- ]term|holiday|cabin|beach\s*house)\b/i.test(`${kwLower} ${subLower}`);
+
+  if (isPureReBrokerageTarget && fullText.length > 50) {
+    const isPureVacationOrStrPlatform =
+      /\b(vacation\s*rentals?|book\s*direct|nightly\s*rentals?|cabin\s*rentals?|beach\s*rentals?|guest\s*reservations?|guesty|hostaway|ownerrez|lodgify)\b/i.test(
+        titleAndDomain
+      ) &&
+      !/\b(brokerage|realtor|realty|real\s*estate\s*team|buy\s*a\s*home|sell\s*a\s*home|homes?\s*for\s*sale)\b/i.test(
+        fullText
+      );
+    if (isPureVacationOrStrPlatform) return true;
+  }
+
+  // 4. Cross-niche separation: STR / Vacation Rental Managers vs Pure Residential Buyer Brokerages
+  const isPureStrTarget =
+    (subLower === "airbnb_str" ||
+      subLower === "airbnb_str_vrm" ||
+      subLower === "airbnb_active_hosts" ||
+      subLower === "str_cohost_hospitality" ||
+      /\b(vacation\s*rental|short[- ]term\s*rental|airbnb|vrbo|co-?host)\b/i.test(`${kwLower} ${subLower}`)) &&
+    !/\b(realtor|residential\s*real\s*estate\s*brokerage)\b/i.test(`${kwLower} ${subLower}`);
+
+  if (isPureStrTarget && fullText.length > 50) {
+    const isPureResidentialBuyerAgent =
+      /\b(homes?\s*for\s*sale|buyer's\s*agent|listing\s*agent|mortgage)\b/i.test(titleAndDomain) &&
+      !/\b(vacation|str|short[- ]term|airbnb|vrbo|co-?host|guest|turnkey|nightly|book\s*direct|rental\s*management)\b/i.test(
+        fullText
+      );
+    if (isPureResidentialBuyerAgent) return true;
+  }
+
+  // 5. When targeting Real Estate / STR / Property Management, reject search results that have zero real estate / housing / rental terms
   const isRealEstateOrStrTarget =
+    !userWantsMarketingOrTech &&
     /\b(real\s*estate|realtor|realty|broker|property\s*management|vacation\s*rental|short[- ]term\s*rental|airbnb|vrbo|co-?host|corporate\s*housing|furnished|multifamily|leasing|cabin|villa|beach\s*house)\b/i.test(
-      kwLower
+      `${kwLower} ${subLower}`
     );
 
   if (isRealEstateOrStrTarget && fullText.length > 60) {
@@ -353,8 +424,8 @@ export function isOffNicheSearchResult(input: {
     }
   }
 
-  // 3. When targeting Airbnb / STR Management, block casual 1-room sublets or cleaning-only gigs
-  if (/\b(airbnb|vrbo|vacation\s*rental|short[- ]term\s*rental|co-?host)\b/i.test(kwLower)) {
+  // 6. When targeting Airbnb / STR Management, block casual 1-room sublets or cleaning-only gigs
+  if (/\b(airbnb|vrbo|vacation\s*rental|short[- ]term\s*rental|co-?host)\b/i.test(`${kwLower} ${subLower}`)) {
     if (
       /\b(room\s*for\s*rent|shared\s*room|roommate\s*wanted|sublet\s*my\s*room|how\s*to\s*start\s*an\s*airbnb|airbnb\s*cleaning\s*only)\b/i.test(
         fullText
@@ -390,6 +461,7 @@ export async function runPlannedQuery(
     seenDomains?: Set<string>;
     excludeDomains?: string[];
     negativeKeywords?: string[];
+    subNiche?: string;
     businessType?: "residential" | "commercial" | "both";
     timeoutMs?: number;
   } = {},
@@ -460,6 +532,7 @@ export async function runPlannedQuery(
         content,
         domain,
         targetKeyword: item.keyword,
+        subNiche: opts.subNiche,
         negativeKeywords: opts.negativeKeywords,
         businessType: opts.businessType,
       })

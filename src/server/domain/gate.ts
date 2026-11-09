@@ -416,13 +416,69 @@ export function passesLeadRowGate(
   const fullLeadCorpus = `${lead.name || ""} ${lead.website || ""} ${lead.researchSummary || ""} ${factEvidenceCorpus}`;
   const nameSiteSummary = `${lead.name || ""} ${lead.website || ""} ${lead.researchSummary || ""}`;
 
-  if (OFF_NICHE_VENDOR_LEAD_RE.test(nameSiteSummary) || OFF_NICHE_DOMAIN_RE.test(lead.website || "")) {
-    return false;
+  const targetKeywords = ruleConfig?.discovery?.keywords || [];
+  const subNicheVal = (ruleConfig as any)?.discovery?.subNiche || "";
+  const joinedKwAndSub = `${targetKeywords.join(" ")} ${subNicheVal}`.toLowerCase();
+  const userWantsMarketingOrTech =
+    /\b(web\s*design|web\s*dev|marketing\s*agency|seo|digital\s*marketing|software|saas|it\s*services|advertising\s*agency)\b/i.test(
+      joinedKwAndSub
+    );
+
+  if (!userWantsMarketingOrTech) {
+    if (OFF_NICHE_VENDOR_LEAD_RE.test(nameSiteSummary) || OFF_NICHE_DOMAIN_RE.test(lead.website || "")) {
+      return false;
+    }
+  } else {
+    // If the user explicitly wants marketing or tech, reject pure real estate / property management / mortgage leads!
+    const isPureRealEstate =
+      REAL_ESTATE_POSITIVE_ANCHOR_RE.test(nameSiteSummary) &&
+      !/\b(marketing|agency|lead\s*generation|seo|social\s*media|advertising|web\s*design|digital\s*strategy|consulting)\b/i.test(
+        fullLeadCorpus
+      );
+    if (isPureRealEstate) {
+      return false;
+    }
+  }
+
+  // Cross-niche separation: Real Estate Brokerages vs Vacation Rentals
+  const isPureReBrokerageTarget =
+    (subNicheVal === "residential_real_estate" ||
+      subNicheVal === "residential_re" ||
+      /\b(real\s*estate\s*(?:brokerage|team|broker|agent)|realtors?|realty)\b/i.test(joinedKwAndSub)) &&
+    !/\b(vacation|airbnb|vrbo|str|short[- ]term|holiday|cabin|beach\s*house)\b/i.test(joinedKwAndSub);
+
+  if (isPureReBrokerageTarget) {
+    const isPureVacationOrHotel =
+      /\b(vacation\s*rentals?|short[- ]term\s*rentals?|airbnb\s*host|book\s*direct|nightly\s*rentals?|cabin\s*rentals?|beach\s*rentals?|guest\s*reservations?|guesty|hostaway|ownerrez|lodgify)\b/i.test(
+        nameSiteSummary
+      ) &&
+      !/\b(brokerage|realtor|realty|real\s*estate\s*team|residential\s*sales|buy\s*a\s*home|sell\s*a\s*home|homes?\s*for\s*sale)\b/i.test(
+        fullLeadCorpus
+      );
+    if (isPureVacationOrHotel) {
+      return false;
+    }
+  }
+
+  const isPureStrTarget =
+    subNicheVal === "airbnb_str" ||
+    subNicheVal === "airbnb_str_vrm" ||
+    subNicheVal === "airbnb_active_hosts" ||
+    /\b(vacation\s*rental|short[- ]term\s*rental|airbnb|vrbo|co-?host)\b/i.test(joinedKwAndSub);
+
+  if (isPureStrTarget) {
+    const isPureResidentialAgentWithNoStr =
+      /\b(homes?\s*for\s*sale|buyer's\s*agent|listing\s*agent|mortgage)\b/i.test(nameSiteSummary) &&
+      !/\b(vacation|str|short[- ]term|airbnb|vrbo|co-?host|guest|turnkey|nightly|book\s*direct)\b/i.test(
+        fullLeadCorpus
+      );
+    if (isPureResidentialAgentWithNoStr) {
+      return false;
+    }
   }
 
   // Enforce positive industry anchor when ruleConfig has target keywords
-  const targetKeywords = ruleConfig?.discovery?.keywords || [];
-  if (targetKeywords.length > 0) {
+  if (targetKeywords.length > 0 && !userWantsMarketingOrTech) {
     const joinedKw = targetKeywords.join(" ").toLowerCase();
     const isRealEstateOrStrTarget =
       /\b(real\s*estate|realtor|realty|broker|property\s*management|vacation\s*rental|short[- ]term\s*rental|airbnb|vrbo|co-?host|corporate\s*housing|furnished|multifamily|leasing|cabin|villa|beach\s*house)\b/i.test(
