@@ -96,6 +96,8 @@ interface CallerClientProps {
   initialCallerFilter?: string;
   /** Pre-selects a status filter, e.g. from Sales Funnel deep links (?status=NO_ANSWER). */
   initialStatusFilter?: string;
+  initialTzFilter?: string;
+  initialWindowFilter?: string;
   nicheName?: string;
   nicheCategory?: string;
   initialCustomColumns?: CustomCrmColumn[];
@@ -160,6 +162,8 @@ export function CallerClient({
   initialQueue,
   initialCallerFilter = "ALL",
   initialStatusFilter = "ALL",
+  initialTzFilter = "ALL",
+  initialWindowFilter = "ALL",
   nicheName = "Active Niche",
   nicheCategory,
   initialCustomColumns = [],
@@ -1801,6 +1805,8 @@ export function CallerClient({
           smartFields={smartFields}
           activeActorName={actor.trim() || activeActorName}
           canEditContacts={canEditContacts}
+          initialTzFilter={initialTzFilter}
+          initialWindowFilter={initialWindowFilter}
           getOpeningScript={(leadItem) =>
             getSmartOpeningScript({
               companyName: leadItem.name,
@@ -1839,6 +1845,8 @@ export function CallerClient({
           title={`${nicheName} Leads CRM`}
           subtitle="Click any stage, qualification column, follow-up, or lead row to edit details inline."
           showCallerLink={false}
+          initialTzFilter={initialTzFilter}
+          initialWindowFilter={initialWindowFilter}
           dialerConfig={dialerConfig}
           permissions={permissions}
           activeActorName={activeActorName}

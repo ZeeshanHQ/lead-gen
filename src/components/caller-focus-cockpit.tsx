@@ -31,6 +31,7 @@ import {
   US_TZ_GROUPS,
   parseFollowUpMs,
   wallClock,
+  zoneForState,
 } from "@/server/domain/call-time";
 import {
   PhoneCall,
@@ -98,6 +99,8 @@ interface CallerFocusCockpitProps {
   onSwitchToFullCrm?: (filterStatus?: string) => void;
   onResetLead?: (lead: CallerLeadView) => void;
   onDeleteCallLog?: (lead: CallerLeadView, logIndex: number) => void;
+  initialTzFilter?: string;
+  initialWindowFilter?: string;
 }
 
 type ScriptTabKey =
@@ -204,6 +207,8 @@ export function CallerFocusCockpit({
   onSwitchToFullCrm,
   onResetLead,
   onDeleteCallLog,
+  initialTzFilter = "ALL",
+  initialWindowFilter = "ALL",
 }: CallerFocusCockpitProps) {
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [cursorIndex, setCursorIndex] = useState<number>(0);
@@ -214,6 +219,12 @@ export function CallerFocusCockpit({
   );
   const [snoozedLockIds, setSnoozedLockIds] = useState<Set<string>>(
     () => new Set()
+  );
+  const [selectedTzFilter, setSelectedTzFilter] = useState<string>(
+    initialTzFilter || "ALL"
+  );
+  const [goldenWindowOnly, setGoldenWindowOnly] = useState<boolean>(
+    initialWindowFilter === "golden" || initialTzFilter === "GOLDEN_WINDOW"
   );
   const [lastLoggedInfo, setLastLoggedInfo] = useState<{
     lead: CallerLeadView;
@@ -321,8 +332,29 @@ export function CallerFocusCockpit({
     [rankedStream]
   );
 
+  const { tzLeadCounts, goldenWindowLeadCount } = useMemo(() => {
+    const counts: Record<string, number> = { ET: 0, CT: 0, MT: 0, PT: 0, OTHER: 0 };
+    let golden = 0;
+    for (const l of leads) {
+      const zone = zoneForState(l.state);
+      if (zone) {
+        if (counts[zone.groupId] !== undefined) {
+          counts[zone.groupId] = (counts[zone.groupId] ?? 0) + 1;
+        }
+        const { hour, minute } = wallClock(nowMs, zone.iana);
+        const dec = hour + minute / 60;
+        if ((dec >= 7.75 && dec < 11.5) || (dec >= 13.5 && dec <= 17.5)) {
+          golden++;
+        }
+      } else {
+        counts.OTHER = (counts.OTHER ?? 0) + 1;
+      }
+    }
+    return { tzLeadCounts: counts, goldenWindowLeadCount: golden };
+  }, [leads, nowMs]);
+
   // Scoped stream according to active stream filter tab
-  const scopedStream = useMemo(() => {
+  const baseScopedStream = useMemo(() => {
     if (streamScope === "FRESH") {
       return freshStream;
     }
@@ -340,6 +372,25 @@ export function CallerFocusCockpit({
     retriesStream,
     streamScope,
   ]);
+
+  // Apply Timezone and Golden Window filtering if enabled
+  const scopedStream = useMemo(() => {
+    return baseScopedStream.filter((item) => {
+      const zone = zoneForState(item.lead.state);
+      if (goldenWindowOnly) {
+        if (!zone) return false;
+        const { hour, minute } = wallClock(nowMs, zone.iana);
+        const dec = hour + minute / 60;
+        const isGolden =
+          (dec >= 7.75 && dec < 11.5) || (dec >= 13.5 && dec <= 17.5);
+        if (!isGolden) return false;
+      }
+      if (selectedTzFilter !== "ALL" && selectedTzFilter !== "GOLDEN_WINDOW") {
+        if (!zone || zone.groupId !== selectedTzFilter) return false;
+      }
+      return true;
+    });
+  }, [baseScopedStream, selectedTzFilter, goldenWindowOnly, nowMs]);
 
   // Stream of leads for the active tab (matches tab badge count 100%)
   const uncontactedStream = useMemo(
@@ -800,6 +851,21 @@ export function CallerFocusCockpit({
             </button>
           )}
 
+          {(selectedTzFilter !== "ALL" || goldenWindowOnly) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedTzFilter("ALL");
+                setGoldenWindowOnly(false);
+                setCursorIndex(0);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-full bg-amber-500 hover:bg-amber-400 text-black font-extrabold px-4 py-2 text-xs transition shadow-sm cursor-pointer"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>Clear Timezone Filter ({baseScopedStream.length} leads in stream)</span>
+            </button>
+          )}
+
           {hasCompletedSome && (
             <button
               type="button"
@@ -1013,6 +1079,30 @@ export function CallerFocusCockpit({
             </button>
           </div>
 
+          {(selectedTzFilter !== "ALL" || goldenWindowOnly) && (
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">
+              <Zap className="w-3 h-3 text-emerald-400" />
+              <span>
+                {selectedTzFilter !== "ALL" ? `${selectedTzFilter} Timezone` : "All Timezones"}
+                {goldenWindowOnly ? " • ⚡ Golden Window" : ""}
+              </span>
+              <span className="text-[10px] text-zinc-400 font-mono">
+                ({scopedStream.length})
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedTzFilter("ALL");
+                  setGoldenWindowOnly(false);
+                }}
+                className="ml-1 hover:text-white p-0.5 rounded-full hover:bg-emerald-500/30 cursor-pointer"
+                title="Clear Timezone filter"
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            </div>
+          )}
+
           {sessionStreak > 0 && (
             <div className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 border border-amber-500/30 px-2.5 py-0.5 text-[11px] font-bold text-amber-300">
               <Flame className="w-3 h-3 text-amber-400" />
@@ -1121,14 +1211,22 @@ export function CallerFocusCockpit({
                 activeDrawer === "ANALYTICS" ? "NONE" : "ANALYTICS"
               )
             }
-            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
-              activeDrawer === "ANALYTICS"
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
+              selectedTzFilter !== "ALL" || goldenWindowOnly
+                ? "border-emerald-400 bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-500/40"
+                : activeDrawer === "ANALYTICS"
                 ? "border-emerald-400 bg-emerald-500/20 text-emerald-200"
                 : "border-white/10 bg-black/40 text-zinc-300 hover:text-white hover:border-zinc-700"
             }`}
           >
             <TrendingUp className="w-3 h-3 text-emerald-400" />
             <span>US Clocks</span>
+            {(selectedTzFilter !== "ALL" || goldenWindowOnly) && (
+              <span className="rounded-full bg-emerald-400 text-black px-1.5 py-0.2 text-[9px] font-black uppercase tracking-wider">
+                {selectedTzFilter !== "ALL" ? selectedTzFilter : "ALL"}
+                {goldenWindowOnly ? " • ⚡" : ""}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -1379,19 +1477,65 @@ export function CallerFocusCockpit({
 
       {activeDrawer === "ANALYTICS" && (
         <div className="rounded-xl border border-emerald-500/30 bg-[#121215]/95 backdrop-blur-xl p-3 space-y-3 shadow-2xl animate-in fade-in duration-150">
-          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2">
             <div className="flex items-center gap-1.5">
               <Award className="w-3.5 h-3.5 text-emerald-400" />
               <span className="text-xs font-bold text-white">
-                US Business Hours &amp; Local Timezones
+                US Calling Windows &amp; Timezone Filter
+              </span>
+              <span className="text-[10px] text-zinc-400 ml-1">
+                (Click any timezone or golden window to filter the queue)
               </span>
             </div>
+            <div className="flex items-center gap-2">
+              {(selectedTzFilter !== "ALL" || goldenWindowOnly) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTzFilter("ALL");
+                    setGoldenWindowOnly(false);
+                  }}
+                  className="rounded-full bg-zinc-800 hover:bg-zinc-700 border border-white/10 px-2 py-0.5 text-[10px] font-semibold text-zinc-300 transition cursor-pointer"
+                >
+                  Clear Timezone Filter
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setActiveDrawer("NONE")}
+                className="p-1 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setActiveDrawer("NONE")}
-              className="p-1 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800"
+              onClick={() => setGoldenWindowOnly((prev) => !prev)}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
+                goldenWindowOnly
+                  ? "border-amber-400 bg-amber-500/25 text-amber-200 ring-1 ring-amber-400/50 shadow-sm"
+                  : "border-white/10 bg-white/[0.04] text-zinc-300 hover:border-zinc-600 hover:text-white"
+              }`}
             >
-              <X className="w-3.5 h-3.5" />
+              <Zap className="w-3 h-3 text-amber-400" />
+              <span>⚡ Filter to Golden Window Leads</span>
+              <span className="rounded bg-black/40 px-1.5 py-0.2 text-[10px] font-mono font-bold text-amber-300">
+                {goldenWindowLeadCount}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedTzFilter("ALL")}
+              className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                selectedTzFilter === "ALL" && !goldenWindowOnly
+                  ? "border-zinc-300 bg-white/15 text-white"
+                  : "border-white/10 bg-white/[0.03] text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              All US Timezones ({leads.length})
             </button>
           </div>
 
@@ -1405,31 +1549,50 @@ export function CallerFocusCockpit({
                 (dec >= 8.75 && dec < 11.5) || (dec >= 13.5 && dec <= 16.5);
               const isBypass =
                 (dec >= 7.75 && dec < 8.75) || (dec > 16.5 && dec <= 17.75);
+              const isSelected = selectedTzFilter === tz.id;
+              const countInTz = tzLeadCounts[tz.id] || 0;
+
               return (
-                <div
+                <button
                   key={tz.id}
-                  className={`rounded-xl border px-3 py-2 text-[11px] flex items-center justify-between ${
-                    isPrime
-                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                  type="button"
+                  onClick={() =>
+                    setSelectedTzFilter((prev) => (prev === tz.id ? "ALL" : tz.id))
+                  }
+                  className={`rounded-xl border px-3 py-2 text-[11px] flex items-center justify-between text-left transition cursor-pointer ${
+                    isSelected
+                      ? "border-emerald-400 bg-emerald-500/25 text-white ring-1 ring-emerald-400 shadow-md"
+                      : isPrime
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400/70"
                       : isBypass
-                      ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
-                      : "border-white/10 bg-black/40 text-zinc-400"
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-200 hover:border-amber-400/70"
+                      : "border-white/10 bg-black/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
                   }`}
                 >
                   <div>
-                    <div className="font-bold text-xs">{tz.label}</div>
+                    <div className="font-bold text-xs flex items-center gap-1.5">
+                      <span>{tz.label}</span>
+                      <span className="rounded bg-black/40 border border-white/10 px-1 py-0.2 text-[9px] font-mono text-zinc-300">
+                        {countInTz}
+                      </span>
+                    </div>
                     <div className="text-[10px] opacity-85">
                       {isPrime
-                        ? "🟢 Best Time to Call"
+                        ? "🟢 Best Time"
                         : isBypass
-                        ? "⚡ Early/Late Owner Window"
+                        ? "⚡ Early/Late Window"
                         : "Standard Hours"}
                     </div>
                   </div>
-                  <div className="font-mono font-bold text-xs">
-                    {h12}:{String(minute).padStart(2, "0")} {ampm}
+                  <div className="font-mono font-bold text-xs text-right">
+                    <div>
+                      {h12}:{String(minute).padStart(2, "0")} {ampm}
+                    </div>
+                    <div className="text-[9px] opacity-70 uppercase tracking-wider font-semibold">
+                      {isSelected ? "ACTIVE" : "DIAL →"}
+                    </div>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

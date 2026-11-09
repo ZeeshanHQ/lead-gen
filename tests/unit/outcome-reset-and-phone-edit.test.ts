@@ -72,6 +72,19 @@ describe("Outcome Reset & Accidental Outcome Recovery", () => {
     expect(res.isTerminal).toBe(true);
   });
 
+  it("clears accidental MEETING_BOOKED count when lead lifecycle status is changed to NURTURE or CALLING", () => {
+    const accidentalLead = {
+      name: "Summit Real Estate",
+      status: "NURTURE",
+      notes: "[Nov 9, 2:00 PM • Caller (Meeting Booked)]: Demo tentatively set\n[Follow-Up: 2026-11-12T14:00:00.000Z]",
+      nextFollowUp: "2026-11-12T14:00:00.000Z",
+    };
+    const derived = deriveCallStatus(accidentalLead);
+    // When status is NURTURE (follow up), it must not count as MEETING_BOOKED
+    expect(derived.key).toBe("CONNECTED");
+    expect(derived.key).not.toBe("MEETING_BOOKED");
+  });
+
   it("ensures computeAutoFollowUpCadence completely clears follow-ups on WRONG_NUMBER even if date passed", () => {
     const res = computeAutoFollowUpCadence({
       outcome: "WRONG_NUMBER",

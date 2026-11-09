@@ -637,25 +637,28 @@ export function SalesFunnelClient({
             const { hour } = wallClock(nowMs, grp.iana);
             const isOpen = hour >= 9 && hour < 17;
             const isGolden = (hour >= 8 && hour < 10) || (hour >= 16 && hour < 18);
+            const href = `/caller?tz=${grp.id}${isGolden ? "&window=golden" : ""}`;
 
             return (
-              <div
+              <Link
                 key={grp.id}
-                className={`p-2.5 rounded-xl border flex flex-col justify-between ${
+                href={href}
+                className={`p-2.5 rounded-xl border flex flex-col justify-between transition hover:border-white/40 cursor-pointer group ${
                   isGolden
-                    ? "border-amber-500/40 bg-amber-950/20"
+                    ? "border-amber-500/40 bg-amber-950/20 hover:bg-amber-950/30"
                     : isOpen
-                    ? "border-sky-500/30 bg-sky-950/15"
-                    : "border-zinc-800 bg-[#09090c]"
+                    ? "border-sky-500/30 bg-sky-950/15 hover:bg-sky-950/25"
+                    : "border-zinc-800 bg-[#09090c] hover:bg-[#121217]"
                 }`}
+                title={`Open & dial US ${grp.label} (${grp.id}) leads in CRM`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 group-hover:text-zinc-200">
                     US {grp.label} ({grp.id})
                   </span>
                   {isGolden ? (
                     <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                      Golden Window
+                      ⚡ Golden Window
                     </span>
                   ) : isOpen ? (
                     <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300">
@@ -666,14 +669,13 @@ export function SalesFunnelClient({
                   )}
                 </div>
                 <div className="text-base font-black font-mono text-white mt-1">{clock}</div>
-                <div className="text-[10px] text-zinc-400 mt-0.5">
-                  {isGolden
-                    ? "Peak pick-up probability"
-                    : isOpen
-                    ? "Standard business hours"
-                    : "Closed / Desk unstaffed"}
+                <div className="flex items-center justify-between text-[10px] text-zinc-400 mt-1 pt-1 border-t border-white/[0.06]">
+                  <span>{isGolden ? "Peak pick-up time" : isOpen ? "Open hours" : "Closed"}</span>
+                  <span className="text-[9px] text-zinc-500 group-hover:text-amber-300 font-semibold transition">
+                    Dial Leads →
+                  </span>
                 </div>
-              </div>
+              </Link>
             );
           })}
         </div>

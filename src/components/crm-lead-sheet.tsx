@@ -55,6 +55,7 @@ import {
   buildPresetFollowUp,
   describeFollowUp,
   zoneForState,
+  wallClock,
   type FollowUpPreset,
 } from "@/server/domain/call-time";
 import {
@@ -89,6 +90,7 @@ import {
   UserMinus,
   AlertCircle,
   RotateCcw,
+  Zap,
 } from "lucide-react";
 
 export interface CrmLeadItem {
@@ -150,6 +152,8 @@ interface CrmLeadSheetProps {
   onLeadDeleted?: (companyId: string) => void;
   /** Pre-selects a status chip, e.g. from Sales Funnel deep links (?status=NO_ANSWER). */
   initialStatusFilter?: string;
+  initialTzFilter?: string;
+  initialWindowFilter?: string;
 }
 
 export const CRM_STAGE_OPTIONS: Array<{
@@ -338,12 +342,18 @@ export function CrmLeadSheet({
   onLeadUpdated,
   onLeadDeleted,
   initialStatusFilter = "ALL",
+  initialTzFilter = "ALL",
+  initialWindowFilter = "ALL",
 }: CrmLeadSheetProps) {
   const [leads, setLeads] = useState<CrmLeadItem[]>(initialLeads);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter);
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "YESTERDAY" | "OLDER">("ALL");
   const [callerFilter, setCallerFilter] = useState<string>("ALL");
+  const [tzFilter, setTzFilter] = useState<string>(initialTzFilter || "ALL");
+  const [goldenWindowOnly, setGoldenWindowOnly] = useState<boolean>(
+    initialWindowFilter === "golden" || initialTzFilter === "GOLDEN_WINDOW"
+  );
   const [sortBy, setSortBy] = useState<"INTAKE_DATE" | "RECENTLY_CONTACTED" | "ICP_SCORE" | "NAME_AZ" | "STAGE">("RECENTLY_CONTACTED");
   const [tablePage, setTablePage] = useState<number>(1);
   const pageSize = 50;
@@ -945,6 +955,26 @@ export function CrmLeadSheet({
     return map;
   }, [leads]);
 
+  const { tzLeadCounts, goldenWindowLeadCount } = React.useMemo(() => {
+    const counts: Record<string, number> = { ET: 0, CT: 0, MT: 0, PT: 0 };
+    let golden = 0;
+    const now = Date.now();
+    for (const l of leads) {
+      if (l.status === "REJECTED") continue;
+      const zone = zoneForState(l.state);
+      if (zone) {
+        if (counts[zone.groupId] !== undefined) {
+          counts[zone.groupId] = (counts[zone.groupId] ?? 0) + 1;
+        }
+        const { hour } = wallClock(now, zone.iana);
+        if ((hour >= 8 && hour < 10) || (hour >= 16 && hour < 18)) {
+          golden++;
+        }
+      }
+    }
+    return { tzLeadCounts: counts, goldenWindowLeadCount: golden };
+  }, [leads]);
+
   const hasActiveSearch = Boolean(search && search.trim().length > 0);
 
   const filteredLeads = leads.filter((lead) => {
@@ -965,6 +995,20 @@ export function CrmLeadSheet({
       lead.assignedMemberId !== callerFilter
     ) {
       return false;
+    }
+
+    // Timezone & Golden Window Filter
+    if (goldenWindowOnly) {
+      const zone = zoneForState(lead.state);
+      if (!zone) return false;
+      const { hour } = wallClock(Date.now(), zone.iana);
+      const isGolden = (hour >= 8 && hour < 10) || (hour >= 16 && hour < 18);
+      if (!isGolden) return false;
+    }
+
+    if (tzFilter !== "ALL" && tzFilter !== "GOLDEN_WINDOW") {
+      const zone = zoneForState(lead.state);
+      if (!zone || zone.groupId !== tzFilter) return false;
     }
 
     const derived = derivedById.get(lead.id) ?? deriveCallStatus(lead);
@@ -1985,6 +2029,81 @@ export function CrmLeadSheet({
             Clear date filter
           </button>
         )}
+      </div>
+
+      {/* Timezone & Golden Window Calling Filter Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/60 bg-[#08080a] px-2.5 sm:px-3 py-1.5 text-xs">
+        <div className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1 sm:pb-0 sm:flex-wrap no-scrollbar">
+          <span className="text-[11px] font-semibold text-zinc-400 mr-1 flex items-center gap-1">
+            <Zap className="w-3 h-3 text-amber-400" />
+            <span>Calling Window:</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setGoldenWindowOnly(!goldenWindowOnly);
+              setTablePage(1);
+            }}
+            className={`shrink-0 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition cursor-pointer ${
+              goldenWindowOnly
+                ? "border-amber-400 bg-amber-500/20 text-amber-200 ring-1 ring-amber-400/40"
+                : "border-zinc-800 bg-[#09090b] text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+            }`}
+            title="Show only prospects currently in their local peak pickup window (8–10 AM or 4–6 PM local time)"
+          >
+            <span>⚡ Golden Window</span>
+            <span className="rounded bg-black/40 px-1 text-[10px] font-bold text-amber-300">
+              {goldenWindowLeadCount}
+            </span>
+          </button>
+
+          <span className="mx-1 hidden h-4 w-px bg-zinc-800 sm:block shrink-0" />
+
+          <span className="text-[11px] font-semibold text-zinc-400 mr-0.5">Timezone:</span>
+          {(
+            [
+              { id: "ALL", label: "All US" },
+              { id: "ET", label: "Eastern" },
+              { id: "CT", label: "Central" },
+              { id: "MT", label: "Mountain" },
+              { id: "PT", label: "Pacific" },
+            ] as const
+          ).map((t) => {
+            const isSelected = tzFilter === t.id;
+            const count = t.id === "ALL" ? leads.length : (tzLeadCounts[t.id] || 0);
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => {
+                  setTzFilter(t.id);
+                  setTablePage(1);
+                }}
+                className={`shrink-0 rounded-md border px-2 py-0.5 text-xs font-medium transition cursor-pointer ${
+                  isSelected
+                    ? "border-white bg-white text-black font-bold"
+                    : "border-zinc-800 bg-[#09090b] text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {t.label} ({count})
+              </button>
+            );
+          })}
+
+          {(goldenWindowOnly || tzFilter !== "ALL") && (
+            <button
+              type="button"
+              onClick={() => {
+                setGoldenWindowOnly(false);
+                setTzFilter("ALL");
+                setTablePage(1);
+              }}
+              className="text-[11px] text-zinc-400 hover:text-white underline ml-2 cursor-pointer"
+            >
+              Clear Timezone Filters
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Color key: same colors as the Sales Funnel page */}

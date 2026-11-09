@@ -698,6 +698,13 @@ export function deriveCallStatus(lead: {
       (lastLog.outcome === "WRONG_NUMBER" || lastLog.outcome === "NOT_INTERESTED")
     ) {
       key = "UNTOUCHED";
+    } else if (
+      lastLog.outcome === "MEETING_BOOKED" &&
+      status !== "MEETING_BOOKED" &&
+      status !== "QUALIFIED" &&
+      status !== "CLOSED"
+    ) {
+      key = "CONNECTED";
     } else {
       key = lastLog.outcome;
     }

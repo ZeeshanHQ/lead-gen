@@ -14,12 +14,12 @@ export const dynamic = "force-dynamic";
 export default async function CallerQueuePage({
   searchParams,
 }: {
-  searchParams?: Promise<{ caller?: string; status?: string }>;
+  searchParams?: Promise<{ caller?: string; status?: string; tz?: string; window?: string }>;
 }) {
   const db = await getDb();
   const [resolvedParams, { market, allMarkets, rule }, { activeMember, allMembers }, savedDialer] =
     await Promise.all([
-      searchParams ? searchParams : Promise.resolve({} as { caller?: string; status?: string }),
+      searchParams ? searchParams : Promise.resolve({} as { caller?: string; status?: string; tz?: string; window?: string }),
       getActiveContext(db),
       getActiveTeamMember(db),
       getSetting<Partial<DialerConfig>>(db, "dialer_config"),
@@ -63,10 +63,12 @@ export default async function CallerQueuePage({
 
   return (
     <CallerClient
-      key={`${market.id}_${resolvedParams?.caller || "ALL"}_${resolvedParams?.status || "ALL"}`}
+      key={`${market.id}_${resolvedParams?.caller || "ALL"}_${resolvedParams?.status || "ALL"}_${resolvedParams?.tz || "ALL"}_${resolvedParams?.window || "ALL"}`}
       initialQueue={visibleQueue}
       initialCallerFilter={resolvedParams?.caller || "ALL"}
       initialStatusFilter={resolvedParams?.status || "ALL"}
+      initialTzFilter={resolvedParams?.tz || "ALL"}
+      initialWindowFilter={resolvedParams?.window || "ALL"}
       nicheName={market.name}
       nicheCategory={market.category}
       initialCustomColumns={customColumns}
