@@ -1,6 +1,10 @@
+import { eq } from "drizzle-orm";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createDb, type DbHandle } from "@/server/db/client";
 import { bootstrap } from "@/server/db/bootstrap";
+import { companies } from "@/server/db/schema";
+import { assignBulkLeadsToCaller } from "@/server/repo/caller";
+import { researchCompany } from "@/server/research/engine";
 import { createCandidate, editCompany } from "@/server/repo/companies";
 import { addExclusion } from "@/server/repo/exclusions";
 import { setFact, clearFact, acceptSuggestion } from "@/server/repo/facts";
@@ -251,5 +255,58 @@ describe("Repository integration with memory PGlite", () => {
     const activeRule = await getDefaultRule(handle.db);
     expect(activeRule.version).toBe(saved.version);
     expect(activeRule.config.scoring.minScore).toBe(65);
+  });
+
+  it("preserves existing caller ownership and call history during re-approval, bulk assign, and re-research", async () => {
+    const created = await createCandidate(
+      handle.db,
+      {
+        name: "Protected Caller Lead HVAC",
+        website: "https://protectedcallerhvac.com",
+        phone: "512-555-0192",
+        city: "Austin",
+        state: "TX",
+        notes: "[2026-11-10 • Hamda (No Answer)]: Called once",
+      },
+      { actor: "owner" }
+    );
+    expect(created.kind).toBe("created");
+    if (created.kind !== "created") return;
+
+    await approveCompany(handle.db, created.id, {
+      actor: "owner",
+      assignedMemberId: "mem_hamda",
+      assignedMemberName: "Hamda",
+    });
+
+    await handle.db
+      .update(companies)
+      .set({ status: "CALLING" })
+      .where(eq(companies.id, created.id));
+
+    // Re-approving with another caller (e.g. duplicate import/approval) must NOT overwrite Hamda or CALLING status
+    await approveCompany(handle.db, created.id, {
+      actor: "owner",
+      assignedMemberId: "mem_saad",
+      assignedMemberName: "Saad",
+    });
+
+    // Bulk assigning unassigned leads to Saad must NOT steal Hamda's lead
+    await assignBulkLeadsToCaller(handle.db, {
+      marketId: "",
+      memberId: "mem_saad",
+      memberName: "Saad",
+      actor: "owner",
+    });
+
+    // Discovery research engine must skip already-assigned CRM leads
+    const res = await researchCompany(handle.db, created.id, { actor: "discovery" });
+    expect(res.status).toBe("APPROVED");
+
+    const detail = await getCompanyDetail(handle.db, created.id);
+    expect(detail?.company.assignedMemberId).toBe("mem_hamda");
+    expect(detail?.company.assignedMemberName).toBe("Hamda");
+    expect(detail?.company.status).toBe("CALLING");
+    expect(detail?.company.notes).toContain("[2026-11-10 • Hamda (No Answer)]");
   });
 });

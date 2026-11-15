@@ -127,13 +127,20 @@ export async function approveCompany(
 
   await db.transaction(async (tx) => {
     const now = new Date();
+    const postApprovalSet = new Set<string>(POST_APPROVAL as readonly string[]);
+    const alreadyPostApproval = postApprovalSet.has(from);
+    const nextStatus: LifecycleStatus =
+      alreadyPostApproval && from !== "APPROVED" ? from : "APPROVED";
+
     const updatePayload: Record<string, any> = {
-      status: "APPROVED",
-      approvedAt: now,
-      approvedBy: opts.actor,
+      status: nextStatus,
+      approvedAt: c.approvedAt || now,
+      approvedBy: c.approvedBy || opts.actor,
       updatedAt: now,
     };
-    if (opts.assignedMemberId !== undefined) {
+    // Protect existing caller ownership: only set assignedMemberId if the lead is currently unassigned
+    const hasExistingAssignee = Boolean(c.assignedMemberId && c.assignedMemberId.trim() !== "");
+    if (opts.assignedMemberId !== undefined && !hasExistingAssignee) {
       updatePayload.assignedMemberId = opts.assignedMemberId || null;
       updatePayload.assignedMemberName = opts.assignedMemberName || null;
     }
@@ -147,8 +154,8 @@ export async function approveCompany(
       actor: opts.actor,
       note: opts.note?.trim() || null,
       previousStatus: from,
-      newStatus: "APPROVED",
-      snapshot: { companyId, name: c.name, status: "APPROVED" },
+      newStatus: nextStatus,
+      snapshot: { companyId, name: c.name, status: nextStatus },
     });
     await audit(tx, {
       actor: opts.actor,
@@ -156,8 +163,8 @@ export async function approveCompany(
       entityType: "company",
       entityId: companyId,
       companyId,
-      oldValue: { status: from },
-      newValue: { status: "APPROVED", assignedMemberId: opts.assignedMemberId ?? c.assignedMemberId },
+      oldValue: { status: from, assignedMemberId: c.assignedMemberId },
+      newValue: { status: nextStatus, assignedMemberId: hasExistingAssignee ? c.assignedMemberId : (opts.assignedMemberId ?? c.assignedMemberId) },
     });
   });
 }

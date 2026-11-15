@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { getDb, type Db } from "@/server/db/client";
 import { companies, contacts, leadScores, researchRuns, sources } from "@/server/db/schema";
 import { createCandidate, type CandidateInput } from "@/server/repo/companies";
@@ -12,6 +12,17 @@ import { resolveGate, passesLeadRowGate, type LeadGate } from "@/server/domain/g
 import { POST_APPROVAL } from "@/server/domain/lifecycle";
 import { audit } from "@/server/repo/audit";
 import type { LeadRow } from "@/server/repo/queue";
+
+function isCleanStagingReviewLead(
+  lead: { status: string; assignedMemberId?: string | null; notes?: string | null },
+  postApprovalSet: Set<string>,
+  isOwnerOrManager: boolean
+): boolean {
+  if (postApprovalSet.has(lead.status)) return false;
+  if (lead.notes && /\[\d{4}-\d{2}-\d{2}/.test(lead.notes)) return false;
+  if (isOwnerOrManager && lead.assignedMemberId && lead.assignedMemberId.trim() !== "") return false;
+  return true;
+}
 
 export async function addCandidateAction(input: CandidateInput, force = false) {
   try {
@@ -263,7 +274,9 @@ export async function getDiscoveryProgressAction(runId: string, sinceIso?: strin
       const postApprovalSet = new Set<string>(POST_APPROVAL as readonly string[]);
 
       const qualifiedLeads = scopedRows.filter((l) => passesLeadRowGate(l, activeGate, activeRuleConfig));
-      const pendingLeads = qualifiedLeads.filter((l) => !postApprovalSet.has(l.status));
+      const pendingLeads = qualifiedLeads.filter((l) =>
+        isCleanStagingReviewLead(l, postApprovalSet, isOwnerOrManager)
+      );
       crmReadyCount = qualifiedLeads.filter((l) => postApprovalSet.has(l.status)).length;
       totalReviewCount = pendingLeads.length;
       leads = JSON.parse(JSON.stringify(pendingLeads.slice(0, 60)));
@@ -472,7 +485,12 @@ export async function startLeadDiscoveryAction(
               assignedMemberId: assignMemberId,
               assignedMemberName: assignMemberName,
             })
-            .where(inArray(companies.id, counters.qualifiedCompanyIds));
+            .where(
+              and(
+                inArray(companies.id, counters.qualifiedCompanyIds),
+                or(isNull(companies.assignedMemberId), eq(companies.assignedMemberId, ""))
+              )
+            );
         }
 
         const allMarketRows = await loadLeadRows(db, "all", market.id);
@@ -796,7 +814,9 @@ export async function runLeadDiscoveryAction(
 
     const postApprovalSet = new Set<string>(POST_APPROVAL as readonly string[]);
     const qualifiedLeads = scopedRows.filter((l) => passesLeadRowGate(l, mergedGate, ruleConfig));
-    const pendingLeads = qualifiedLeads.filter((l) => !postApprovalSet.has(l.status));
+    const pendingLeads = qualifiedLeads.filter((l) =>
+      isCleanStagingReviewLead(l, postApprovalSet, isOwnerOrManager)
+    );
     const crmReadyCount = qualifiedLeads.filter((l) => postApprovalSet.has(l.status)).length;
 
     try {
@@ -845,7 +865,9 @@ export async function getLatestReviewLeadsAction() {
 
     const postApprovalSet = new Set<string>(POST_APPROVAL as readonly string[]);
     const qualifiedLeads = scopedRows.filter((l) => passesLeadRowGate(l, activeGate, activeRuleConfig));
-    const pendingLeads = qualifiedLeads.filter((l) => !postApprovalSet.has(l.status));
+    const pendingLeads = qualifiedLeads.filter((l) =>
+      isCleanStagingReviewLead(l, postApprovalSet, isOwnerOrManager)
+    );
     const crmReadyCount = qualifiedLeads.filter((l) => postApprovalSet.has(l.status)).length;
 
     return {
@@ -920,7 +942,14 @@ export async function approveAllReviewLeadsAction(options?: {
       eligibleIds = options.leadIds;
     } else {
       const reviewRows = await loadLeadRows(db, "review", market.id);
-      eligibleIds = reviewRows.filter((l) => passesLeadRowGate(l, activeGate, activeRuleConfig)).map((l) => l.id);
+      const postApprovalSet = new Set<string>(POST_APPROVAL as readonly string[]);
+      eligibleIds = reviewRows
+        .filter(
+          (l) =>
+            passesLeadRowGate(l, activeGate, activeRuleConfig) &&
+            isCleanStagingReviewLead(l, postApprovalSet, isOwnerOrManager)
+        )
+        .map((l) => l.id);
     }
 
     const targetMemberId =

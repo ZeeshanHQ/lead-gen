@@ -1029,7 +1029,9 @@ export function CallerFocusCockpit({
             <span className="pr-1 font-mono text-[11px]">
               {pinnedLeadId
                 ? "Selected Lead"
-                : `Card ${safePosition} of ${Math.max(1, totalInScope)}`}
+                : isOwner
+                ? `Card ${safePosition} of ${Math.max(1, totalInScope)}`
+                : `Lead #${safePosition}`}
             </span>
             <button
               type="button"
@@ -1071,7 +1073,7 @@ export function CallerFocusCockpit({
               >
                 <Zap className="w-3 h-3" />
                 <span>
-                  Shift Mix ({Math.min(shiftRule.dailyQuotaDials, activeShiftMixCount)})
+                  Shift Mix{isOwner ? ` (${Math.min(shiftRule.dailyQuotaDials, activeShiftMixCount)})` : ""}
                 </span>
               </button>
             )}
@@ -1089,7 +1091,7 @@ export function CallerFocusCockpit({
                   : "text-zinc-300 hover:text-white"
               }`}
             >
-              Fresh Uncalled ({freshUncalledCount})
+              {isOwner ? `Fresh Uncalled (${freshUncalledCount})` : "Fresh Leads"}
             </button>
             <button
               type="button"
@@ -1105,7 +1107,7 @@ export function CallerFocusCockpit({
                   : "text-zinc-300 hover:text-white"
               }`}
             >
-              <span>Callbacks ({callbacksTotalCount})</span>
+              <span>{isOwner ? `Callbacks (${callbacksTotalCount})` : "Callbacks"}</span>
               {mandatoryDueCount > 0 && (
                 <span className="inline-flex h-1.5 w-1.5 rounded-full bg-amber-400" />
               )}
@@ -1125,7 +1127,7 @@ export function CallerFocusCockpit({
                     : "text-zinc-300 hover:text-white"
                 }`}
               >
-                Retry Pool ({retriesCount})
+                {isOwner ? `Retry Pool (${retriesCount})` : "Retry Pool"}
               </button>
             )}
             <button
@@ -1142,7 +1144,7 @@ export function CallerFocusCockpit({
                   : "text-zinc-400 hover:text-white"
               }`}
             >
-              All Active ({activeCallableStream.length})
+              {isOwner ? `All Active (${activeCallableStream.length})` : "All Active"}
             </button>
           </div>
 
@@ -1674,7 +1676,7 @@ export function CallerFocusCockpit({
           <div className="flex flex-wrap items-center gap-2 min-w-0">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/35 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">
               <Clock className="w-3 h-3" />
-              <span>{activeShiftBlock.title}</span>
+              <span>{isOwner ? activeShiftBlock.title : "Active Shift Mix"}</span>
             </span>
             <span className="inline-flex items-center gap-1 rounded-full bg-white/[0.05] border border-white/10 px-2.5 py-0.5 text-[10px] font-semibold text-zinc-200">
               <span>
@@ -1699,30 +1701,40 @@ export function CallerFocusCockpit({
           <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
             <span
               className="rounded-full bg-black/50 border border-amber-500/30 px-2.5 py-0.5 text-zinc-300"
-              title={`Total scheduled follow-ups in pool: ${shiftSummary.totalFollowUps}. Capped at ${shiftRule.followUpDailyCap}/shift so you are never stuck.`}
+              title={
+                isOwner
+                  ? `Total scheduled follow-ups in pool: ${shiftSummary.totalFollowUps}. Capped at ${shiftRule.followUpDailyCap}/shift so you are never stuck.`
+                  : "Daily Follow-Up target for this shift"
+              }
             >
               Follow-Ups:{" "}
               <strong className="text-amber-300 font-mono">
                 {shiftSummary.followUpsDoneToday}/{shiftSummary.todayFollowUpQuota}
               </strong>
-              <span className="text-zinc-500 ml-1">(Pool {shiftSummary.totalFollowUps})</span>
+              {isOwner && (
+                <span className="text-zinc-500 ml-1">(Pool {shiftSummary.totalFollowUps})</span>
+              )}
             </span>
             <span className="rounded-full bg-black/50 border border-emerald-500/30 px-2.5 py-0.5 text-zinc-300">
               Fresh:{" "}
               <strong className="text-emerald-300 font-mono">
                 {shiftSummary.freshDoneToday}/{shiftSummary.todayFreshQuota}
               </strong>
-              <span className="text-zinc-500 ml-1">(Pool {shiftSummary.totalFresh})</span>
+              {isOwner && (
+                <span className="text-zinc-500 ml-1">(Pool {shiftSummary.totalFresh})</span>
+              )}
             </span>
             <span className="rounded-full bg-black/50 border border-sky-500/30 px-2.5 py-0.5 text-zinc-300">
               Retry:{" "}
               <strong className="text-sky-300 font-mono">
                 {shiftSummary.retriesDoneToday}/{shiftSummary.todayRetryQuota}
               </strong>
-              <span className="text-zinc-500 ml-1">(Pool {shiftSummary.totalRetries})</span>
+              {isOwner && (
+                <span className="text-zinc-500 ml-1">(Pool {shiftSummary.totalRetries})</span>
+              )}
             </span>
             <span className="rounded-full bg-white/[0.06] border border-white/15 px-2.5 py-0.5 text-zinc-200 font-semibold">
-              Shift Quota:{" "}
+              {isOwner ? "Shift Quota: " : "Shift Goal: "}
               <strong className="text-white font-mono">
                 {Math.max(sessionStreak, shiftSummary.dialedTodayTotal)}/{shiftSummary.dailyQuotaDials}
               </strong>

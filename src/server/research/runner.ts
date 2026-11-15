@@ -165,6 +165,38 @@ export interface PrepareCandidatesResult {
   jobsCount: number;
 }
 
+/**
+ * Prevents existing CRM leads (already researched/approved, assigned to any caller,
+ * or containing call history/notes) from being recycled into a new discovery run.
+ */
+async function filterFreshUnassignedIds(db: Db, candidateIds: string[]): Promise<string[]> {
+  const uniqueIds = Array.from(new Set(candidateIds.filter(Boolean)));
+  if (uniqueIds.length === 0) return [];
+
+  const rows = await db
+    .select({
+      id: companies.id,
+      status: companies.status,
+      assignedMemberId: companies.assignedMemberId,
+      notes: companies.notes,
+    })
+    .from(companies)
+    .where(inArray(companies.id, uniqueIds));
+
+  const eligibleSet = new Set(
+    rows
+      .filter(
+        (r) =>
+          r.status === "DISCOVERED" &&
+          (!r.assignedMemberId || r.assignedMemberId.trim() === "") &&
+          (!r.notes || r.notes.trim() === "")
+      )
+      .map((r) => r.id)
+  );
+
+  return uniqueIds.filter((id) => eligibleSet.has(id));
+}
+
 export async function prepareRunCandidates(
   db: Db,
   runId: string,
@@ -385,7 +417,8 @@ export async function prepareRunCandidates(
     });
 
     companyIdsToResearch.push(...intakeResult.createdIds);
-    for (const dupId of intakeResult.duplicateIds) {
+    const eligibleDuplicates = await filterFreshUnassignedIds(db, intakeResult.duplicateIds);
+    for (const dupId of eligibleDuplicates) {
       if (companyIdsToResearch.length >= poolLimit) break;
       companyIdsToResearch.push(dupId);
     }
@@ -647,7 +680,13 @@ export async function executeQueuedBatch(
           { actor: run.actor || "Discovery Runner", marketId: run.marketId ?? undefined }
         );
 
-        const newTargetIds = Array.from(new Set([...replenishIntake.createdIds, ...replenishIntake.duplicateIds]));
+        const eligibleReplenishDuplicates = await filterFreshUnassignedIds(
+          db,
+          replenishIntake.duplicateIds
+        );
+        const newTargetIds = Array.from(
+          new Set([...replenishIntake.createdIds, ...eligibleReplenishDuplicates])
+        );
         if (newTargetIds.length > 0) {
           await db.insert(researchJobs).values(
             newTargetIds.map((cid) => ({

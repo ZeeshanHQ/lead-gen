@@ -1776,7 +1776,7 @@ export async function assignBulkLeadsToCaller(
     inArray(companies.status, callerStatuses),
   ];
 
-  if (params.onlyUnassigned) {
+  if (params.onlyUnassigned !== false) {
     conditions.push(
       sql`(${companies.assignedMemberId} IS NULL OR ${companies.assignedMemberId} = '')`
     );

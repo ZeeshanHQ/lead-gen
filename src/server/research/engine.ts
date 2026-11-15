@@ -207,6 +207,53 @@ export async function researchCompany(
     throw new Error(`Company ${companyId} not found`);
   }
 
+  // Guard: never overwrite, re-stage, or wipe leads already active in CRM,
+  // assigned to a caller, or carrying prior call history/notes.
+  const postApprovalStatuses = new Set([
+    "APPROVED",
+    "SYNCED",
+    "CALLING",
+    "CONNECTED",
+    "PAIN_FOUND",
+    "MEETING_BOOKED",
+    "QUALIFIED",
+    "NURTURE",
+    "LOST",
+  ]);
+  if (
+    postApprovalStatuses.has(company.status) ||
+    Boolean(company.assignedMemberId && company.assignedMemberId.trim() !== "") ||
+    Boolean(company.notes && /\[\d{4}-\d{2}-\d{2}/.test(company.notes))
+  ) {
+    const scoreBreakdown = calculateLeadScore(
+      {
+        name: company.name,
+        website: company.website,
+        state: company.state,
+        city: company.city,
+        zip: company.zip,
+        facts: (company.facts as FactMap) || {},
+        contacts: [],
+        contactResearchDone: true,
+      },
+      options.ruleConfig || defaultHvacRuleConfig()
+    );
+    return {
+      companyId,
+      companyName: company.name,
+      domain: company.domain ?? "",
+      status: "APPROVED",
+      pagesCrawled: 0,
+      factsRecorded: 0,
+      contactsDiscovered: 0,
+      icpScore: scoreBreakdown.icpScore,
+      researchConfidence: scoreBreakdown.researchConfidence,
+      grade: scoreBreakdown.grade,
+      scoreBreakdown,
+      summary: "Skipped re-research: lead is already active/assigned in CRM with preserved history.",
+    };
+  }
+
   const [marketRow] = await db
     .select()
     .from(markets)

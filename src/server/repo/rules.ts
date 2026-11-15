@@ -171,14 +171,14 @@ export async function reEvaluateLeadsWithRule(
   if (!rule || !rule.config) throw new RuleValidationError(["Rule not found"]);
   const ruleConfig = rule.config as RuleConfig;
 
-  // Fetch all leads in active review/pipeline stages for this rule's market
+  // Fetch only pre-approval pipeline/staging leads (never reset already-approved/active CRM leads)
   const candidateRows = await db
     .select()
     .from(companies)
     .where(
       and(
         eq(companies.marketId, rule.marketId),
-        inArray(companies.status, ["DISCOVERED", "RESEARCHED", "NEEDS_REVIEW", "DISQUALIFIED", "APPROVED"])
+        inArray(companies.status, ["DISCOVERED", "RESEARCHED", "NEEDS_REVIEW", "DISQUALIFIED"])
       )
     );
 
@@ -268,14 +268,20 @@ export async function reEvaluateLeadsWithRule(
       evalCompany.facts.casual_host_only?.value === "YES";
     const passed = gateResult.passed && rowGatePassed && evaluation.verdict !== "FAIL" && !isHardOffNiche;
 
+    const hasOwnershipOrHistory =
+      Boolean(c.assignedMemberId && c.assignedMemberId.trim() !== "") ||
+      Boolean(c.notes && c.notes.trim() !== "");
+
     let nextStatus = c.status;
-    if (!passed) {
-      if (c.status === "DISCOVERED" || c.status === "RESEARCHED" || c.status === "NEEDS_REVIEW" || c.status === "APPROVED") {
-        nextStatus = "DISQUALIFIED";
-      }
-    } else {
-      if (c.status === "DISQUALIFIED" || c.status === "DISCOVERED" || c.status === "RESEARCHED") {
-        nextStatus = "NEEDS_REVIEW";
+    if (!hasOwnershipOrHistory) {
+      if (!passed) {
+        if (c.status === "DISCOVERED" || c.status === "RESEARCHED" || c.status === "NEEDS_REVIEW") {
+          nextStatus = "DISQUALIFIED";
+        }
+      } else {
+        if (c.status === "DISQUALIFIED" || c.status === "DISCOVERED" || c.status === "RESEARCHED") {
+          nextStatus = "NEEDS_REVIEW";
+        }
       }
     }
 

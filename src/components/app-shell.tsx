@@ -450,8 +450,8 @@ function AppShellInner({
           href: "/caller",
           label: "Leads CRM",
           icon: PhoneCall,
-          count: callerCount,
-          highlight: callerCount > 0,
+          count: canManageTeam ? callerCount : undefined,
+          highlight: canManageTeam && callerCount > 0,
           perm: "callerWorkbench",
         },
         {

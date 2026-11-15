@@ -1474,13 +1474,17 @@ export function CallerClient({
               </span>
               <span className="text-zinc-700">|</span>
               <span className="text-xs font-medium text-zinc-300">{nicheName}</span>
-              <span className="text-zinc-700">|</span>
-              <span className="text-xs font-mono font-bold text-white" title="Total unique companies in selected scope">
-                {totalCount} Total Pool
-              </span>
-              <span className="text-[11px] font-mono text-zinc-400">
-                ({toCallCount} Uncalled &bull; {totalCount - toCallCount} Called)
-              </span>
+              {canManageSettings && (
+                <>
+                  <span className="text-zinc-700">|</span>
+                  <span className="text-xs font-mono font-bold text-white" title="Total unique companies in selected scope">
+                    {totalCount} Total Pool
+                  </span>
+                  <span className="text-[11px] font-mono text-zinc-400">
+                    ({toCallCount} Uncalled &bull; {totalCount - toCallCount} Called)
+                  </span>
+                </>
+              )}
             </div>
 
             {/* Owner Caller Scope Switcher right in Calling Console so Owner always sees All Team vs Caller */}
@@ -1897,14 +1901,11 @@ export function CallerClient({
                 </span>
               </div>
               <div className="text-[11px] text-zinc-400">
-                Showing only leads assigned directly to your account ({totalCount} assigned leads)
+                Showing leads assigned directly to your active calling shift
               </div>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2.5 text-xs">
-            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
-              Ready to Call: <strong className="text-white">{toCallCount}</strong>
-            </span>
             <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
               Calls Dialed: <strong className="text-sky-300">{scopedTelemetry.totalCallsDialed}</strong>{" "}
               <span className="text-[10px] text-zinc-500">({scopedTelemetry.dialedLeads} leads)</span>
