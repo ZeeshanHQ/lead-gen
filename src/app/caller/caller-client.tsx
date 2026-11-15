@@ -20,6 +20,7 @@ import {
   deleteCustomCrmColumnAction,
   assignBulkLeadsToCallerAction,
   unassignCallerLeadsAction,
+  saveCallerShiftConfigAction,
 } from "./actions";
 import { type TeamMember, ROLE_PRESETS } from "@/server/domain/team";
 import type { LifecycleStatus } from "@/server/domain/lifecycle";
@@ -55,7 +56,17 @@ import {
   CallerFocusCockpit,
   type FocusCockpitSubmitPayload,
 } from "@/components/caller-focus-cockpit";
-import { computeAutoFollowUpCadence } from "@/server/domain/focus-queue";
+import {
+  computeAutoFollowUpCadence,
+  DEFAULT_CALLER_SHIFT_CONFIG,
+  resolveCallerShiftRule,
+  computeActiveNightShiftBlock,
+  computeCallerShiftSummary,
+  resolveEffectiveShiftWeights,
+  type CallerShiftConfig,
+  type CallerShiftRule,
+  type ShiftPacingMode,
+} from "@/server/domain/focus-queue";
 import {
   DEFAULT_DIALER_CONFIG,
   type DialerConfig,
@@ -89,6 +100,8 @@ import {
   Clock,
   FileText,
   Zap,
+  SlidersHorizontal,
+  RotateCcw,
 } from "lucide-react";
 
 interface CallerClientProps {
@@ -103,6 +116,7 @@ interface CallerClientProps {
   initialCustomColumns?: CustomCrmColumn[];
   marketId?: string;
   dialerConfig?: DialerConfig;
+  initialShiftConfig?: Partial<CallerShiftConfig>;
   activeActorName?: string;
   activeMember?: TeamMember;
   allMembers?: TeamMember[];
@@ -169,6 +183,7 @@ export function CallerClient({
   initialCustomColumns = [],
   marketId,
   dialerConfig = DEFAULT_DIALER_CONFIG,
+  initialShiftConfig,
   activeActorName = "Sales Caller",
   activeMember,
   allMembers = [],
@@ -231,6 +246,105 @@ export function CallerClient({
   const canEditContacts = isOwner || Boolean(permissions?.editContacts);
   const canEditNotes =
     isOwner || Boolean(permissions?.editContacts) || Boolean(permissions?.callerWorkbench);
+
+  // Owner-Controlled Shift Sequence & Multi-Caller Pacing State
+  const [shiftConfig, setShiftConfig] = useState<CallerShiftConfig>(() => ({
+    defaultRule: {
+      ...DEFAULT_CALLER_SHIFT_CONFIG.defaultRule,
+      ...(initialShiftConfig?.defaultRule || {}),
+    },
+    callerOverrides: {
+      ...(initialShiftConfig?.callerOverrides || {}),
+    },
+    updatedAt: initialShiftConfig?.updatedAt,
+    updatedBy: initialShiftConfig?.updatedBy,
+  }));
+  const [shiftPanelOpen, setShiftPanelOpen] = useState(false);
+  const [shiftTargetCallerId, setShiftTargetCallerId] = useState<string>("ALL");
+  const [shiftDraftRule, setShiftDraftRule] = useState<CallerShiftRule>(() =>
+    resolveCallerShiftRule(initialShiftConfig, "ALL")
+  );
+  const [shiftSavePending, startShiftSave] = useTransition();
+
+  React.useEffect(() => {
+    if (!initialShiftConfig) return;
+    setShiftConfig({
+      defaultRule: {
+        ...DEFAULT_CALLER_SHIFT_CONFIG.defaultRule,
+        ...(initialShiftConfig.defaultRule || {}),
+      },
+      callerOverrides: {
+        ...(initialShiftConfig.callerOverrides || {}),
+      },
+      updatedAt: initialShiftConfig.updatedAt,
+      updatedBy: initialShiftConfig.updatedBy,
+    });
+  }, [initialShiftConfig]);
+
+  const viewedShiftCallerId = canManageSettings
+    ? callerFilter !== "ALL" && callerFilter !== "UNASSIGNED"
+      ? callerFilter
+      : null
+    : activeMember?.id ?? null;
+
+  const activeShiftRule = React.useMemo(
+    () => resolveCallerShiftRule(shiftConfig, viewedShiftCallerId),
+    [shiftConfig, viewedShiftCallerId]
+  );
+
+  const activeNightBlock = React.useMemo(() => computeActiveNightShiftBlock(), []);
+  const activeShiftWeights = React.useMemo(
+    () => resolveEffectiveShiftWeights(activeShiftRule),
+    [activeShiftRule]
+  );
+
+  const selectShiftTarget = (targetId: string) => {
+    setShiftTargetCallerId(targetId);
+    setShiftDraftRule(resolveCallerShiftRule(shiftConfig, targetId === "ALL" ? null : targetId));
+  };
+
+  const handleSaveShiftRule = () => {
+    startShiftSave(async () => {
+      const res = await saveCallerShiftConfigAction({
+        targetCallerId: shiftTargetCallerId,
+        ruleUpdate: shiftDraftRule,
+      });
+      if (res.ok && res.config) {
+        setShiftConfig(res.config);
+        setShiftDraftRule(
+          resolveCallerShiftRule(
+            res.config,
+            shiftTargetCallerId === "ALL" ? null : shiftTargetCallerId
+          )
+        );
+        const targetLabel =
+          shiftTargetCallerId === "ALL"
+            ? "All Callers (Workspace Default)"
+            : allMembers.find((m) => m.id === shiftTargetCallerId)?.name || "Caller";
+        showToast(`Saved shift sequence & daily quotas for ${targetLabel}.`);
+      } else {
+        showToast(res.error || "Failed to save shift sequence settings");
+      }
+    });
+  };
+
+  const handleResetCallerShiftOverride = (callerId: string) => {
+    startShiftSave(async () => {
+      const res = await saveCallerShiftConfigAction({
+        targetCallerId: callerId,
+        ruleUpdate: {},
+        resetOverride: true,
+      });
+      if (res.ok && res.config) {
+        setShiftConfig(res.config);
+        setShiftDraftRule(resolveCallerShiftRule(res.config, null));
+        const targetName = allMembers.find((m) => m.id === callerId)?.name || "Caller";
+        showToast(`Reset ${targetName} back to Workspace Default Shift Rule.`);
+      } else {
+        showToast(res.error || "Failed to reset caller shift override");
+      }
+    });
+  };
 
   const handleAutoDistribute = () => {
     if (!marketId) return;
@@ -1370,7 +1484,7 @@ export function CallerClient({
             </div>
 
             {/* Owner Caller Scope Switcher right in Calling Console so Owner always sees All Team vs Caller */}
-            {isOwner && teamCallers.length > 0 && (
+            {canManageSettings && teamCallers.length > 0 && (
               <div className="inline-flex items-center gap-1 rounded-full border border-white/[0.1] bg-[#07080b] p-0.5 text-[11px]">
                 <button
                   type="button"
@@ -1417,27 +1531,59 @@ export function CallerClient({
             )}
           </div>
 
-          {/* View Mode Switcher: STRICTLY OWNER ONLY (Sleek Platinum Monochrome — No Neon Green or Lightning Emoji) */}
-          {isOwner && (
-            <div className="inline-flex items-center p-0.5 rounded-full bg-[#07080b] border border-white/[0.1] text-xs shadow-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Owner Shift Sequence & Multi-Caller Pacing Toggle */}
+            {canManageSettings && (
               <button
                 type="button"
-                onClick={() => setViewModeAndPersist("FOCUS")}
-                className="flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-gradient-to-b from-white via-zinc-100 to-zinc-300 text-black font-bold shadow-sm transition cursor-pointer"
+                onClick={() => {
+                  const nextOpen = !shiftPanelOpen;
+                  setShiftPanelOpen(nextOpen);
+                  if (nextOpen) {
+                    const target =
+                      callerFilter !== "ALL" && callerFilter !== "UNASSIGNED"
+                        ? callerFilter
+                        : "ALL";
+                    selectShiftTarget(target);
+                  }
+                }}
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-bold transition cursor-pointer shadow-sm ${
+                  shiftPanelOpen
+                    ? "border-emerald-400 bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-500/40"
+                    : "border-white/[0.12] bg-[#0a0b10] hover:border-emerald-500/40 text-zinc-200 hover:text-white"
+                }`}
+                title="Configure Daily Shift Quotas, PKT Time Sequence, and Follow-Up/Fresh/Retry Mix across all callers"
               >
-                <Phone className="w-3 h-3 text-black" />
-                <span>Calling Console</span>
+                <SlidersHorizontal className="w-3 h-3 text-emerald-400" />
+                <span>Shift Sequence</span>
+                <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.2 text-[9px] font-mono text-emerald-300">
+                  {activeShiftWeights.followUp}F:{activeShiftWeights.fresh}N:{activeShiftWeights.retry}R • {activeShiftRule.dailyQuotaDials}/d
+                </span>
               </button>
-              <button
-                type="button"
-                onClick={() => setViewModeAndPersist("SHEET")}
-                className="flex items-center gap-1.5 px-3.5 py-1 rounded-full text-zinc-400 hover:text-white transition cursor-pointer"
-              >
-                <FileSpreadsheet className="w-3 h-3" />
-                <span>Data Table</span>
-              </button>
-            </div>
-          )}
+            )}
+
+            {/* View Mode Switcher: STRICTLY OWNER ONLY (Sleek Platinum Monochrome — No Neon Green or Lightning Emoji) */}
+            {isOwner && (
+              <div className="inline-flex items-center p-0.5 rounded-full bg-[#07080b] border border-white/[0.1] text-xs shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setViewModeAndPersist("FOCUS")}
+                  className="flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-gradient-to-b from-white via-zinc-100 to-zinc-300 text-black font-bold shadow-sm transition cursor-pointer"
+                >
+                  <Phone className="w-3 h-3 text-black" />
+                  <span>Calling Console</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewModeAndPersist("SHEET")}
+                  className="flex items-center gap-1.5 px-3.5 py-1 rounded-full text-zinc-400 hover:text-white transition cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3 h-3" />
+                  <span>Data Table</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="rounded-2xl border border-white/[0.1] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.14)] p-4 flex flex-wrap items-center justify-between gap-3">
@@ -1797,38 +1943,528 @@ export function CallerClient({
       ) : null}
 
       {effectiveViewMode === "FOCUS" ? (
-        <CallerFocusCockpit
-          leads={callerScopedQueue}
-          isOwner={isOwner}
-          telemetry={scopedTelemetry}
-          nicheName={nicheName}
-          smartFields={smartFields}
-          activeActorName={actor.trim() || activeActorName}
-          canEditContacts={canEditContacts}
-          initialTzFilter={initialTzFilter}
-          initialWindowFilter={initialWindowFilter}
-          getOpeningScript={(leadItem) =>
-            getSmartOpeningScript({
-              companyName: leadItem.name,
-              contactName: leadItem.bestContact.name,
-              city: leadItem.city,
-              state: leadItem.state,
-              nicheName: leadItem.marketName || nicheName,
-              cleanNotes: stripFollowUpTagFromNotes(leadItem.notes),
-              researchSummary: leadItem.researchSummary,
-            })
-          }
-          onLogCallAndAdvance={handleFocusCockpitSubmit}
-          onRescheduleFollowUp={handleCockpitRescheduleFollowUp}
-          onSmartFieldChange={handleSmartFieldChange}
-          onOpenEditLead={openEditModal}
-          onResetLead={handleResetLead}
-          onDeleteCallLog={handleDeleteCallLogEntry}
-          onSwitchToFullCrm={isOwner ? (filterStatus) => {
-            if (filterStatus) setStatusFilterAndPersist(filterStatus);
-            setViewModeAndPersist("SHEET");
-          } : undefined}
-        />
+        <>
+          {/* Owner Shift Sequence & Multi-Caller Pacer Panel */}
+          {canManageSettings && shiftPanelOpen && (
+            <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-b from-[#11141a] via-[#0b0d12] to-[#08090d] p-4 space-y-4 shadow-2xl">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.08] pb-3">
+                <div className="space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Zap className="w-4 h-4 text-emerald-400" />
+                    <h2 className="text-sm font-bold text-white">
+                      Owner Shift Sequence &amp; Multi-Caller Pacer
+                    </h2>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-500/35 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                      <Clock className="w-3 h-3" />
+                      <span>{activeNightBlock.title}</span>
+                      <span className="text-zinc-400 font-mono">({activeNightBlock.pktTimeFormatted})</span>
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400">
+                    Control daily shift quotas, PKT night calling blocks, and the automatic Follow-Up / Fresh / Retry cycle for every cold caller.
+                    {shiftConfig.updatedAt && (
+                      <span className="ml-2 text-zinc-500">
+                        Last updated by {shiftConfig.updatedBy || "Owner"}
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShiftPanelOpen(false)}
+                  className="p-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-white/[0.08] cursor-pointer"
+                  title="Close Shift Sequence Panel"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* All Callers Live Shift Progress Grid */}
+              {teamCallers.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
+                  {teamCallers.map((caller) => {
+                    const callerLeads = activeQueue.filter(
+                      (l) => l.assignedMemberId === caller.id
+                    );
+                    const cRule = resolveCallerShiftRule(shiftConfig, caller.id);
+                    const cSummary = computeCallerShiftSummary(callerLeads, cRule);
+                    const hasCustomOverride = Boolean(shiftConfig.callerOverrides?.[caller.id]);
+                    const progressPct = Math.min(
+                      100,
+                      Math.round((cSummary.dialedTodayTotal / Math.max(1, cSummary.dailyQuotaDials)) * 100)
+                    );
+                    const isEditingThis = shiftTargetCallerId === caller.id;
+                    const isViewingThis = callerFilter === caller.id;
+
+                    return (
+                      <div
+                        key={caller.id}
+                        className={`rounded-xl border p-3 space-y-2 transition ${
+                          isEditingThis
+                            ? "border-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-400/30"
+                            : isViewingThis
+                            ? "border-white/30 bg-white/[0.04]"
+                            : "border-white/[0.08] bg-[#07080b] hover:border-white/20"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Users className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                            <span className="text-xs font-bold text-white truncate">
+                              {caller.name}
+                            </span>
+                            <span
+                              className={`rounded-full px-1.5 py-0.2 text-[9px] font-bold border ${
+                                hasCustomOverride
+                                  ? "border-amber-400/40 bg-amber-500/15 text-amber-200"
+                                  : "border-white/10 bg-white/[0.04] text-zinc-400"
+                              }`}
+                            >
+                              {hasCustomOverride ? "Custom" : "Default"}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-mono font-bold text-zinc-300 shrink-0">
+                            {cSummary.totalPool} leads
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-1 text-[10px]">
+                          <div className="rounded-lg bg-black/50 border border-amber-500/20 px-2 py-1">
+                            <div className="text-zinc-400 text-[9px]">Follow-Up</div>
+                            <div className="font-mono font-bold text-amber-300">
+                              {cSummary.followUpsDoneToday}/{cSummary.todayFollowUpQuota}
+                            </div>
+                            <div className="text-[9px] text-zinc-500">
+                              Pool {cSummary.totalFollowUps}
+                              {cSummary.agingFollowUps > 0 ? ` • ${cSummary.agingFollowUps} >48h` : ""}
+                            </div>
+                          </div>
+                          <div className="rounded-lg bg-black/50 border border-emerald-500/20 px-2 py-1">
+                            <div className="text-zinc-400 text-[9px]">Fresh</div>
+                            <div className="font-mono font-bold text-emerald-300">
+                              {cSummary.freshDoneToday}/{cSummary.todayFreshQuota}
+                            </div>
+                            <div className="text-[9px] text-zinc-500">
+                              Pool {cSummary.totalFresh}
+                              {cSummary.agingFresh > 0 ? ` • ${cSummary.agingFresh} >3d` : ""}
+                            </div>
+                          </div>
+                          <div className="rounded-lg bg-black/50 border border-sky-500/20 px-2 py-1">
+                            <div className="text-zinc-400 text-[9px]">Retry</div>
+                            <div className="font-mono font-bold text-sky-300">
+                              {cSummary.retriesDoneToday}/{cSummary.todayRetryQuota}
+                            </div>
+                            <div className="text-[9px] text-zinc-500">
+                              Pool {cSummary.totalRetries}
+                              {cSummary.agingRetries > 0 ? ` • ${cSummary.agingRetries} >48h` : ""}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-zinc-400">
+                            <span>
+                              Shift Dials:{" "}
+                              <strong className="text-white font-mono">
+                                {cSummary.dialedTodayTotal}/{cSummary.dailyQuotaDials}
+                              </strong>
+                            </span>
+                            <span>
+                              Meetings:{" "}
+                              <strong className="text-emerald-400 font-mono">
+                                {cSummary.meetingsToday}
+                              </strong>
+                            </span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-zinc-900 overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-sky-400 transition-all"
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 pt-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setCallerFilterAndPersist(caller.id)}
+                            className="flex-1 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.1] px-2 py-1 text-[10px] font-semibold text-zinc-200 transition cursor-pointer"
+                          >
+                            {isViewingThis ? "Viewing Queue" : "View Queue"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              selectShiftTarget(caller.id);
+                              setCallerFilterAndPersist(caller.id);
+                            }}
+                            className="flex-1 rounded-lg border border-emerald-500/35 bg-emerald-500/15 hover:bg-emerald-500/25 px-2 py-1 text-[10px] font-bold text-emerald-200 transition cursor-pointer"
+                          >
+                            Edit Shift Rule
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Shift Rule Editor */}
+              <div className="rounded-xl border border-white/[0.08] bg-[#07080b] p-3.5 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-white">Editing Rule For:</span>
+                    <select
+                      value={shiftTargetCallerId}
+                      onChange={(e) => selectShiftTarget(e.target.value)}
+                      className="rounded-lg border border-white/15 bg-zinc-900 px-2.5 py-1 text-xs font-semibold text-white focus:outline-none focus:border-emerald-400"
+                    >
+                      <option value="ALL">All Callers (Workspace Default)</option>
+                      {teamCallers.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} {shiftConfig.callerOverrides?.[c.id] ? "(Custom Override)" : "(Uses Default)"}
+                        </option>
+                      ))}
+                    </select>
+                    {shiftTargetCallerId !== "ALL" &&
+                      Boolean(shiftConfig.callerOverrides?.[shiftTargetCallerId]) && (
+                        <button
+                          type="button"
+                          disabled={shiftSavePending}
+                          onClick={() => handleResetCallerShiftOverride(shiftTargetCallerId)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-amber-500/35 bg-amber-500/10 hover:bg-amber-500/20 px-2.5 py-1 text-[10px] font-semibold text-amber-200 transition cursor-pointer disabled:opacity-50"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Reset to Default</span>
+                        </button>
+                      )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                    <label className="inline-flex items-center gap-1.5 text-zinc-200 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={shiftDraftRule.enabled}
+                        onChange={(e) =>
+                          setShiftDraftRule((prev) => ({
+                            ...prev,
+                            enabled: e.target.checked,
+                          }))
+                        }
+                        className="accent-emerald-400"
+                      />
+                      <span>Enable Shift Auto-Mix</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={shiftDraftRule.lockCallerToShiftMix}
+                        onChange={(e) =>
+                          setShiftDraftRule((prev) => ({
+                            ...prev,
+                            lockCallerToShiftMix: e.target.checked,
+                          }))
+                        }
+                        className="accent-emerald-400"
+                      />
+                      <span>Default Callers to Shift Mix</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Pacing Modes */}
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                    Shift Sequence Mode
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5">
+                    {(
+                      [
+                        {
+                          id: "AUTO_TIME_SEQUENCE",
+                          title: "Auto PKT Sequence",
+                          sub: "Follows 6PM / 8:30PM / 11:30PM blocks",
+                        },
+                        {
+                          id: "BALANCED_5_CALL",
+                          title: "Balanced 5-Call",
+                          sub: "2 Follow-Up : 2 Fresh : 1 Retry",
+                        },
+                        {
+                          id: "FRESH_POWER_HOUR",
+                          title: "Fresh Power Hour",
+                          sub: "1 Follow-Up : 3 Fresh : 1 Retry",
+                        },
+                        {
+                          id: "FOLLOW_UP_BLITZ",
+                          title: "Follow-Up Blitz",
+                          sub: "3 Follow-Up : 1 Fresh : 1 Retry",
+                        },
+                        {
+                          id: "RETRY_CLEANUP",
+                          title: "Retry Cleanup",
+                          sub: "1 Follow-Up : 1 Fresh : 3 Retry",
+                        },
+                        {
+                          id: "CUSTOM_RATIO",
+                          title: "Custom Ratio",
+                          sub: "Set your own cycle weights",
+                        },
+                      ] as Array<{ id: ShiftPacingMode; title: string; sub: string }>
+                    ).map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() =>
+                          setShiftDraftRule((prev) => ({ ...prev, mode: m.id }))
+                        }
+                        className={`rounded-lg border px-2.5 py-2 text-left transition cursor-pointer ${
+                          shiftDraftRule.mode === m.id
+                            ? "border-emerald-400 bg-emerald-500/20 text-white"
+                            : "border-white/[0.08] bg-black/40 text-zinc-300 hover:border-white/25"
+                        }`}
+                      >
+                        <div className="text-[11px] font-bold">{m.title}</div>
+                        <div className="text-[9px] text-zinc-400 mt-0.5">{m.sub}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Daily Quotas, Anti-Decay Guards & Custom Ratio Inputs */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 items-end">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-zinc-400 mb-1">
+                      Daily Quota (Dials)
+                    </label>
+                    <input
+                      type="number"
+                      min={10}
+                      max={1000}
+                      value={shiftDraftRule.dailyQuotaDials}
+                      onChange={(e) =>
+                        setShiftDraftRule((prev) => ({
+                          ...prev,
+                          dailyQuotaDials: Number(e.target.value) || 120,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className="block text-[10px] font-semibold text-amber-300 mb-1"
+                      title="Spreads accumulated follow-ups safely across shifts while keeping Owner Connected callbacks at #1"
+                    >
+                      Max Follow-Ups / Shift
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={500}
+                      value={shiftDraftRule.followUpDailyCap}
+                      onChange={(e) =>
+                        setShiftDraftRule((prev) => ({
+                          ...prev,
+                          followUpDailyCap: Number(e.target.value) || 25,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-amber-500/30 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-amber-200 focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-emerald-300 mb-1">
+                      Fresh Daily Target
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={500}
+                      value={shiftDraftRule.freshDailyTarget}
+                      onChange={(e) =>
+                        setShiftDraftRule((prev) => ({
+                          ...prev,
+                          freshDailyTarget: Number(e.target.value) || 0,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-emerald-500/30 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-emerald-200 focus:outline-none focus:border-emerald-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-sky-300 mb-1">
+                      Retry Daily Target
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={500}
+                      value={shiftDraftRule.retryDailyTarget}
+                      onChange={(e) =>
+                        setShiftDraftRule((prev) => ({
+                          ...prev,
+                          retryDailyTarget: Number(e.target.value) || 0,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-sky-500/30 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-sky-200 focus:outline-none focus:border-sky-400"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className="block text-[10px] font-semibold text-zinc-300 mb-1"
+                      title="After this many unanswered attempts, lead rests 7 days at tail so Retry Pool never bloats"
+                    >
+                      Max Retries (7d Rest)
+                    </label>
+                    <input
+                      type="number"
+                      min={2}
+                      max={15}
+                      value={shiftDraftRule.maxRetryAttempts}
+                      onChange={(e) =>
+                        setShiftDraftRule((prev) => ({
+                          ...prev,
+                          maxRetryAttempts: Number(e.target.value) || 6,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className="block text-[10px] font-semibold text-zinc-300 mb-1"
+                      title="Minimum hours before re-dialing the same unanswered lead within a shift"
+                    >
+                      Retry Cooldown (hrs)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={48}
+                      value={shiftDraftRule.retryCooldownHours}
+                      onChange={(e) =>
+                        setShiftDraftRule((prev) => ({
+                          ...prev,
+                          retryCooldownHours: Number(e.target.value) || 4,
+                        }))
+                      }
+                      className="w-full rounded-lg border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
+                    />
+                  </div>
+
+                  {shiftDraftRule.mode === "CUSTOM_RATIO" && (
+                    <>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-zinc-400 mb-1">
+                          FU Weight
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={20}
+                          value={shiftDraftRule.followUpWeight}
+                          onChange={(e) =>
+                            setShiftDraftRule((prev) => ({
+                              ...prev,
+                              followUpWeight: Math.max(0, Number(e.target.value) || 0),
+                            }))
+                          }
+                          className="w-full rounded-lg border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-zinc-400 mb-1">
+                          Fresh Weight
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={20}
+                          value={shiftDraftRule.freshWeight}
+                          onChange={(e) =>
+                            setShiftDraftRule((prev) => ({
+                              ...prev,
+                              freshWeight: Math.max(0, Number(e.target.value) || 0),
+                            }))
+                          }
+                          className="w-full rounded-lg border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-zinc-400 mb-1">
+                          Retry Weight
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={20}
+                          value={shiftDraftRule.retryWeight}
+                          onChange={(e) =>
+                            setShiftDraftRule((prev) => ({
+                              ...prev,
+                              retryWeight: Math.max(0, Number(e.target.value) || 0),
+                            }))
+                          }
+                          className="w-full rounded-lg border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/[0.06]">
+                  <p className="text-[10px] text-zinc-400">
+                    Anti-Decay active: Owner <strong className="text-zinc-200">Connected</strong> callbacks lock #1, accumulated follow-ups rotate oldest + newest so none go dead, Fresh &gt;3d get boosted, and {shiftDraftRule.maxRetryAttempts}+ attempt misses rest 7 days with zero data loss.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={shiftSavePending}
+                    onClick={handleSaveShiftRule}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-extrabold px-4 py-1.5 text-xs transition shadow-sm cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>
+                      {shiftSavePending ? "Saving..." : "Save Shift Sequence"}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <CallerFocusCockpit
+            leads={callerScopedQueue}
+            isOwner={isOwner}
+            telemetry={scopedTelemetry}
+            nicheName={nicheName}
+            smartFields={smartFields}
+            activeActorName={actor.trim() || activeActorName}
+            canEditContacts={canEditContacts}
+            initialTzFilter={initialTzFilter}
+            initialWindowFilter={initialWindowFilter}
+            shiftRule={activeShiftRule}
+            getOpeningScript={(leadItem) =>
+              getSmartOpeningScript({
+                companyName: leadItem.name,
+                contactName: leadItem.bestContact.name,
+                city: leadItem.city,
+                state: leadItem.state,
+                nicheName: leadItem.marketName || nicheName,
+                cleanNotes: stripFollowUpTagFromNotes(leadItem.notes),
+                researchSummary: leadItem.researchSummary,
+              })
+            }
+            onLogCallAndAdvance={handleFocusCockpitSubmit}
+            onRescheduleFollowUp={handleCockpitRescheduleFollowUp}
+            onSmartFieldChange={handleSmartFieldChange}
+            onOpenEditLead={openEditModal}
+            onResetLead={handleResetLead}
+            onDeleteCallLog={handleDeleteCallLogEntry}
+            onSwitchToFullCrm={isOwner ? (filterStatus) => {
+              if (filterStatus) setStatusFilterAndPersist(filterStatus);
+              setViewModeAndPersist("SHEET");
+            } : undefined}
+          />
+        </>
       ) : effectiveViewMode === "SHEET" ? (
         <CrmLeadSheet
           initialLeads={crmLeadsFromQueue}

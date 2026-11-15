@@ -16,6 +16,12 @@ import {
   getQuickNoteChipsForOutcome,
   computeAutoFollowUpCadence,
   computeProspectLocalTimeInfo,
+  DEFAULT_CALLER_SHIFT_RULE,
+  buildShiftSequenceStream,
+  computeActiveNightShiftBlock,
+  computeCallerShiftSummary,
+  resolveEffectiveShiftWeights,
+  type CallerShiftRule,
 } from "@/server/domain/focus-queue";
 import {
   resolveSmartFieldValue,
@@ -101,6 +107,7 @@ interface CallerFocusCockpitProps {
   onDeleteCallLog?: (lead: CallerLeadView, logIndex: number) => void;
   initialTzFilter?: string;
   initialWindowFilter?: string;
+  shiftRule?: CallerShiftRule;
 }
 
 type ScriptTabKey =
@@ -209,6 +216,7 @@ export function CallerFocusCockpit({
   onDeleteCallLog,
   initialTzFilter = "ALL",
   initialWindowFilter = "ALL",
+  shiftRule = DEFAULT_CALLER_SHIFT_RULE,
 }: CallerFocusCockpitProps) {
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [cursorIndex, setCursorIndex] = useState<number>(0);
@@ -263,15 +271,48 @@ export function CallerFocusCockpit({
     return () => clearInterval(timer);
   }, []);
 
-  // Intelligent queue stream scope (ALL callable leads, Fresh untouched only, Callbacks only, or Retries only)
+  // Intelligent queue stream scope (Shift Mix, ALL callable leads, Fresh untouched, Callbacks, or Retries)
   const [streamScope, setStreamScope] = useState<
-    "ALL" | "FRESH" | "CALLBACKS" | "RETRIES"
-  >("ALL");
+    "SHIFT_MIX" | "ALL" | "FRESH" | "CALLBACKS" | "RETRIES"
+  >(shiftRule.enabled && shiftRule.lockCallerToShiftMix ? "SHIFT_MIX" : "ALL");
+
+  useEffect(() => {
+    if (!shiftRule.enabled && streamScope === "SHIFT_MIX") {
+      setStreamScope("ALL");
+      setCursorIndex(0);
+    }
+  }, [shiftRule.enabled, streamScope]);
 
   // Rank all leads into the intelligent Focus Stream
   const rankedStream = useMemo(
     () => rankLeadsForFocusStream(leads, nowMs),
     [leads, nowMs]
+  );
+
+  // Owner-controlled Shift Mix sequence + live shift telemetry
+  const shiftMixStream = useMemo(
+    () => buildShiftSequenceStream(rankedStream, shiftRule, nowMs),
+    [rankedStream, shiftRule, nowMs]
+  );
+
+  const shiftSummary = useMemo(
+    () => computeCallerShiftSummary(leads, shiftRule, nowMs),
+    [leads, shiftRule, nowMs]
+  );
+
+  const activeShiftBlock = useMemo(
+    () => computeActiveNightShiftBlock(nowMs),
+    [nowMs]
+  );
+
+  const activeShiftWeights = useMemo(
+    () => resolveEffectiveShiftWeights(shiftRule, nowMs),
+    [shiftRule, nowMs]
+  );
+
+  const activeShiftMixCount = useMemo(
+    () => shiftMixStream.filter((r) => !sessionCompletedIds.has(r.lead.companyId)).length,
+    [shiftMixStream, sessionCompletedIds]
   );
 
   // Active callable stream excludes future callbacks (>45m away) that are held back until due
@@ -355,6 +396,9 @@ export function CallerFocusCockpit({
 
   // Scoped stream according to active stream filter tab
   const baseScopedStream = useMemo(() => {
+    if (streamScope === "SHIFT_MIX") {
+      return shiftMixStream;
+    }
     if (streamScope === "FRESH") {
       return freshStream;
     }
@@ -366,6 +410,7 @@ export function CallerFocusCockpit({
     }
     return activeCallableStream;
   }, [
+    shiftMixStream,
     activeCallableStream,
     freshStream,
     allCallbacksStream,
@@ -430,6 +475,7 @@ export function CallerFocusCockpit({
     }
     if (uncontactedStream.length === 0) return null;
     if (
+      streamScope !== "SHIFT_MIX" &&
       uncontactedStream[0]?.isMandatoryFollowUpLock &&
       !snoozedLockIds.has(uncontactedStream[0].lead.companyId)
     ) {
@@ -1006,8 +1052,29 @@ export function CallerFocusCockpit({
             </button>
           </div>
 
-          {/* Queue Scope Selector: Fresh Uncalled | Callbacks | Active Dialable | Retries */}
+          {/* Queue Scope Selector: Shift Mix | Fresh Uncalled | Callbacks | Retries | Active Dialable */}
           <div className="flex flex-wrap items-center gap-1 bg-[#050507] border border-white/[0.09] rounded-full p-0.5 text-[11px]">
+            {shiftRule.enabled && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStreamScope("SHIFT_MIX");
+                  setPinnedLeadId(null);
+                  setCursorIndex(0);
+                }}
+                title="Owner-controlled Daily Shift Mix: alternates Follow-Ups, Fresh Leads, and Retry Pool so nothing gets stuck"
+                className={`px-2.5 py-1 rounded-full font-semibold transition cursor-pointer inline-flex items-center gap-1 ${
+                  streamScope === "SHIFT_MIX"
+                    ? "bg-gradient-to-b from-emerald-400 to-emerald-500 text-black font-extrabold shadow-sm"
+                    : "text-emerald-300 hover:text-white"
+                }`}
+              >
+                <Zap className="w-3 h-3" />
+                <span>
+                  Shift Mix ({Math.min(shiftRule.dailyQuotaDials, activeShiftMixCount)})
+                </span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -1600,6 +1667,71 @@ export function CallerFocusCockpit({
       )}
 
       {/* =================================================================== */}
+      {/* 1.8 ACTIVE SHIFT SEQUENCE BANNER (TIME BLOCK + AUTO-MIX QUOTAS)     */}
+      {/* =================================================================== */}
+      {streamScope === "SHIFT_MIX" && shiftRule.enabled && (
+        <div className="rounded-xl border border-emerald-500/25 bg-gradient-to-r from-emerald-950/25 via-[#0b0d12] to-[#0a0b0f] px-3.5 py-2 flex flex-wrap items-center justify-between gap-2 shadow-sm">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/35 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">
+              <Clock className="w-3 h-3" />
+              <span>{activeShiftBlock.title}</span>
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/[0.05] border border-white/10 px-2.5 py-0.5 text-[10px] font-semibold text-zinc-200">
+              <span>
+                Cycle: {activeShiftWeights.followUp} Follow-Up → {activeShiftWeights.fresh} Fresh → {activeShiftWeights.retry} Retry
+              </span>
+            </span>
+            {activeRankedItem.shiftSlotBadge && (
+              <span
+                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${
+                  activeRankedItem.shiftBucket === "FOLLOW_UP"
+                    ? "border-amber-400/40 bg-amber-500/15 text-amber-200"
+                    : activeRankedItem.shiftBucket === "FRESH"
+                    ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-200"
+                    : "border-sky-400/40 bg-sky-500/15 text-sky-200"
+                }`}
+              >
+                {activeRankedItem.shiftSlotBadge}
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+            <span
+              className="rounded-full bg-black/50 border border-amber-500/30 px-2.5 py-0.5 text-zinc-300"
+              title={`Total scheduled follow-ups in pool: ${shiftSummary.totalFollowUps}. Capped at ${shiftRule.followUpDailyCap}/shift so you are never stuck.`}
+            >
+              Follow-Ups:{" "}
+              <strong className="text-amber-300 font-mono">
+                {shiftSummary.followUpsDoneToday}/{shiftSummary.todayFollowUpQuota}
+              </strong>
+              <span className="text-zinc-500 ml-1">(Pool {shiftSummary.totalFollowUps})</span>
+            </span>
+            <span className="rounded-full bg-black/50 border border-emerald-500/30 px-2.5 py-0.5 text-zinc-300">
+              Fresh:{" "}
+              <strong className="text-emerald-300 font-mono">
+                {shiftSummary.freshDoneToday}/{shiftSummary.todayFreshQuota}
+              </strong>
+              <span className="text-zinc-500 ml-1">(Pool {shiftSummary.totalFresh})</span>
+            </span>
+            <span className="rounded-full bg-black/50 border border-sky-500/30 px-2.5 py-0.5 text-zinc-300">
+              Retry:{" "}
+              <strong className="text-sky-300 font-mono">
+                {shiftSummary.retriesDoneToday}/{shiftSummary.todayRetryQuota}
+              </strong>
+              <span className="text-zinc-500 ml-1">(Pool {shiftSummary.totalRetries})</span>
+            </span>
+            <span className="rounded-full bg-white/[0.06] border border-white/15 px-2.5 py-0.5 text-zinc-200 font-semibold">
+              Shift Quota:{" "}
+              <strong className="text-white font-mono">
+                {Math.max(sessionStreak, shiftSummary.dialedTodayTotal)}/{shiftSummary.dailyQuotaDials}
+              </strong>
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
       {/* 2. DUE CALLBACK BANNER (CLEAN RESCHEDULE WITHOUT FAKE CALL LOGS)    */}
       {/* =================================================================== */}
       {(activeRankedItem.isMandatoryFollowUpLock ||
@@ -1696,6 +1828,19 @@ export function CallerFocusCockpit({
           {/* Top Status & Prospect Local Time Bar */}
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.08] pb-2.5">
             <div className="flex flex-wrap items-center gap-1.5">
+              {streamScope === "SHIFT_MIX" && activeRankedItem.shiftSlotBadge && (
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${
+                    activeRankedItem.shiftBucket === "FOLLOW_UP"
+                      ? "border-amber-400/40 bg-amber-500/15 text-amber-200"
+                      : activeRankedItem.shiftBucket === "FRESH"
+                      ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-200"
+                      : "border-sky-400/40 bg-sky-500/15 text-sky-200"
+                  }`}
+                >
+                  {activeRankedItem.shiftSlotBadge}
+                </span>
+              )}
               <span className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.12] bg-white/[0.04] px-2.5 py-0.5 text-[10px] font-semibold text-zinc-200">
                 <span className="h-1.5 w-1.5 rounded-full bg-zinc-300" />
                 <span>{activeRankedItem.reasonBadge}</span>

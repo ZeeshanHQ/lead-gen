@@ -7,6 +7,7 @@ import { getActiveTeamMember } from "@/server/repo/team";
 import { canMemberAccessPath, getDefaultRouteForMember } from "@/server/domain/team";
 import { getSetting } from "@/server/repo/settings";
 import { DEFAULT_DIALER_CONFIG, type DialerConfig } from "@/server/domain/dialer";
+import { DEFAULT_CALLER_SHIFT_CONFIG, type CallerShiftConfig } from "@/server/domain/focus-queue";
 import { CallerClient } from "./caller-client";
 
 export const dynamic = "force-dynamic";
@@ -17,12 +18,13 @@ export default async function CallerQueuePage({
   searchParams?: Promise<{ caller?: string; status?: string; tz?: string; window?: string }>;
 }) {
   const db = await getDb();
-  const [resolvedParams, { market, allMarkets, rule }, { activeMember, allMembers }, savedDialer] =
+  const [resolvedParams, { market, allMarkets, rule }, { activeMember, allMembers }, savedDialer, savedShiftConfig] =
     await Promise.all([
       searchParams ? searchParams : Promise.resolve({} as { caller?: string; status?: string; tz?: string; window?: string }),
       getActiveContext(db),
       getActiveTeamMember(db),
       getSetting<Partial<DialerConfig>>(db, "dialer_config"),
+      getSetting<Partial<CallerShiftConfig>>(db, "caller_shift_config"),
     ]);
 
   if (!canMemberAccessPath(activeMember, "/caller")) {
@@ -35,6 +37,18 @@ export default async function CallerQueuePage({
   const dialerConfig: DialerConfig = {
     ...DEFAULT_DIALER_CONFIG,
     ...(savedDialer || {}),
+  };
+
+  const initialShiftConfig: CallerShiftConfig = {
+    defaultRule: {
+      ...DEFAULT_CALLER_SHIFT_CONFIG.defaultRule,
+      ...(savedShiftConfig?.defaultRule || {}),
+    },
+    callerOverrides: {
+      ...(savedShiftConfig?.callerOverrides || {}),
+    },
+    updatedAt: savedShiftConfig?.updatedAt,
+    updatedBy: savedShiftConfig?.updatedBy,
   };
 
   const isOwnerOrManager =
@@ -73,6 +87,7 @@ export default async function CallerQueuePage({
       nicheCategory={market.category}
       initialCustomColumns={customColumns}
       dialerConfig={dialerConfig}
+      initialShiftConfig={initialShiftConfig}
       activeActorName={activeMember.name}
       marketId={market.id}
       activeMember={activeMember}

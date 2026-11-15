@@ -6,6 +6,13 @@ import { recordCallFeedback, type CallFeedbackInput } from "@/server/repo/caller
 import { getSetting, setSetting, getActor } from "@/server/repo/settings";
 import { getActiveTeamMember } from "@/server/repo/team";
 import { DEFAULT_DIALER_CONFIG, type DialerConfig } from "@/server/domain/dialer";
+import {
+  DEFAULT_CALLER_SHIFT_CONFIG,
+  DEFAULT_CALLER_SHIFT_RULE,
+  resolveCallerShiftRule,
+  type CallerShiftConfig,
+  type CallerShiftRule,
+} from "@/server/domain/focus-queue";
 import { audit } from "@/server/repo/audit";
 
 async function resolveCallerActor(db: Db, explicitActor?: string | null): Promise<string> {
@@ -488,5 +495,105 @@ export async function unassignCallerLeadsAction(input: {
     return { ok: true, unassignedCount: res.unassignedCount };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to unassign leads" };
+  }
+}
+
+export async function getCallerShiftConfigServer(): Promise<CallerShiftConfig> {
+  const db = await getDb();
+  const saved = await getSetting<Partial<CallerShiftConfig>>(db, "caller_shift_config");
+  return {
+    defaultRule: {
+      ...DEFAULT_CALLER_SHIFT_RULE,
+      ...(saved?.defaultRule || {}),
+    },
+    callerOverrides: {
+      ...(saved?.callerOverrides || {}),
+    },
+    updatedAt: saved?.updatedAt,
+    updatedBy: saved?.updatedBy,
+  };
+}
+
+export async function saveCallerShiftConfigAction(input: {
+  targetCallerId?: string | "ALL";
+  ruleUpdate: Partial<CallerShiftRule>;
+  resetOverride?: boolean;
+}) {
+  try {
+    const db = await getDb();
+    const { activeMember } = await getActiveTeamMember(db);
+    const isOwnerOrManager =
+      activeMember.role === "OWNER" || Boolean(activeMember.permissions?.manageTeamAndSettings);
+    if (!isOwnerOrManager) {
+      return {
+        ok: false as const,
+        error: "Unauthorized: Only workspace owners and managers can configure shift rules.",
+      };
+    }
+
+    const actor = activeMember.name || (await resolveCallerActor(db));
+    const current = await getCallerShiftConfigServer();
+    const targetId = (input.targetCallerId || "ALL").trim();
+
+    let nextConfig: CallerShiftConfig;
+    if (!targetId || targetId === "ALL") {
+      const mergedDefault = resolveCallerShiftRule(
+        {
+          defaultRule: {
+            ...current.defaultRule,
+            ...input.ruleUpdate,
+          },
+          callerOverrides: {},
+        },
+        null
+      );
+      nextConfig = {
+        defaultRule: mergedDefault,
+        callerOverrides: { ...current.callerOverrides },
+        updatedAt: new Date().toISOString(),
+        updatedBy: actor,
+      };
+    } else if (input.resetOverride) {
+      const nextOverrides = { ...current.callerOverrides };
+      delete nextOverrides[targetId];
+      nextConfig = {
+        defaultRule: current.defaultRule,
+        callerOverrides: nextOverrides,
+        updatedAt: new Date().toISOString(),
+        updatedBy: actor,
+      };
+    } else {
+      const existingOverride = current.callerOverrides[targetId] || {};
+      const resolvedOverride = resolveCallerShiftRule(
+        {
+          defaultRule: current.defaultRule,
+          callerOverrides: {
+            [targetId]: {
+              ...existingOverride,
+              ...input.ruleUpdate,
+            },
+          },
+        },
+        targetId
+      );
+      nextConfig = {
+        defaultRule: current.defaultRule,
+        callerOverrides: {
+          ...current.callerOverrides,
+          [targetId]: resolvedOverride,
+        },
+        updatedAt: new Date().toISOString(),
+        updatedBy: actor,
+      };
+    }
+
+    await setSetting(db, "caller_shift_config", nextConfig, actor);
+    revalidatePath("/caller");
+    return { ok: true as const, config: nextConfig };
+  } catch (err: any) {
+    return {
+      ok: false as const,
+      error: err.message || "Could not save shift sequence config",
+    };
   }
 }

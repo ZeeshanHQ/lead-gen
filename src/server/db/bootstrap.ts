@@ -7,6 +7,7 @@ import type { Db } from "./client";
 import { markets, researchRules, systemSettings } from "./schema";
 import { SEEDED_MARKETS } from "../domain/markets";
 import { DEFAULT_DIALER_CONFIG } from "../domain/dialer";
+import { DEFAULT_CALLER_SHIFT_CONFIG } from "../domain/focus-queue";
 
 export const DEFAULT_TENANTS = [
   {
@@ -36,6 +37,7 @@ export const DEFAULT_SETTINGS: Record<string, unknown> = {
   team_members_registry: [],
   active_member_id: "member_owner",
   dialer_config: DEFAULT_DIALER_CONFIG,
+  caller_shift_config: DEFAULT_CALLER_SHIFT_CONFIG,
 };
 
 let bootstrappedInProcess = false;

@@ -5,6 +5,13 @@ import {
   rankLeadsForFocusStream,
   buildFlashBattlecard,
   getQuickNoteChipsForOutcome,
+  DEFAULT_CALLER_SHIFT_CONFIG,
+  DEFAULT_CALLER_SHIFT_RULE,
+  resolveCallerShiftRule,
+  computeActiveNightShiftBlock,
+  resolveEffectiveShiftWeights,
+  buildShiftSequenceStream,
+  computeCallerShiftSummary,
 } from "@/server/domain/focus-queue";
 import type { CallerLeadView } from "@/server/repo/caller";
 
@@ -294,5 +301,192 @@ describe("getQuickNoteChipsForOutcome", () => {
     expect(retryItem).toBeDefined();
     expect(retryItem?.tier).toBe("CADENCE_RETRY_DUE");
     expect(retryItem?.reasonBadge).toContain("1 Call Logged (No Answer)");
+  });
+});
+
+describe("Owner-Controlled Shift Sequence & Auto-Mix Engine", () => {
+  it("resolves PKT Night Calling Blocks accurately across Block 1, Block 2, Block 3, and Pre-Shift", () => {
+    // 7:00 PM PKT = 14:00 UTC -> Block 1 (2F:2N:1R)
+    const block1 = computeActiveNightShiftBlock(Date.UTC(2026, 9, 29, 14, 0, 0));
+    expect(block1.blockId).toBe("BLOCK_1_EAST_OPEN");
+    expect(block1.recommendedWeights).toEqual({ followUp: 2, fresh: 2, retry: 1 });
+
+    // 9:30 PM PKT = 16:30 UTC -> Block 2 (1F:3N:1R)
+    const block2 = computeActiveNightShiftBlock(Date.UTC(2026, 9, 29, 16, 30, 0));
+    expect(block2.blockId).toBe("BLOCK_2_PRIME_OVERLAP");
+    expect(block2.recommendedWeights).toEqual({ followUp: 1, fresh: 3, retry: 1 });
+
+    // 12:30 AM PKT = 19:30 UTC -> Block 3 (1F:1N:3R)
+    const block3 = computeActiveNightShiftBlock(Date.UTC(2026, 9, 29, 19, 30, 0));
+    expect(block3.blockId).toBe("BLOCK_3_GK_BYPASS_WEST");
+    expect(block3.recommendedWeights).toEqual({ followUp: 1, fresh: 1, retry: 3 });
+
+    // 12:00 PM PKT = 07:00 UTC -> Pre-Shift Prep (2F:2N:1R)
+    const preShift = computeActiveNightShiftBlock(Date.UTC(2026, 9, 29, 7, 0, 0));
+    expect(preShift.blockId).toBe("PRE_SHIFT_PREP");
+    expect(preShift.recommendedWeights).toEqual({ followUp: 2, fresh: 2, retry: 1 });
+  });
+
+  it("resolves per-caller custom overrides while falling back to workspace default for other callers", () => {
+    const config = {
+      ...DEFAULT_CALLER_SHIFT_CONFIG,
+      defaultRule: {
+        ...DEFAULT_CALLER_SHIFT_RULE,
+        dailyQuotaDials: 120,
+        followUpDailyCap: 25,
+      },
+      callerOverrides: {
+        caller_hamda: {
+          mode: "FOLLOW_UP_BLITZ" as const,
+          dailyQuotaDials: 140,
+          followUpDailyCap: 30,
+        },
+      },
+    };
+
+    const hamdaRule = resolveCallerShiftRule(config, "caller_hamda");
+    expect(hamdaRule.mode).toBe("FOLLOW_UP_BLITZ");
+    expect(hamdaRule.dailyQuotaDials).toBe(140);
+    expect(hamdaRule.followUpDailyCap).toBe(30);
+    expect(resolveEffectiveShiftWeights(hamdaRule).followUp).toBe(3);
+
+    const saadRule = resolveCallerShiftRule(config, "caller_saad");
+    expect(saadRule.mode).toBe("AUTO_TIME_SEQUENCE");
+    expect(saadRule.dailyQuotaDials).toBe(120);
+    expect(saadRule.followUpDailyCap).toBe(25);
+  });
+
+  it("interleaves 66 overdue follow-ups with Fresh and Retry pools in 2:2:1 cycle without losing a single lead", () => {
+    const fixedNow = Date.UTC(2026, 9, 29, 14, 0, 0); // 7:00 PM PKT -> Block 1 (2:2:1)
+    const leads: CallerLeadView[] = [];
+
+    // 1 true CONNECTED owner callback (must surface #1)
+    leads.push(
+      mockLead({
+        companyId: "connected-cb-1",
+        name: "Connected Owner Callback",
+        status: "CONNECTED",
+        nextFollowUp: new Date(fixedNow - 30 * 60_000).toISOString(),
+        notes: "[Oct 28, 3:00 PM • Hamda (Connected / Spoke)]: Owner asked to call back today",
+        icpScore: 70,
+      })
+    );
+
+    // 65 overdue No-Answer follow-ups
+    for (let i = 0; i < 65; i++) {
+      leads.push(
+        mockLead({
+          companyId: `fu-${i}`,
+          name: `FollowUp Co ${i}`,
+          status: "CALLING",
+          nextFollowUp: new Date(fixedNow - (i + 1) * 3600_000).toISOString(),
+          notes: "[Oct 27, 8:00 PM • Hamda (No Answer)]: Rang out",
+          icpScore: 60 + (i % 30),
+        })
+      );
+    }
+
+    // 100 Fresh untouched leads
+    for (let i = 0; i < 100; i++) {
+      leads.push(
+        mockLead({
+          companyId: `fresh-${i}`,
+          name: `Fresh Co ${i}`,
+          status: "APPROVED",
+          nextFollowUp: null,
+          notes: null,
+          icpScore: 75 + (i % 20),
+        })
+      );
+    }
+
+    // 50 Retry Pool leads (dialed 2 days ago)
+    for (let i = 0; i < 50; i++) {
+      leads.push(
+        mockLead({
+          companyId: `retry-${i}`,
+          name: `Retry Co ${i}`,
+          status: "CALLING",
+          nextFollowUp: null,
+          notes: "[Oct 27, 9:00 PM • Hamda (No Answer)]: Rang 5x, no pickup",
+          icpScore: 65 + (i % 25),
+        })
+      );
+    }
+
+    const ranked = rankLeadsForFocusStream(leads, fixedNow);
+    const rule = resolveCallerShiftRule(null, "caller_hamda");
+    const shiftStream = buildShiftSequenceStream(ranked, rule, fixedNow);
+
+    // Zero data loss: 1 + 65 + 100 + 50 = 216
+    expect(shiftStream.length).toBe(216);
+
+    // Connected owner callback is #1 with mandatory lock
+    expect(shiftStream[0]!.lead.companyId).toBe("connected-cb-1");
+    expect(shiftStream[0]!.isMandatoryFollowUpLock).toBe(true);
+    expect(shiftStream[0]!.shiftBucket).toBe("FOLLOW_UP");
+
+    // First 5-call round must strictly be 2 Follow-Ups, 2 Fresh, 1 Retry
+    expect(shiftStream.slice(0, 5).map((r) => r.shiftBucket)).toEqual([
+      "FOLLOW_UP",
+      "FOLLOW_UP",
+      "FRESH",
+      "FRESH",
+      "RETRY",
+    ]);
+
+    // Second 5-call round must also be 2 Follow-Ups, 2 Fresh, 1 Retry
+    expect(shiftStream.slice(5, 10).map((r) => r.shiftBucket)).toEqual([
+      "FOLLOW_UP",
+      "FOLLOW_UP",
+      "FRESH",
+      "FRESH",
+      "RETRY",
+    ]);
+
+    // Non-connected follow-ups must NOT hijack lock #1
+    expect(shiftStream[1]!.isMandatoryFollowUpLock).toBe(false);
+  });
+
+  it("prevents retry bloat and starvation via maxRetryAttempts rest and anti-decay aging", () => {
+    const fixedNow = Date.UTC(2026, 9, 29, 15, 0, 0);
+    const exhaustedLead = mockLead({
+      companyId: "exhausted-6",
+      status: "CALLING",
+      notes: Array.from({ length: 6 }, () => "[Oct 28, 9:00 PM • Saad (No Answer)]: Rang out").join("\n"),
+      icpScore: 99,
+    });
+    const agingRetryLead = mockLead({
+      companyId: "aging-retry",
+      status: "CALLING",
+      notes: "[Oct 24, 9:00 PM • Saad (No Answer)]: Rang out",
+      icpScore: 60,
+    });
+    const freshOldLead = mockLead({
+      companyId: "fresh-old",
+      status: "APPROVED",
+      createdAt: new Date(fixedNow - 6 * 86_400_000).toISOString(),
+      icpScore: 65,
+    });
+
+    const ranked = rankLeadsForFocusStream([exhaustedLead, agingRetryLead, freshOldLead], fixedNow);
+    const rule = {
+      ...DEFAULT_CALLER_SHIFT_RULE,
+      mode: "RETRY_CLEANUP" as const,
+      maxRetryAttempts: 6,
+    };
+    const stream = buildShiftSequenceStream(ranked, rule, fixedNow);
+
+    expect(stream.length).toBe(3);
+    // Exhausted 6-attempt lead is rested at the tail, not ahead of aging retry
+    expect(stream[stream.length - 1]!.lead.companyId).toBe("exhausted-6");
+    expect(stream[stream.length - 1]!.shiftSlotBadge).toContain("Retry Rest");
+
+    const summary = computeCallerShiftSummary([exhaustedLead, agingRetryLead, freshOldLead], rule, fixedNow);
+    expect(summary.totalFresh).toBe(1);
+    expect(summary.agingFresh).toBe(1);
+    expect(summary.totalRetries).toBe(2);
+    expect(summary.agingRetries).toBe(1);
+    expect(summary.restingRetries).toBe(1);
   });
 });
