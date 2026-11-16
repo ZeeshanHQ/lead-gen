@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { X, CheckCircle2, ChevronDown, ChevronUp, Phone, PhoneCall } from "lucide-react";
+import { X, CheckCircle2, ChevronDown, ChevronUp, Phone, PhoneCall, Mail } from "lucide-react";
 import { CallOutcomePicker } from "@/components/call-status-ui";
 import { type CallOutcomeKey, refineConnectedOutcome } from "@/server/domain/call-outcomes";
 import { buildPresetFollowUpIso } from "@/components/crm-lead-sheet";
@@ -17,7 +17,9 @@ export interface CallLogLeadTarget {
     name?: string | null;
     title?: string | null;
     phone?: string | null;
+    email?: string | null;
   };
+  email?: string | null;
   nextFollowUp?: string | null;
   notes?: string | null;
   software?: string | null;
@@ -27,6 +29,7 @@ export interface CallLogSubmitData {
   outcome: CallOutcomeKey;
   callerNotes: string;
   followUpDate: string | null;
+  emailConfirmed?: string | null;
   softwareConfirmed?: string | null;
   fleetSizeConfirmed?: number | null;
   clientLogId?: string;
@@ -51,6 +54,8 @@ export const CallLogModal = React.memo(function CallLogModal({
   const [outcome, setOutcome] = useState<CallOutcomeKey | null>(null);
   const [notes, setNotes] = useState("");
   const [followUpDate, setFollowUpDate] = useState(lead.nextFollowUp || "");
+  const detectedEmail = lead.bestContact?.email || lead.email || "";
+  const [confirmedEmail, setConfirmedEmail] = useState(detectedEmail);
   const detectedSoft = lead.software && lead.software !== "UNKNOWN" ? lead.software : "";
   const [confirmedSoftware, setConfirmedSoftware] = useState(detectedSoft);
   const [confirmedFleet, setConfirmedFleet] = useState<string>("");
@@ -76,6 +81,7 @@ export const CallLogModal = React.memo(function CallLogModal({
       outcome,
       callerNotes: notes.trim(),
       followUpDate: followUpDate || null,
+      emailConfirmed: confirmedEmail.trim() || null,
       softwareConfirmed: confirmedSoftware.trim() || null,
       fleetSizeConfirmed: fleetNum && !isNaN(fleetNum) ? fleetNum : null,
       clientLogId,
@@ -188,6 +194,29 @@ export const CallLogModal = React.memo(function CallLogModal({
                 onChange={(e) => setFollowUpDate(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white focus:outline-none focus:border-zinc-600 transition"
               />
+            </div>
+
+            {/* Contact Email Field */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-zinc-300">
+                  Contact / Decision Maker Email
+                </label>
+                <span className="text-[10px] text-zinc-400">
+                  {confirmedEmail ? "Email captured for cold outbound" : "Optional (capture if offered)"}
+                </span>
+              </div>
+              <div className="relative">
+                <Mail className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="email"
+                  placeholder="e.g. owner@company.com"
+                  value={confirmedEmail}
+                  disabled={isSubmitting}
+                  onChange={(e) => setConfirmedEmail(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400/80 transition"
+                />
+              </div>
             </div>
 
             {/* Call Notes Textarea (Local state - zero typing lag + real-time outcome detection) */}

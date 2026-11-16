@@ -33,6 +33,7 @@ import {
 } from "@/components/crm-lead-sheet";
 import { matchLeadSearchQuery } from "@/components/crm-date-utils";
 import { CallStatusBadge } from "@/components/call-status-ui";
+import { type TeamMember } from "@/server/domain/team";
 import {
   US_TZ_GROUPS,
   parseFollowUpMs,
@@ -68,6 +69,7 @@ import {
   RotateCcw,
   Award,
   Trash2,
+  Users,
 } from "lucide-react";
 
 export interface FocusCockpitSubmitPayload {
@@ -89,6 +91,8 @@ interface CallerFocusCockpitProps {
   activeActorName: string;
   isOwner?: boolean;
   canEditContacts: boolean;
+  allMembers?: TeamMember[];
+  onAssignLead?: (leadId: string, memberId: string) => void;
   getOpeningScript: (lead: CallerLeadView) => string;
   onLogCallAndAdvance: (payload: FocusCockpitSubmitPayload) => void;
   onRescheduleFollowUp?: (
@@ -206,6 +210,8 @@ export function CallerFocusCockpit({
   activeActorName,
   isOwner = false,
   canEditContacts,
+  allMembers = [],
+  onAssignLead,
   getOpeningScript,
   onLogCallAndAdvance,
   onRescheduleFollowUp,
@@ -1985,6 +1991,29 @@ export function CallerFocusCockpit({
                 <span className="inline-flex items-center gap-1 rounded-md border border-white/[0.09] bg-white/[0.03] px-2 py-0.5 text-[10px] font-mono font-semibold text-zinc-200">
                   <span>ICP {activeLead.icpScore}/100</span>
                 </span>
+              )}
+
+              {/* Owner Quick Lead Assignment Dropdown inside Calling Console */}
+              {isOwner && allMembers && allMembers.length > 0 && (
+                <div className="inline-flex items-center gap-1.5 rounded-md border border-indigo-500/30 bg-indigo-950/20 px-2 py-0.5 text-[10px]">
+                  <Users className="w-2.5 h-2.5 text-indigo-400 shrink-0" />
+                  <span className="text-zinc-400 font-medium">Assign:</span>
+                  <select
+                    value={activeLead.assignedMemberId || ""}
+                    onChange={(e) => onAssignLead?.(activeLead.companyId, e.target.value)}
+                    className="bg-transparent text-white font-semibold focus:outline-none cursor-pointer text-[10px]"
+                    title="Assign this lead to a caller"
+                  >
+                    <option value="" className="bg-[#121215] text-zinc-300">Unassigned</option>
+                    {allMembers
+                      .filter((m) => m.status === "ACTIVE" && m.role !== "VIEWER")
+                      .map((m) => (
+                        <option key={m.id} value={m.id} className="bg-[#121215] text-white">
+                          {m.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
               )}
 
               {activeLead.software && activeLead.software !== "UNKNOWN" && (

@@ -67,6 +67,7 @@ import {
   Search,
   ExternalLink,
   MapPin,
+  Mail,
   Calendar,
   CheckCircle2,
   Copy,
@@ -150,6 +151,7 @@ interface CrmLeadSheetProps {
   activeActorName?: string;
   onLeadUpdated?: (updated: CrmLeadItem) => void;
   onLeadDeleted?: (companyId: string) => void;
+  onLeadAssigned?: (leadId: string, memberId: string | null, memberName: string | null) => void;
   /** Pre-selects a status chip, e.g. from Sales Funnel deep links (?status=NO_ANSWER). */
   initialStatusFilter?: string;
   initialTzFilter?: string;
@@ -341,6 +343,7 @@ export function CrmLeadSheet({
   activeActorName = "Team Member",
   onLeadUpdated,
   onLeadDeleted,
+  onLeadAssigned,
   initialStatusFilter = "ALL",
   initialTzFilter = "ALL",
   initialWindowFilter = "ALL",
@@ -365,14 +368,14 @@ export function CrmLeadSheet({
   // Inline Cell Editing State (Airtable / Google Sheets style with isolated local inputs)
   const [activeCellEdit, setActiveCellEdit] = useState<{
     leadId: string;
-    field: "name" | "contactName" | "contactTitle" | "phone" | "notes";
+    field: "name" | "contactName" | "contactTitle" | "contactEmail" | "phone" | "notes";
     initialVal: string;
   } | null>(null);
   const [savingCellKey, setSavingCellKey] = useState<string | null>(null);
 
   const startInlineEdit = (
     leadId: string,
-    field: "name" | "contactName" | "contactTitle" | "phone" | "notes",
+    field: "name" | "contactName" | "contactTitle" | "contactEmail" | "phone" | "notes",
     currentVal: string
   ) => {
     setActiveCellEdit({ leadId, field, initialVal: currentVal || "" });
@@ -428,6 +431,18 @@ export function CrmLeadSheet({
           email: lead.bestContact?.email || null,
         };
         serverPayload.contactTitle = value || null;
+      }
+    } else if (field === "contactEmail") {
+      const oldEmail = lead.bestContact?.email || "";
+      if (value !== oldEmail) {
+        hasChanged = true;
+        patch.bestContact = {
+          name: lead.bestContact?.name || null,
+          title: lead.bestContact?.title || null,
+          phone: lead.bestContact?.phone || null,
+          email: value || null,
+        };
+        serverPayload.contactEmail = value || null;
       }
     } else if (field === "phone") {
       const oldPhone = lead.bestContact?.phone || lead.phoneDisplay || "";
@@ -502,6 +517,7 @@ export function CrmLeadSheet({
     setLeads(initialLeads);
   }, [initialLeads]);
 
+  // Restore saved sort, status filter, and date filter ONCE on mount
   React.useEffect(() => {
     try {
       const savedSort = localStorage.getItem("astraventa_crm_sort_by");
@@ -513,24 +529,14 @@ export function CrmLeadSheet({
       }
       const savedStatus = localStorage.getItem("astraventa_crm_status_filter");
       if (savedStatus && initialStatusFilter === "ALL") {
-        if (savedStatus === "UNTOUCHED" || savedStatus === "TO_CALL") {
-          const hasUntouched = leads.some((l) => deriveCallStatus(l).key === "UNTOUCHED");
-          if (hasUntouched) {
-            setStatusFilter(savedStatus);
-          } else {
-            // All leads in queue have been dialed; default to ALL so leads never appear missing
-            setStatusFilter("ALL");
-            localStorage.removeItem("astraventa_crm_status_filter");
-          }
-        } else {
-          setStatusFilter(savedStatus);
-        }
+        setStatusFilter(savedStatus);
       }
-      // Always start with ALL dates visible so stale date filters never hide leads
-      setDateFilter("ALL");
-      localStorage.removeItem("astraventa_crm_date_filter");
+      const savedDate = localStorage.getItem("astraventa_crm_date_filter");
+      if (savedDate && ["ALL", "TODAY", "YESTERDAY", "OLDER"].includes(savedDate)) {
+        setDateFilter(savedDate as any);
+      }
     } catch {}
-  }, [initialStatusFilter, leads]);
+  }, []); // Run ONLY on mount so date filter never resets during lead assignment or editing
 
   const setStatusFilterAndPersist = (f: string) => {
     setStatusFilter(f);
@@ -662,6 +668,7 @@ export function CrmLeadSheet({
       assignedMemberId: memberId || null,
       assignedMemberName: target?.name || null,
     });
+    onLeadAssigned?.(lead.id, memberId || null, target?.name || null);
     const res = await assignLeadAction({
       companyId: lead.id,
       memberId: memberId || null,
@@ -1151,6 +1158,7 @@ export function CrmLeadSheet({
       chosenOutcome === "WRONG_NUMBER";
     const explicitDate = (data.followUpDate || "").trim();
     const chosenFollowUp = !isTerminal && explicitDate ? explicitDate : null;
+    const chosenEmail = data.emailConfirmed ? data.emailConfirmed.trim() : null;
     const rawNoteText = data.callerNotes;
     const combinedNotes = chosenFollowUp
       ? `[Next Follow-up Scheduled: ${chosenFollowUp}] ${rawNoteText}`
@@ -1190,6 +1198,13 @@ export function CrmLeadSheet({
       nextFollowUp: isTerminal ? null : chosenFollowUp || targetLead.nextFollowUp,
       notes: optimisticNotes,
       updatedAt: nowIso,
+      bestContact: {
+        name: targetLead.bestContact?.name ?? null,
+        title: targetLead.bestContact?.title ?? null,
+        phone: targetLead.bestContact?.phone ?? null,
+        email: chosenEmail || targetLead.bestContact?.email || null,
+        linkedinUrl: targetLead.bestContact?.linkedinUrl ?? null,
+      },
       ...(data.softwareConfirmed ? { software: data.softwareConfirmed } : {}),
     });
     setSelectedLead(null);
@@ -1203,6 +1218,7 @@ export function CrmLeadSheet({
         callOutcome: chosenOutcome,
         softwareConfirmed: data.softwareConfirmed || null,
         fleetSizeConfirmed: data.fleetSizeConfirmed || null,
+        emailConfirmed: chosenEmail,
         callerNotes: combinedNotes,
         followUpDate: chosenFollowUp,
         clientLogId: data.clientLogId || null,
@@ -2243,6 +2259,7 @@ export function CrmLeadSheet({
                 <th className="px-4 py-3 whitespace-nowrap min-w-[240px] max-w-[280px]">Company &amp; Location</th>
                 <th className="px-3 py-3 whitespace-nowrap min-w-[210px] max-w-[260px]">Decision Maker &amp; LinkedIn</th>
                 <th className="px-3 py-3 whitespace-nowrap min-w-[150px]">Direct Phone</th>
+                <th className="px-3 py-3 whitespace-nowrap min-w-[170px]">Email Address</th>
                 {(isOwner || canManageSettings) && (
                   <th className="px-3 py-3 whitespace-nowrap min-w-[130px]">Assigned Caller</th>
                 )}
@@ -2305,7 +2322,7 @@ export function CrmLeadSheet({
                   <React.Fragment key={lead.id}>
                     {isNewBatch && (
                       <tr className="bg-zinc-950 border-y border-zinc-800/80 sticky top-0 z-10">
-                        <td colSpan={(isOwner || canManageSettings ? 8 : 7) + customOnlySmartFields.length} className="px-4 py-2">
+                        <td colSpan={(isOwner || canManageSettings ? 9 : 8) + customOnlySmartFields.length} className="px-4 py-2">
                           <div className="flex items-center justify-between text-xs font-bold">
                             <div className="flex items-center gap-2">
                               <span
@@ -2544,6 +2561,64 @@ export function CrmLeadSheet({
                           >
                             <Plus className="w-2.5 h-2.5" />
                             <span>Add phone</span>
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Email Address */}
+                      <td className="px-3 py-3.5 whitespace-nowrap min-w-[170px]">
+                        {activeCellEdit?.leadId === lead.id && activeCellEdit.field === "contactEmail" ? (
+                          <InlineCellInput
+                            initialValue={activeCellEdit.initialVal}
+                            onCommit={(v) => commitInlineEdit(lead, v)}
+                            onCancel={() => setActiveCellEdit(null)}
+                            className="w-40 bg-[#09090b] border border-emerald-500 rounded px-2 py-1 font-mono text-xs text-amber-300 focus:outline-none shadow-sm"
+                            placeholder="name@company.com"
+                          />
+                        ) : lead.bestContact?.email ? (
+                          <div className="inline-flex items-center gap-1.5">
+                            <a
+                              href={`mailto:${lead.bestContact.email}`}
+                              className="group inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#09090b] hover:bg-zinc-800 border border-zinc-800/80 hover:border-amber-500/30 transition text-left cursor-pointer"
+                              title={`Click to send email to ${lead.bestContact.email}`}
+                            >
+                              <Mail className="w-3 h-3 text-amber-400 group-hover:text-amber-300 shrink-0" />
+                              <span className="font-mono text-xs text-amber-300 group-hover:text-amber-200 truncate max-w-[130px]">
+                                {lead.bestContact.email}
+                              </span>
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(lead.bestContact!.email!, `email_${lead.id}`)}
+                              className="p-1 rounded text-zinc-500 hover:text-white hover:bg-zinc-800 transition"
+                              title="Copy email address"
+                            >
+                              {copiedId === `email_${lead.id}` ? (
+                                <Check className="w-3 h-3 text-emerald-400" />
+                              ) : (
+                                <Copy className="w-2.5 h-2.5 text-zinc-500 hover:text-amber-400" />
+                              )}
+                            </button>
+                            {canEdit && (
+                              <button
+                                type="button"
+                                onClick={() => startInlineEdit(lead.id, "contactEmail", lead.bestContact?.email || "")}
+                                className="p-1 rounded text-zinc-500 hover:text-white hover:bg-zinc-800 transition"
+                                title="Edit email address inline"
+                              >
+                                <Pencil className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => canEdit && startInlineEdit(lead.id, "contactEmail", "")}
+                            className="text-zinc-500 hover:text-amber-400 text-[11px] underline flex items-center gap-1"
+                            title="Add contact email address"
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                            <span>Add email</span>
                           </button>
                         )}
                       </td>

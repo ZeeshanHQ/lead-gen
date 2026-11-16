@@ -125,6 +125,7 @@ export interface CallFeedbackInput {
   painIdentified?: string | null;
   softwareConfirmed?: string | null;
   fleetSizeConfirmed?: number | null;
+  emailConfirmed?: string | null;
   callerNotes: string;
   followUpDate?: string | null;
   /** When true, explicitly clears any existing follow-up even on an unfulfilled callback retry. */
@@ -423,11 +424,11 @@ async function recordCallFeedbackInTransaction(
   ) {
     nextStatus = "PAIN_FOUND";
   }
-  // A lead that already has a meeting must not be demoted by a later "no answer" retry.
+  // A lead that already has a meeting must not be demoted by a later "no answer" / voicemail retry.
+  // But if the caller actually connected and chose a new outcome (or marked not interested), respect the decision!
   if (
     PROTECTED_PROGRESS_STATUSES.has(company.status) &&
-    effectiveOutcome !== "MEETING_BOOKED" &&
-    effectiveOutcome !== "NOT_INTERESTED"
+    UNFULFILLED_CALLBACK_OUTCOMES.has(effectiveOutcome)
   ) {
     nextStatus = company.status as LifecycleStatus;
   }
@@ -458,6 +459,35 @@ async function recordCallFeedbackInTransaction(
       evidenceText: `Confirmed by ${input.actor} during phone discovery call: ${input.fleetSizeConfirmed} active technicians/trucks`,
       actor: input.actor,
     });
+  }
+
+  // 3. If human captured / confirmed an email during call, persist to contacts and company facts
+  if (input.emailConfirmed && input.emailConfirmed.trim()) {
+    const cleanEmail = input.emailConfirmed.trim().toLowerCase();
+    const existingContacts = await db
+      .select()
+      .from(contacts)
+      .where(and(eq(contacts.companyId, input.companyId), eq(contacts.status, "ACTIVE")));
+
+    if (existingContacts.length > 0) {
+      await db
+        .update(contacts)
+        .set({
+          email: cleanEmail,
+          emailType: classifyEmail(cleanEmail, company.domain),
+          verified: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(contacts.id, existingContacts[0]!.id));
+    } else {
+      await db.insert(contacts).values({
+        companyId: input.companyId,
+        name: "Decision Maker",
+        email: cleanEmail,
+        emailType: classifyEmail(cleanEmail, company.domain),
+        verified: true,
+      });
+    }
   }
 
   // 3. Follow-up rules
@@ -496,7 +526,14 @@ async function recordCallFeedbackInTransaction(
     autoRescheduleReason = cadence.cadenceReason;
   }
 
-  const noteBody = cleanUserNote || getDefaultCallNote(effectiveOutcome);
+  let noteBody = cleanUserNote || getDefaultCallNote(effectiveOutcome);
+  if (
+    input.emailConfirmed &&
+    input.emailConfirmed.trim() &&
+    !noteBody.toLowerCase().includes(input.emailConfirmed.trim().toLowerCase())
+  ) {
+    noteBody = `${noteBody} • Email: ${input.emailConfirmed.trim()}`;
+  }
 
   const timeStr = new Date().toLocaleString("en-US", {
     timeZone: CALLER_TIMEZONE,
@@ -749,37 +786,9 @@ async function updateLeadCrmDetailsInTransaction(
 
     // If the caller added or edited a freeform inline note without a [timestamp • actor (outcome)] tag,
     // automatically structure the new note line so call logs, top KPI counters, and analytics stay in sync.
+    // Clean note edits without corrupting freeform notes into pseudo call-log lines
     if (input.notes !== undefined && cleanedNotes && cleanedNotes !== existingClean) {
-      const lines = cleanedNotes.split("\n");
-      const timeStr = formatCallerTimeStr();
-      const formattedLines = lines.map((rawLine) => {
-        const l = rawLine.trim();
-        if (!l) return "";
-        if (
-          l.startsWith("[") ||
-          l.startsWith("BATTLECARD:") ||
-          l.startsWith("15-SECOND OPENING SCRIPT:") ||
-          l.startsWith("Focus:") ||
-          l.startsWith("Local Market:") ||
-          l.startsWith("Gatekeeper Strategy:") ||
-          l.startsWith("Reputation:") ||
-          l.startsWith("Authority:") ||
-          l.startsWith("PITCH ANGLE:")
-        ) {
-          return l;
-        }
-        const inferred =
-          inferOutcomeFromText(l) ??
-          (input.status ? lifecycleStatusToOutcome(input.status) : null);
-        // A plain note ("check website", "owner is Mike") is just a note. It is only
-        // turned into a call-log line when it clearly says what happened on a call.
-        if (!inferred) return l;
-        const label = CALL_STATUS_DEFS[inferred].noteLabel || "Connected / Spoke";
-        autoLoggedOutcome = inferred;
-        autoLoggedNoteText = l;
-        return `[${timeStr} • ${actor || "Caller"} (${label})]: ${l}`;
-      });
-      cleanedNotes = formattedLines.filter(Boolean).join("\n");
+      cleanedNotes = cleanedNotes.trim();
     }
 
     const desiredFollowUp =

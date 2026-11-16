@@ -1050,6 +1050,7 @@ export function CallerClient({
     const explicitDate = (data.followUpDate || "").trim();
     const chosenFollowUp = !isTerminal && explicitDate ? explicitDate : null;
     const chosenSoft = data.softwareConfirmed || null;
+    const chosenEmail = data.emailConfirmed ? data.emailConfirmed.trim() : null;
     const fleetNum = data.fleetSizeConfirmed ?? null;
     const rawNoteText = data.callerNotes;
     const combinedNotes = chosenFollowUp
@@ -1092,6 +1093,10 @@ export function CallerClient({
               ...item,
               status: optimisticStatus,
               software: chosenSoft || item.software,
+              bestContact: {
+                ...item.bestContact,
+                email: chosenEmail || item.bestContact?.email || null,
+              },
               nextFollowUp: isTerminal ? null : chosenFollowUp || item.nextFollowUp,
               notes: optimisticNotes,
               updatedAt: nowIso,
@@ -1113,6 +1118,7 @@ export function CallerClient({
         callOutcome: chosenOutcome,
         softwareConfirmed: chosenSoft,
         fleetSizeConfirmed: fleetNum,
+        emailConfirmed: chosenEmail,
         callerNotes: combinedNotes,
         followUpDate: chosenFollowUp,
         clientLogId: data.clientLogId || null,
@@ -1326,8 +1332,8 @@ export function CallerClient({
     });
   };
 
-  // Convert queue to CrmLeadItem format for Sheet View (respecting Caller filter)
-  const crmLeadsFromQueue: CrmLeadItem[] = callerScopedQueue.map((l) => ({
+  // Convert full active queue to CrmLeadItem format for Data Table View so table's internal caller filter sees all leads
+  const crmLeadsFromQueue: CrmLeadItem[] = activeQueue.map((l) => ({
     id: l.companyId,
     name: l.name,
     address: l.address,
@@ -2440,6 +2446,8 @@ export function CallerClient({
             smartFields={smartFields}
             activeActorName={actor.trim() || activeActorName}
             canEditContacts={canEditContacts}
+            allMembers={allMembers}
+            onAssignLead={handleAssignLead}
             initialTzFilter={initialTzFilter}
             initialWindowFilter={initialWindowFilter}
             shiftRule={activeShiftRule}

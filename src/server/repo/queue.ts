@@ -67,20 +67,19 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
 
-  const [staleDays, contactMap, counts, scores, refs] = await Promise.all([
-    getStaleDays(db),
-    getContactsForCompanies(db, ids),
-    db
-      .select({ companyId: evidence.companyId, n: sql<number>`count(*)::int` })
-      .from(evidence)
-      .where(inArray(evidence.companyId, ids))
-      .groupBy(evidence.companyId),
-    db.select().from(leadScores).where(inArray(leadScores.companyId, ids)),
-    db
-      .select({ companyId: companySourceRefs.companyId, provider: companySourceRefs.provider })
-      .from(companySourceRefs)
-      .where(inArray(companySourceRefs.companyId, ids)),
-  ]);
+  // Execute sequentially to reuse pool client and prevent connection timeouts on large lead sets
+  const staleDays = await getStaleDays(db);
+  const contactMap = await getContactsForCompanies(db, ids);
+  const counts = await db
+    .select({ companyId: evidence.companyId, n: sql<number>`count(*)::int` })
+    .from(evidence)
+    .where(inArray(evidence.companyId, ids))
+    .groupBy(evidence.companyId);
+  const scores = await db.select().from(leadScores).where(inArray(leadScores.companyId, ids));
+  const refs = await db
+    .select({ companyId: companySourceRefs.companyId, provider: companySourceRefs.provider })
+    .from(companySourceRefs)
+    .where(inArray(companySourceRefs.companyId, ids));
 
   const countMap = new Map(counts.map((c) => [c.companyId, Number(c.n)]));
   const scoreMap = new Map<string, (typeof scores)[number]>();

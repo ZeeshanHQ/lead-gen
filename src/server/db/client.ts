@@ -95,7 +95,7 @@ export async function createDb(url: string): Promise<DbHandle> {
     connectionString: connString,
     max: process.env.VERCEL ? 6 : 12,
     idleTimeoutMillis: process.env.VERCEL ? 5_000 : 30_000,
-    connectionTimeoutMillis: 15_000,
+    connectionTimeoutMillis: 35_000,
     ssl: useSsl ? { rejectUnauthorized: false } : undefined,
   });
 

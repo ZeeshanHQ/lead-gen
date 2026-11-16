@@ -489,30 +489,40 @@ export async function startLeadDiscoveryAction(
       try {
         const counters = await executeRun(db, runId, {
           timeoutMs: 6000,
-          maxWallClockMs: targetCount <= 25 ? 110000 : targetCount <= 50 ? 180000 : 260000,
+          maxWallClockMs: 1_800_000, // 30 mins: give engine plenty of time to find top quality leads
           autoEnrich: true,
         });
 
         if (assignMemberId && counters.qualifiedCompanyIds && counters.qualifiedCompanyIds.length > 0) {
-          await db
-            .update(companies)
-            .set({
-              assignedMemberId: assignMemberId,
-              assignedMemberName: assignMemberName,
-            })
-            .where(
-              and(
-                inArray(companies.id, counters.qualifiedCompanyIds),
-                or(isNull(companies.assignedMemberId), eq(companies.assignedMemberId, ""))
-              )
-            );
+          try {
+            await db
+              .update(companies)
+              .set({
+                assignedMemberId: assignMemberId,
+                assignedMemberName: assignMemberName,
+              })
+              .where(
+                and(
+                  inArray(companies.id, counters.qualifiedCompanyIds),
+                  or(isNull(companies.assignedMemberId), eq(companies.assignedMemberId, ""))
+                )
+              );
+          } catch (assignErr) {
+            console.warn("Non-fatal caller assignment warning:", assignErr);
+          }
         }
 
-        const allMarketRows = await loadLeadRows(db, "all", market.id);
-        const liveQualifiedIds = new Set(counters.qualifiedCompanyIds || []);
-        const livePassedGateCount = liveQualifiedIds.size > 0
-          ? allMarketRows.filter((r) => liveQualifiedIds.has(r.id) && passesLeadRowGate(r, mergedGate, ruleConfig)).length
-          : 0;
+        let livePassedGateCount = counters.approvedCount || counters.qualifiedCompanyIds?.length || 0;
+        try {
+          const allMarketRows = await loadLeadRows(db, "all", market.id);
+          const liveQualifiedIds = new Set(counters.qualifiedCompanyIds || []);
+          if (liveQualifiedIds.size > 0) {
+            const recount = allMarketRows.filter((r) => liveQualifiedIds.has(r.id) && passesLeadRowGate(r, mergedGate, ruleConfig)).length;
+            if (recount > 0) livePassedGateCount = recount;
+          }
+        } catch (calcErr) {
+          console.warn("Non-fatal gate recount warning:", calcErr);
+        }
 
         const enrichedCounters = {
           ...counters,
