@@ -558,16 +558,17 @@ export async function startLeadDiscoveryAction(
         ]);
       } catch (err: any) {
         console.error("Background lead discovery failed:", err);
+        const errMsg = err?.cause?.message ? `${err.message} (${err.cause.message})` : (err?.message || String(err));
         recordRunTelemetry(runId, {
           stage: "FAILED",
           level: "error",
-          message: `Discovery Run Failed: ${err?.message || String(err)}`,
+          message: `Discovery Run Failed: ${errMsg}`,
         });
         await db
           .update(researchRuns)
           .set({
             status: "FAILED",
-            lastError: err?.message || String(err),
+            lastError: errMsg,
             finishedAt: new Date(),
             updatedAt: new Date(),
           })

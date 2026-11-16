@@ -507,26 +507,31 @@ export async function executeQueuedBatch(
     ...((run.counters as any) || {}),
   };
 
-  // Reap stale zombie jobs running longer than 35 seconds (e.g. from severed serverless requests)
-  const staleCutoff = new Date(Date.now() - 35_000);
-  const reaped = await db
-    .update(researchJobs)
-    .set({
-      status: "FAILED",
-      finishedAt: new Date(),
-      lastError: "Worker execution timeout / container restarted",
-    })
-    .where(
-      and(
-        eq(researchJobs.runId, runId),
-        eq(researchJobs.status, "RUNNING"),
-        lt(researchJobs.startedAt, staleCutoff)
+  // Reap stale zombie jobs running longer than 180 seconds (e.g. from severed serverless requests)
+  try {
+    const staleCutoff = new Date(Date.now() - 180_000);
+    const reaped = await db
+      .update(researchJobs)
+      .set({
+        status: "FAILED",
+        finishedAt: new Date(),
+        lastError: "Worker execution timeout / container restarted",
+      })
+      .where(
+        and(
+          eq(researchJobs.runId, runId),
+          eq(researchJobs.status, "RUNNING"),
+          isNotNull(researchJobs.startedAt),
+          lt(researchJobs.startedAt, staleCutoff)
+        )
       )
-    )
-    .returning({ id: researchJobs.id });
+      .returning({ id: researchJobs.id });
 
-  if (reaped.length > 0) {
-    currentCounters.failedJobs = (currentCounters.failedJobs || 0) + reaped.length;
+    if (reaped.length > 0) {
+      currentCounters.failedJobs = (currentCounters.failedJobs || 0) + reaped.length;
+    }
+  } catch (reapErr) {
+    console.warn("Failed to reap stale zombie jobs (non-fatal):", reapErr);
   }
 
   // If already reached target or previously finished
@@ -862,7 +867,7 @@ export async function executeQueuedBatch(
         if (batchOpts?.autoEnrich !== false && isApproved) {
           try {
             const { enrichCompany } = await import("../enrichment/pipeline");
-            await enrichCompany(db, job.companyId, { actor: `${runActor} (Auto-Enrich)` });
+            await enrichCompany(db, job.companyId, { actor: `${runActor} (Auto-Enrich)`, budgetMs: 12_000 });
           } catch {
             // non-blocking
           }
@@ -964,12 +969,23 @@ export async function executeRun(
   const maxWallClockMs = runOpts?.maxWallClockMs ?? (run.mode === "test" ? 6_000 : 180_000);
   const deadline = Date.now() + maxWallClockMs;
 
+  let consecutiveBatchErrors = 0;
   while (Date.now() < deadline) {
-    const res = await executeQueuedBatch(db, runId, concurrency, {
-      mockPages: runOpts?.mockPages,
-      autoEnrich: runOpts?.autoEnrich ?? true,
-    });
-    if (res.isFinished || res.processed === 0) break;
+    try {
+      const res = await executeQueuedBatch(db, runId, concurrency, {
+        mockPages: runOpts?.mockPages,
+        autoEnrich: runOpts?.autoEnrich ?? true,
+      });
+      consecutiveBatchErrors = 0;
+      if (res.isFinished || res.processed === 0) break;
+    } catch (batchErr: any) {
+      consecutiveBatchErrors++;
+      console.warn(`executeQueuedBatch transient error in executeRun (attempt ${consecutiveBatchErrors}/3):`, batchErr);
+      if (consecutiveBatchErrors >= 3) {
+        throw batchErr;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
   }
 
   const [finalRun] = await db

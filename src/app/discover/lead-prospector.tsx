@@ -767,7 +767,10 @@ export function LeadProspector({
         setActiveRunId(runId);
 
         let lastSeenIso = "";
+        let isPolling = false;
         const pollStatus = async () => {
+          if (isPolling) return;
+          isPolling = true;
           try {
             let data: any = null;
             try {
@@ -851,12 +854,14 @@ export function LeadProspector({
             }
           } catch (pollErr) {
             console.warn("Polling discovery status error:", pollErr);
+          } finally {
+            isPolling = false;
           }
         };
 
-        // Poll immediately and then every 850ms
+        // Poll immediately and then every 1200ms
         pollStatus();
-        pollIntervalRef.current = setInterval(pollStatus, 850);
+        pollIntervalRef.current = setInterval(pollStatus, 1200);
       })
       .catch((err) => {
         setIsRunningDiscovery(false);
