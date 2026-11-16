@@ -468,11 +468,11 @@ export async function runPlannedQuery(
 ): Promise<DiscoveredCandidate[]> {
   const seen = opts.seenDomains ?? new Set<string>();
 
+  // Already-acquired domains go FIRST so the search engine itself skips them and fills its
+  // result slots with genuinely new companies (aggregators are also filtered client-side).
+  const userExcludes = (opts.excludeDomains ?? []).map((d) => d.toLowerCase().replace(/^www\./, ""));
   const dynamicExcludes = Array.from(
-    new Set([
-      ...EXCLUDED_AGGREGATOR_DOMAINS,
-      ...(opts.excludeDomains ?? []).map((d) => d.toLowerCase().replace(/^www\./, "")),
-    ])
+    new Set([...userExcludes.slice(0, 90), ...EXCLUDED_AGGREGATOR_DOMAINS, ...userExcludes.slice(90)])
   ).slice(0, 140);
 
   const response = await fetch("https://api.tavily.com/search", {

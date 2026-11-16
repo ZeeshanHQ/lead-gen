@@ -16,6 +16,7 @@ import type { DiscoveredCandidate } from "../providers/types";
 import { researchCompany, type ResearchResult } from "./engine";
 import { getStaleDays } from "../repo/settings";
 import { recordRunTelemetry } from "./telemetry";
+import { discoveryWindowSize } from "../providers/tavily_adapter";
 
 export type RunMode = "test" | "small" | "full" | "stale" | "rejected" | "retry";
 export { getRunTelemetry, recordRunTelemetry, type TelemetryLogEntry } from "./telemetry";
@@ -323,7 +324,9 @@ export async function prepareRunCandidates(
       .map((r) => r.domain?.toLowerCase())
       .filter(Boolean) as string[];
 
-    baseQueryOffset = Math.max(0, (priorRunRows.length - 1) * 3);
+    // Advance by a full search window per prior run so each new run explores NEW queries
+    // instead of re-issuing (and de-duplicating away) almost the same ones.
+    baseQueryOffset = Math.max(0, priorRunRows.length - 1) * discoveryWindowSize(poolLimit);
 
     const kwSample = (ruleConfig.discovery.keywords || []).slice(0, 3).join(", ");
     const geoSample = (ruleConfig.geography.states || ["TX"]).join(", ");
@@ -434,6 +437,7 @@ export async function prepareRunCandidates(
           duplicatesMerged: intakeResult.duplicateCount,
           excludedCount: intakeResult.excludedCount,
           targetCount: maxCandidates,
+          queryCursor: baseQueryOffset + discoveryWindowSize(poolLimit),
         } as any,
         updatedAt: new Date(),
       })
@@ -557,7 +561,9 @@ export async function executeQueuedBatch(
 
     // Try dynamic replenishment if approved < target and mode is search discovery
     const currentReplenish = Number((run.counters as any)?.replenishRound || 0);
-    const isCurrentlyReplenishing = Boolean((run.counters as any)?.isReplenishing);
+    const isCurrentlyReplenishing =
+      Boolean((run.counters as any)?.isReplenishing) &&
+      Date.now() - Number((run.counters as any)?.replenishStartedAt || 0) < 60_000;
     if (isCurrentlyReplenishing) {
       return { processed: 0, approvedCount: currentCounters.approvedCount || 0, isFinished: false };
     }
@@ -573,6 +579,9 @@ export async function executeQueuedBatch(
       const nextRound = currentReplenish + 1;
       const needed = maxCandidates - (currentCounters.approvedCount || 0);
       const replenishLimit = Math.min(Math.max(Math.ceil(needed * 3.5), 30), 100);
+      // Continue from where the previous search window ended (never overlap earlier windows)
+      const nextQueryCursor = Number((run.counters as any)?.queryCursor || 0);
+      const advancedQueryCursor = nextQueryCursor + discoveryWindowSize(replenishLimit);
 
       // Lock replenishment immediately in DB to prevent duplicate calls from parallel status pollers
       await db
@@ -582,6 +591,7 @@ export async function executeQueuedBatch(
             ...currentCounters,
             replenishRound: nextRound,
             isReplenishing: true,
+            replenishStartedAt: Date.now(),
           } as any,
           updatedAt: new Date(),
         })
@@ -621,7 +631,7 @@ export async function executeQueuedBatch(
             zips: ruleConfig.geography.zips,
             limit: replenishLimit,
             excludeDomains: freshExcludes,
-            queryOffset: nextRound * 6,
+            queryOffset: nextQueryCursor,
           },
           limits.providerFilter,
           runId
@@ -708,6 +718,7 @@ export async function executeQueuedBatch(
                 excludedCount: (currentCounters.excludedCount || 0) + replenishIntake.excludedCount,
                 replenishRound: nextRound,
                 isReplenishing: false,
+                queryCursor: advancedQueryCursor,
               } as any,
               updatedAt: new Date(),
             })
@@ -717,7 +728,8 @@ export async function executeQueuedBatch(
         }
       }
 
-      // If replenishment discovered nothing or no new targets, clear the isReplenishing flag
+      // If replenishment discovered nothing new, advance to the NEXT unexplored search window and
+      // retry on the next poll (up to 5 rounds) instead of ending the run after a single empty round.
       await db
         .update(researchRuns)
         .set({
@@ -725,17 +737,36 @@ export async function executeQueuedBatch(
             ...currentCounters,
             replenishRound: nextRound,
             isReplenishing: false,
+            queryCursor: advancedQueryCursor,
           } as any,
           updatedAt: new Date(),
         })
         .where(eq(researchRuns.id, runId));
+
+      if (nextRound < 5) {
+        recordRunTelemetry(runId, {
+          stage: "REPLENISH",
+          level: "info",
+          message: `Round ${nextRound}: no NEW companies in this search window (all already in your database or filtered). Trying a fresh set of searches...`,
+        });
+        return { processed: 0, approvedCount: currentCounters.approvedCount || 0, isFinished: false };
+      }
     }
 
     // No more jobs and cannot replenish
     const finalStatus = (currentCounters.completedJobs || 0) > 0 ? "COMPLETED" : "FAILED";
+    const noResultsMessage =
+      finalStatus === "FAILED"
+        ? "No new companies could be found for this ICP: every search result was already in your database, blocked by your exclusions, or the search returned nothing. Broaden the keywords, add more cities/states, or switch the sub-vertical, then run again."
+        : null;
     await db
       .update(researchRuns)
-      .set({ status: finalStatus, finishedAt: new Date(), updatedAt: new Date() })
+      .set({
+        status: finalStatus,
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+        ...(noResultsMessage ? { lastError: noResultsMessage } : {}),
+      })
       .where(eq(researchRuns.id, runId));
 
     return { processed: 0, approvedCount: currentCounters.approvedCount || 0, isFinished: true };

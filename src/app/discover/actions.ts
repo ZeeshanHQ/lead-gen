@@ -396,7 +396,8 @@ export async function startLeadDiscoveryAction(
       const isHvacKw = keywordsToUse.some((k) =>
         /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k)
       );
-      ruleConfig = {
+      const previousRuleJson = JSON.stringify(defaultRule.config ?? {});
+      const nextRuleConfig = {
         ...ruleConfig,
         businessType: businessTypeToUse,
         services: {
@@ -427,11 +428,25 @@ export async function startLeadDiscoveryAction(
         },
         gate: mergedGate,
       };
-      try {
-        await saveRule(db, defaultRule.id, { name: defaultRule.name, config: ruleConfig }, actorName);
-        await reEvaluateLeadsWithRule(db, defaultRule.id, actorName);
-      } catch {
-        // Non-blocking
+      ruleConfig = nextRuleConfig;
+
+      // Only persist + re-score the whole pipeline when the ICP actually changed.
+      // (Re-scoring every staged lead on every click was the main cause of the long "reload".)
+      if (JSON.stringify(nextRuleConfig) !== previousRuleJson) {
+        try {
+          await saveRule(db, defaultRule.id, { name: defaultRule.name, config: nextRuleConfig }, actorName);
+        } catch (saveErr: any) {
+          // Never silently run with the OLD ICP: tell the owner exactly what is invalid.
+          return {
+            ok: false,
+            error: `Your ICP settings could not be saved: ${saveErr?.message || "invalid configuration"}. Fix it and run again.`,
+          };
+        }
+        try {
+          await reEvaluateLeadsWithRule(db, defaultRule.id, actorName);
+        } catch {
+          // Non-blocking: discovery proceeds with the saved rule.
+        }
       }
     }
 

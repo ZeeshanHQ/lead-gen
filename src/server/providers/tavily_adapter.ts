@@ -171,6 +171,13 @@ export const STATE_NAMES: Record<string, string> = {
   SC: "South Carolina",
 };
 
+/** Number of planned queries one discovery pass consumes for a given candidate limit. */
+export const DISCOVERY_QUERY_BATCH_SIZE = 6;
+export function discoveryWindowSize(limit: number): number {
+  const maxBatches = Math.min(Math.max(Math.ceil((limit || 25) / 8), 4), 10);
+  return maxBatches * DISCOVERY_QUERY_BATCH_SIZE;
+}
+
 export function getTavilyApiKey(config?: Record<string, unknown>): string {
   if (config && typeof config.apiKey === "string" && config.apiKey.trim().length > 5) {
     return config.apiKey.trim();
