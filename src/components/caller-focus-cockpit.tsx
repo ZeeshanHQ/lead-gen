@@ -171,6 +171,16 @@ const DISPOSITION_BUTTONS: Array<{
       "border-white bg-white/[0.14] text-white ring-1 ring-white/60 shadow-sm",
   },
   {
+    key: "EMAIL_REQUESTED",
+    hotkey: "E",
+    label: "Send Info / Email",
+    sublabel: "Owner requested info via email • Captures email",
+    accentClass:
+      "border-cyan-500/25 bg-cyan-950/15 hover:border-cyan-400/50 text-cyan-200",
+    activeClass:
+      "border-cyan-300/80 bg-cyan-500/20 text-white ring-1 ring-cyan-400/60 shadow-sm",
+  },
+  {
     key: "MEETING_BOOKED",
     hotkey: "5",
     label: "Meeting Booked",
@@ -742,8 +752,17 @@ export function CallerFocusCockpit({
         return;
       }
 
+      if (e.key.toLowerCase() === "e") {
+        const btn = DISPOSITION_BUTTONS.find((b) => b.key === "EMAIL_REQUESTED");
+        if (btn) {
+          e.preventDefault();
+          handleSelectDisposition(btn);
+          return;
+        }
+      }
+
       const num = parseInt(e.key, 10);
-      if (num >= 1 && num <= 7) {
+      if (num >= 1 && num <= DISPOSITION_BUTTONS.length) {
         const btn = DISPOSITION_BUTTONS[num - 1];
         if (btn) {
           e.preventDefault();

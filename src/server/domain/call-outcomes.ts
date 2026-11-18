@@ -14,6 +14,7 @@ export type CallOutcomeKey =
   | "WRONG_NUMBER"
   | "GATEKEEPER_BLOCKED"
   | "CONNECTED"
+  | "EMAIL_REQUESTED"
   | "NOT_INTERESTED"
   | "MEETING_BOOKED";
 
@@ -123,6 +124,19 @@ export const CALL_STATUS_DEFS: Record<CallStatusKey, CallStatusDef> = {
     meaning: "You had a real conversation with the owner / decision maker.",
     whenToUse: "You spoke with the owner and the conversation is still open.",
   },
+  EMAIL_REQUESTED: {
+    key: "EMAIL_REQUESTED",
+    label: "Email Requested",
+    noteLabel: "Email Requested",
+    group: "REACHED",
+    depth: 3,
+    hex: "#06b6d4",
+    badge: "bg-cyan-500/15 text-cyan-200 border-cyan-400/40",
+    dot: "bg-cyan-400",
+    selected: "border-cyan-300 bg-cyan-500/20 ring-1 ring-cyan-300/60",
+    meaning: "Contact requested company details, deck, or pricing via email.",
+    whenToUse: "They asked to send an email / info deck / proposal.",
+  },
   NOT_INTERESTED: {
     key: "NOT_INTERESTED",
     label: "Not Interested",
@@ -168,7 +182,7 @@ export const OUTCOME_GROUPS: Array<{
     id: "REACHED",
     title: "A human picked up",
     hint: "Front desk or the owner",
-    keys: ["GATEKEEPER_BLOCKED", "CONNECTED", "NOT_INTERESTED"],
+    keys: ["GATEKEEPER_BLOCKED", "CONNECTED", "EMAIL_REQUESTED", "NOT_INTERESTED"],
   },
   {
     id: "WIN",
@@ -202,6 +216,7 @@ export function outcomeKeyFromLabel(label: string | null | undefined): CallOutco
   if (/\b(meeting|demo|appointment)\s*(booked|scheduled|set|confirmed)\b|\bbooked\b/.test(t)) {
     return "MEETING_BOOKED";
   }
+  if (t.includes("email requested") || t.includes("send email") || t.includes("send info")) return "EMAIL_REQUESTED";
   if (t.includes("not interested") || t.includes("declined")) return "NOT_INTERESTED";
   if (t.includes("connected") || t.includes("spoke")) return "CONNECTED";
   if (t.includes("gatekeeper")) return "GATEKEEPER_BLOCKED";
@@ -229,6 +244,8 @@ const REFINE_VOICEMAIL =
   /\b(left\s*(a\s*)?(voice\s*mail|vm|message)|went\s*to\s*voice\s*mail|sent\s*to\s*voice\s*mail|voice\s*mail|answering\s*machine|mailbox\s*full)\b/i;
 const REFINE_GATEKEEPER =
   /\b(gatekeeper|refused\s*(to\s*)?(transfer|put\s*(me\s*)?through)|wouldn'?t\s*(transfer|put\s*(me\s*)?through)|not\s*putting\s*(me\s*)?through|took\s*a\s*message|receptionist\s*(said|picked|answered|took|refused)|front\s*desk\s*(said|answered|picked|refused))\b/i;
+const REFINE_EMAIL =
+  /\b(send\s*(me\s*)?(an?\s*)?(email|info|deck|details|proposal)|email\s*(me|info|details)|forward\s*(to\s*)?email)\b/i;
 const REFINE_NO_ANSWER =
   /\b(no\s*one\s*picked\s*up|nobody\s*picked\s*up|no\s*one\s*answered|nobody\s*answered|no\s*answer|didn'?t\s*pick\s*up|didn'?t\s*answer|rang\s*out)\b/i;
 
@@ -242,6 +259,7 @@ export function refineConnectedOutcome(text: string | null | undefined): CallOut
   const t = (text || "").trim();
   if (!t) return null;
   if (REFINE_MEETING.test(t)) return "MEETING_BOOKED";
+  if (REFINE_EMAIL.test(t)) return "EMAIL_REQUESTED";
   if (REFINE_STRONG_REFUSAL.test(t) && !REFINE_DEFERRAL.test(t)) return "NOT_INTERESTED";
   if (REFINE_DEAD_NUMBER.test(t)) return "WRONG_NUMBER";
   if (REFINE_VOICEMAIL.test(t)) return "CALL_COMPLETED";
@@ -260,6 +278,7 @@ export function lifecycleStatusForOutcome(
     case "NOT_INTERESTED":
       return "LOST";
     case "CONNECTED":
+    case "EMAIL_REQUESTED":
       return "CONNECTED";
     case "WRONG_NUMBER":
       return "NURTURE";
@@ -331,16 +350,25 @@ export function inferOutcomeFromText(text: string | null | undefined): CallOutco
 
   // 6. Gatekeeper / Receptionist Blocked
   if (
-    /\b(gatekeeper|receptionist|front\s*desk|secretary|assistant|office\s*manager|wouldn't\s*transfer|refused\s*(to\s*)?(transfer|put\s*through)|not\s*putting\s*through|in\s*a\s*meeting|not\s*available|isn't\s*available|wasn't\s*available|busy\s*(right\s*now|with\s*other)|out\s*of\s*office|took\s*a\s*message|send\s*email\s*to\s*(info|office)|contact\s*them\s*on\s*email|gave\s*me\s*the\s*email|boss\s*(is\s*)?busy|owner\s*(is\s*|was\s*|isn't\s*|wasn't\s*)?(unavailable|not\s*available|available|not\s*in|away|out)|manager\s*not\s*in)\b/i.test(
+    /\b(gatekeeper|receptionist|front\s*desk|secretary|assistant|office\s*manager|wouldn't\s*transfer|refused\s*(to\s*)?(transfer|put\s*through)|not\s*putting\s*through|in\s*a\s*meeting|not\s*available|isn't\s*available|wasn't\s*available|busy\s*(right\s*now|with\s*other)|out\s*of\s*office|took\s*a\s*message|boss\s*(is\s*)?busy|owner\s*(is\s*|was\s*|isn't\s*|wasn't\s*)?(unavailable|not\s*available|available|not\s*in|away|out)|manager\s*not\s*in)\b/i.test(
       t
     )
   ) {
     return "GATEKEEPER_BLOCKED";
   }
 
+  // 6.5 Email Requested / Send Info
+  if (
+    /\b(send\s*(me\s*)?(an?\s*)?(email|info|details|deck|proposal|pricing)|email\s*(me|info|details|deck)|forward\s*(to\s*)?email|share\s*(via|on)\s*email|send\s*email\s*to\s*(info|office)|contact\s*them\s*on\s*email|gave\s*me\s*the\s*email|gave\s*email|email\s*provided)\b/i.test(
+      t
+    )
+  ) {
+    return "EMAIL_REQUESTED";
+  }
+
   // 7. Spoke / Connected / Conversation
   if (
-    /\b(connected|spoke\s*(with|to)?|talked\s*(with|to)?|answered|picked\s*up|owner\s*(said|answered)|decision\s*maker\s*(answered|spoke)|discussed|interested|call\s*back|callback|follow\s*up|send\s*(info|details|proposal|pricing)|confirmed|qualified|pitch\s*delivered)\b/i.test(
+    /\b(connected|spoke\s*(with|to)?|talked\s*(with|to)?|answered|picked\s*up|owner\s*(said|answered)|decision\s*maker\s*(answered|spoke)|discussed|interested|call\s*back|callback|follow\s*up|confirmed|qualified|pitch\s*delivered)\b/i.test(
       t
     )
   ) {
@@ -822,6 +850,7 @@ export function computeLiveCrmTelemetry(
     WRONG_NUMBER: 0,
     GATEKEEPER_BLOCKED: 0,
     CONNECTED: 0,
+    EMAIL_REQUESTED: 0,
     NOT_INTERESTED: 0,
     MEETING_BOOKED: 0,
   };
@@ -1026,6 +1055,7 @@ export const STATUS_FILTER_TO_KEY: Record<string, CallStatusKey> = {
   WRONG_NUMBER: "WRONG_NUMBER",
   GATEKEEPER: "GATEKEEPER_BLOCKED",
   CONNECTED: "CONNECTED",
+  EMAIL_REQUESTED: "EMAIL_REQUESTED",
   NOT_INTERESTED: "NOT_INTERESTED",
   MEETINGS: "MEETING_BOOKED",
 };
@@ -1038,6 +1068,7 @@ export const CRM_FILTER_CHIPS: Array<{ filter: string; statusKey: CallStatusKey;
   { filter: "WRONG_NUMBER", statusKey: "WRONG_NUMBER", label: "Wrong Number" },
   { filter: "GATEKEEPER", statusKey: "GATEKEEPER_BLOCKED", label: "Gatekeeper" },
   { filter: "CONNECTED", statusKey: "CONNECTED", label: "Spoke" },
+  { filter: "EMAIL_REQUESTED", statusKey: "EMAIL_REQUESTED", label: "Email Requested" },
   { filter: "NOT_INTERESTED", statusKey: "NOT_INTERESTED", label: "Not Interested" },
   { filter: "MEETINGS", statusKey: "MEETING_BOOKED", label: "Meeting Booked" },
 ];

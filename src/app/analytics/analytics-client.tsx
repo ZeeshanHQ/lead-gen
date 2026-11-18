@@ -194,6 +194,13 @@ function OutcomeDonutChart({
       dotClass: "bg-indigo-400",
     },
     {
+      key: "EMAIL_REQUESTED",
+      label: CALL_STATUS_DEFS.EMAIL_REQUESTED.label,
+      count: outcomeCounts.EMAIL_REQUESTED || 0,
+      color: "#06b6d4", // cyan
+      dotClass: "bg-cyan-400",
+    },
+    {
       key: "GATEKEEPER_BLOCKED",
       label: CALL_STATUS_DEFS.GATEKEEPER_BLOCKED.label,
       count: outcomeCounts.GATEKEEPER_BLOCKED || 0,

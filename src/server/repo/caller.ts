@@ -121,7 +121,8 @@ export interface CallFeedbackInput {
     | "WRONG_NUMBER"
     | "NO_ANSWER"
     | "CALL_COMPLETED"
-    | "NOT_INTERESTED";
+    | "NOT_INTERESTED"
+    | "EMAIL_REQUESTED";
   painIdentified?: string | null;
   softwareConfirmed?: string | null;
   fleetSizeConfirmed?: number | null;

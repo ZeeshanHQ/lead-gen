@@ -612,6 +612,15 @@ export function getQuickNoteChipsForOutcome(outcome: CallOutcomeKey): string[] {
         "Wrong business / residential line",
         "Fax tone",
       ];
+    case "EMAIL_REQUESTED":
+      return [
+        "Sent company deck to owner email",
+        "Owner requested pricing info via email",
+        "Forwarded intro email, follow up in 2 days",
+        "Email sent, owner will review and respond",
+      ];
+    default:
+      return [];
   }
 }
 
@@ -726,9 +735,9 @@ export function resolveCallerShiftRule(
     ...(override || {}),
   };
 
-  let followUpWeight = clampInt(merged.followUpWeight, 0, 20, DEFAULT_CALLER_SHIFT_RULE.followUpWeight);
-  let freshWeight = clampInt(merged.freshWeight, 0, 20, DEFAULT_CALLER_SHIFT_RULE.freshWeight);
-  let retryWeight = clampInt(merged.retryWeight, 0, 20, DEFAULT_CALLER_SHIFT_RULE.retryWeight);
+  let followUpWeight = clampInt(merged.followUpWeight, 0, 100, DEFAULT_CALLER_SHIFT_RULE.followUpWeight);
+  let freshWeight = clampInt(merged.freshWeight, 0, 100, DEFAULT_CALLER_SHIFT_RULE.freshWeight);
+  let retryWeight = clampInt(merged.retryWeight, 0, 100, DEFAULT_CALLER_SHIFT_RULE.retryWeight);
   if (followUpWeight + freshWeight + retryWeight === 0) {
     followUpWeight = 2;
     freshWeight = 2;
@@ -1089,7 +1098,18 @@ export function buildShiftSequenceStream<
 
     if (roundItems.length === 0) break;
 
-    const denom = Math.max(weights.cycleLength, roundItems.length);
+    // Graceful dynamic denominator: if any bucket is completely exhausted (e.g. 0 follow-ups remaining),
+    // only count the weights of pools that actually have remaining inventory in this cycle so slot badges
+    // like (1/4) stay intuitive and never show inflated denominators (e.g. 1/94) when follow-ups are empty.
+    const hasRemainingFu = fuIdx < primaryFollowUps.length || roundItems.some((r) => r.bucket === "FOLLOW_UP");
+    const hasRemainingFr = frIdx < freshPool.length || roundItems.some((r) => r.bucket === "FRESH");
+    const hasRemainingRt = rtIdx < retryPool.length || roundItems.some((r) => r.bucket === "RETRY");
+    const activeWeightsCycle =
+      (hasRemainingFu ? weights.followUp : 0) +
+      (hasRemainingFr ? weights.fresh : 0) +
+      (hasRemainingRt ? weights.retry : 0);
+    const denom = Math.max(roundItems.length, activeWeightsCycle || weights.cycleLength);
+
     for (const entry of roundItems) {
       slotInCycle++;
       const isDirectOwnerCb =

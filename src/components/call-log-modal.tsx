@@ -197,13 +197,19 @@ export const CallLogModal = React.memo(function CallLogModal({
             </div>
 
             {/* Contact Email Field */}
-            <div>
+            <div className={outcome === "EMAIL_REQUESTED" ? "p-2.5 rounded-lg border border-cyan-500/40 bg-cyan-950/20" : ""}>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-semibold text-zinc-300">
-                  Contact / Decision Maker Email
+                <label className="block text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                  <Mail className={`w-3.5 h-3.5 ${outcome === "EMAIL_REQUESTED" ? "text-cyan-400" : "text-zinc-400"}`} />
+                  <span>Contact / Decision Maker Email</span>
+                  {outcome === "EMAIL_REQUESTED" && (
+                    <span className="text-[10px] text-cyan-300 font-bold bg-cyan-500/20 px-1.5 py-0.5 rounded">
+                      Required for Email Outcome
+                    </span>
+                  )}
                 </label>
                 <span className="text-[10px] text-zinc-400">
-                  {confirmedEmail ? "Email captured for cold outbound" : "Optional (capture if offered)"}
+                  {confirmedEmail ? "Email captured for cold outbound" : outcome === "EMAIL_REQUESTED" ? "Enter email to send info" : "Optional (capture if offered)"}
                 </span>
               </div>
               <div className="relative">
@@ -214,7 +220,11 @@ export const CallLogModal = React.memo(function CallLogModal({
                   value={confirmedEmail}
                   disabled={isSubmitting}
                   onChange={(e) => setConfirmedEmail(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400/80 transition"
+                  className={`w-full pl-9 pr-3 py-2 rounded-lg bg-[#09090b] border text-xs text-white placeholder-zinc-500 focus:outline-none transition ${
+                    outcome === "EMAIL_REQUESTED"
+                      ? "border-cyan-500 ring-1 ring-cyan-500/40 focus:border-cyan-400"
+                      : "border-zinc-800 focus:border-amber-400/80"
+                  }`}
                 />
               </div>
             </div>

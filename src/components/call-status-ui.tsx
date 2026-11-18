@@ -140,6 +140,7 @@ export function CallStatusLegend({
     "WRONG_NUMBER",
     "GATEKEEPER_BLOCKED",
     "CONNECTED",
+    "EMAIL_REQUESTED",
     "NOT_INTERESTED",
     "MEETING_BOOKED",
   ];

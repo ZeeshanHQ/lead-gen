@@ -2367,12 +2367,12 @@ export function CallerClient({
                         <input
                           type="number"
                           min={0}
-                          max={20}
+                          max={100}
                           value={shiftDraftRule.followUpWeight}
                           onChange={(e) =>
                             setShiftDraftRule((prev) => ({
                               ...prev,
-                              followUpWeight: Math.max(0, Number(e.target.value) || 0),
+                              followUpWeight: Math.min(100, Math.max(0, Number(e.target.value) || 0)),
                             }))
                           }
                           className="w-full rounded-lg border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
@@ -2385,12 +2385,12 @@ export function CallerClient({
                         <input
                           type="number"
                           min={0}
-                          max={20}
+                          max={100}
                           value={shiftDraftRule.freshWeight}
                           onChange={(e) =>
                             setShiftDraftRule((prev) => ({
                               ...prev,
-                              freshWeight: Math.max(0, Number(e.target.value) || 0),
+                              freshWeight: Math.min(100, Math.max(0, Number(e.target.value) || 0)),
                             }))
                           }
                           className="w-full rounded-lg border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
@@ -2403,12 +2403,12 @@ export function CallerClient({
                         <input
                           type="number"
                           min={0}
-                          max={20}
+                          max={100}
                           value={shiftDraftRule.retryWeight}
                           onChange={(e) =>
                             setShiftDraftRule((prev) => ({
                               ...prev,
-                              retryWeight: Math.max(0, Number(e.target.value) || 0),
+                              retryWeight: Math.min(100, Math.max(0, Number(e.target.value) || 0)),
                             }))
                           }
                           className="w-full rounded-lg border border-white/10 bg-black/60 px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
