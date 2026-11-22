@@ -594,6 +594,11 @@ async function recordCallFeedbackInTransaction(
               qualificationStatus: "QUALIFIED" as QualificationStatus,
               dealStage: "MEETING_BOOKED" as DealStage,
             }
+          : company.dealStage === "MEETING_BOOKED"
+          ? {
+              dealStage: "NONE" as DealStage,
+              dealValueUsd: null,
+            }
           : (input.painIdentified?.trim() && company.qualificationStatus === "UNQUALIFIED")
           ? { qualificationStatus: "PAIN_IDENTIFIED" as QualificationStatus }
           : {}),
@@ -1325,6 +1330,7 @@ async function deleteCallLogEntryInTransaction(
     .set({
       notes: finalNotes,
       status: nextStatus,
+      ...(nextStatus !== "MEETING_BOOKED" ? { dealStage: "NONE" as DealStage, dealValueUsd: null } : {}),
       updatedAt: new Date(),
     })
     .where(eq(companies.id, companyId));

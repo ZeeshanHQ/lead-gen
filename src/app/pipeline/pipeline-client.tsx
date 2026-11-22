@@ -230,11 +230,15 @@ export function PipelineClient({
   ) => {
     setUpdatingId(companyId);
     // Optimistic UI update
-    setDeals((prev) =>
-      prev.map((d) =>
-        d.id === companyId ? { ...d, dealStage: newStage } : d
-      )
-    );
+    if (newStage === ("NONE" as DealStage)) {
+      setDeals((prev) => prev.filter((d) => d.id !== companyId));
+    } else {
+      setDeals((prev) =>
+        prev.map((d) =>
+          d.id === companyId ? { ...d, dealStage: newStage } : d
+        )
+      );
+    }
 
     const res = await updateCompanyDealStageAction({
       companyId,
@@ -510,7 +514,7 @@ export function PipelineClient({
                           key={deal.id}
                           className="group relative p-2.5 rounded-lg border border-slate-800 bg-slate-900/90 hover:border-slate-700 transition shadow-sm space-y-2 text-left min-w-0 w-full overflow-hidden"
                         >
-                          {/* Top Row: Company & Link (Opens in New Tab) */}
+                          {/* Top Row: Company & Link (Opens in New Tab) + Quick Remove */}
                           <div className="flex items-start justify-between gap-1.5 min-w-0">
                             <Link
                               href={`/company/${deal.id}`}
@@ -521,15 +525,33 @@ export function PipelineClient({
                             >
                               {deal.name}
                             </Link>
-                            <Link
-                              href={`/company/${deal.id}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-slate-500 hover:text-slate-300 shrink-0 p-0.5"
-                              title="Open Full Profile in New Tab"
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                            </Link>
+                            <div className="flex items-center gap-0.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (
+                                    confirm(
+                                      `Remove "${deal.name}" from Pipeline? This will reset its stage.`
+                                    )
+                                  ) {
+                                    handleStageChange(deal.id, "NONE" as DealStage);
+                                  }
+                                }}
+                                className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 p-0.5 transition cursor-pointer"
+                                title="Remove from Pipeline"
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                              </button>
+                              <Link
+                                href={`/company/${deal.id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-slate-500 hover:text-slate-300 p-0.5"
+                                title="Open Full Profile in New Tab"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </Link>
+                            </div>
                           </div>
 
                           {/* Contact Info */}
@@ -634,6 +656,9 @@ export function PipelineClient({
                                   {s.label}
                                 </option>
                               ))}
+                              <option value="NONE" className="text-rose-400">
+                                ✕ Remove from Pipeline
+                              </option>
                             </select>
 
                             {/* Quick Advance Button */}
