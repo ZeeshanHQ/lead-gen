@@ -33,6 +33,7 @@ import {
 } from "@/components/crm-lead-sheet";
 import { matchLeadSearchQuery } from "@/components/crm-date-utils";
 import { CallStatusBadge } from "@/components/call-status-ui";
+import { getLeadEmailStatus } from "@/server/domain/email-templates";
 import { type TeamMember } from "@/server/domain/team";
 import {
   US_TZ_GROUPS,
@@ -106,6 +107,8 @@ interface CallerFocusCockpitProps {
     nextVal: string
   ) => void;
   onOpenEditLead: (lead: CallerLeadView) => void;
+  onOpenEmailModal?: (lead: CallerLeadView) => void;
+  onOpenMeetingModal?: (lead: CallerLeadView) => void;
   onSwitchToFullCrm?: (filterStatus?: string) => void;
   onResetLead?: (lead: CallerLeadView) => void;
   onDeleteCallLog?: (lead: CallerLeadView, logIndex: number) => void;
@@ -227,6 +230,8 @@ export function CallerFocusCockpit({
   onRescheduleFollowUp,
   onSmartFieldChange,
   onOpenEditLead,
+  onOpenEmailModal,
+  onOpenMeetingModal,
   onSwitchToFullCrm,
   onResetLead,
   onDeleteCallLog,
@@ -651,6 +656,11 @@ export function CallerFocusCockpit({
     setSelectedOutcome(btn.key);
 
     if (!activeLead || !activeRankedItem) return;
+
+    if (btn.key === "MEETING_BOOKED" && onOpenMeetingModal) {
+      onOpenMeetingModal(activeLead);
+      return;
+    }
 
     const isTerminal =
       btn.key === "MEETING_BOOKED" ||
@@ -1466,6 +1476,26 @@ export function CallerFocusCockpit({
                           </span>
                         )}
                         <CallStatusBadge lead={item} />
+                        {(() => {
+                          const itemEmailStatus = getLeadEmailStatus(item);
+                          if (itemEmailStatus === "PENDING") {
+                            return (
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-semibold shrink-0 flex items-center gap-0.5">
+                                <Mail className="w-2.5 h-2.5" />
+                                <span>Pending</span>
+                              </span>
+                            );
+                          }
+                          if (itemEmailStatus === "SENT") {
+                            return (
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 font-semibold shrink-0 flex items-center gap-0.5">
+                                <Mail className="w-2.5 h-2.5" />
+                                <span>Sent</span>
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                       <div className="text-[10px] text-zinc-400 truncate mt-0.5">
                         {item.bestContact.name || "Owner"} &bull;{" "}
@@ -1951,6 +1981,17 @@ export function CallerFocusCockpit({
                     <span>Reset to Fresh</span>
                   </button>
                 )}
+              {onOpenEmailModal && (
+                <button
+                  type="button"
+                  onClick={() => onOpenEmailModal(activeLead)}
+                  className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-950/40 hover:bg-sky-900/60 px-2.5 py-0.5 text-[10px] font-semibold text-sky-300 hover:text-white transition cursor-pointer"
+                  title="Compose & Send Sales Email to Prospect"
+                >
+                  <Mail className="w-3 h-3 text-sky-400" />
+                  <span>Send Email</span>
+                </button>
+              )}
               {isOwner && canEditContacts && (
                 <button
                   type="button"
@@ -2121,7 +2162,30 @@ export function CallerFocusCockpit({
             </div>
 
             <div className="flex flex-col sm:items-end gap-1">
-              {cleanDialPhone ? (
+              <div className="flex items-center gap-2">
+                {onOpenMeetingModal && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenMeetingModal(activeLead)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-200 hover:text-white px-3 py-2 text-xs font-semibold transition cursor-pointer shadow-sm"
+                    title="Book Structured Discovery Meeting"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Book Meeting</span>
+                  </button>
+                )}
+                {onOpenEmailModal && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenEmailModal(activeLead)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/30 bg-sky-950/40 hover:bg-sky-900/60 text-sky-200 hover:text-white px-3 py-2 text-xs font-semibold transition cursor-pointer shadow-sm"
+                    title="Send Email to Prospect"
+                  >
+                    <Mail className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Send Email</span>
+                  </button>
+                )}
+                {cleanDialPhone ? (
                 <button
                   type="button"
                   onClick={() =>
@@ -2152,6 +2216,7 @@ export function CallerFocusCockpit({
                   </button>
                 )
               )}
+              </div>
               <span className="text-[10px] text-zinc-500">
                 Press{" "}
                 <kbd className="px-1.5 py-0.2 rounded bg-white/[0.06] border border-white/[0.1] text-zinc-300 font-mono">

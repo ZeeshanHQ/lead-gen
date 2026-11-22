@@ -42,6 +42,9 @@ export interface LeadRow {
   assignedMemberId?: string | null;
   assignedMemberName?: string | null;
   marketId?: string;
+  qualificationStatus?: string | null;
+  dealStage?: string | null;
+  dealValueUsd?: number | null;
 }
 
 export type Scope = "review" | "approved" | "all";
@@ -140,6 +143,9 @@ export async function loadLeadRows(db: Db, scope: Scope, marketId?: string): Pro
       assignedMemberId: r.assignedMemberId ?? null,
       assignedMemberName: r.assignedMemberName ?? null,
       marketId: r.marketId,
+      qualificationStatus: r.qualificationStatus ?? null,
+      dealStage: r.dealStage ?? null,
+      dealValueUsd: r.dealValueUsd ?? null,
     };
   });
 }

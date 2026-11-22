@@ -268,6 +268,38 @@ export function refineConnectedOutcome(text: string | null | undefined): CallOut
   return null;
 }
 
+export interface DncDetectionResult {
+  isDnc: boolean;
+  matchedKeyword?: string;
+}
+
+/**
+ * Phase 5 — DNC Language Detection
+ * Detects explicit Do Not Call requests or hostile removal demands in call notes.
+ * Automatically ignores deferrals (e.g. "call back tomorrow") or timing constraints ("do not call before 2pm").
+ */
+export function detectDncLanguage(text: string | null | undefined): DncDetectionResult {
+  const t = (text || "").trim();
+  if (!t) return { isDnc: false };
+
+  // Deferrals (e.g. "call back next week") or time constraints are not DNC requests
+  if (REFINE_DEFERRAL.test(t)) return { isDnc: false };
+  if (/\bdo\s*not\s*call\s*(before|after|until|on\s*(mon|tue|wed|thu|fri|sat|sun))\b/i.test(t)) {
+    return { isDnc: false };
+  }
+
+  const match = t.match(
+    /\b(do\s*not\s*call|dnc|don'?t\s*call|never\s*call(?:\s*again)?|remove\s*(?:me|us|my\s*number|our\s*number|their\s*number|from\s*(?:the|your)?\s*list)?|take\s*(?:me|us)\s*off(?:\s*(?:the|your)?\s*list)?|stop\s*(?:calling|contacting)|blacklist|block\s*(?:this|my|our)?\s*number|harassment|lawsuit|lawyer)\b/i
+  );
+
+  if (match) {
+    return { isDnc: true, matchedKeyword: match[0] };
+  }
+
+  return { isDnc: false };
+}
+
+
 /** Lifecycle status a call outcome moves a lead to (shared by server and optimistic UI). */
 export function lifecycleStatusForOutcome(
   outcome: CallOutcomeKey

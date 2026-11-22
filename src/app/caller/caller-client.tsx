@@ -52,6 +52,9 @@ import {
   type CallStatusKey,
 } from "@/server/domain/call-outcomes";
 import { CallOutcomePicker, CallStatusBadge, CallStatusLegend } from "@/components/call-status-ui";
+import { EmailComposeModal } from "@/components/email-compose-modal";
+import { MeetingBookingModal } from "@/components/meeting-booking-modal";
+import { getLeadEmailStatus } from "@/server/domain/email-templates";
 import {
   CallerFocusCockpit,
   type FocusCockpitSubmitPayload,
@@ -634,6 +637,12 @@ export function CallerClient({
   const [followUpInput, setFollowUpInput] = useState<string>("");
   const [followUpNote, setFollowUpNote] = useState<string>("");
 
+  // Outbound Email Modal State
+  const [emailModalLead, setEmailModalLead] = useState<CallerLeadView | null>(null);
+
+  // Structured Meeting Booking Modal State
+  const [meetingModalLead, setMeetingModalLead] = useState<CallerLeadView | null>(null);
+
   // Full Edit Lead Modal State
   const [editingLead, setEditingLead] = useState<CallerLeadView | null>(null);
   const [editName, setEditName] = useState("");
@@ -799,6 +808,49 @@ export function CallerClient({
         showToast(res.error || "Could not update follow-up");
       }
     });
+  };
+
+  const handleEmailSent = (result: { followUpDate: string; updatedNotes: string }) => {
+    if (!emailModalLead) return;
+    const targetId = emailModalLead.companyId;
+    const targetName = emailModalLead.name;
+    setQueue((prev) =>
+      prev.map((lead) => {
+        if (lead.companyId !== targetId) return lead;
+        return {
+          ...lead,
+          nextFollowUp: result.followUpDate,
+          nextFollowUpAt: result.followUpDate ? new Date(result.followUpDate) : null,
+          notes: result.updatedNotes,
+        };
+      })
+    );
+    setEmailModalLead(null);
+    showToast(`Email sent to ${targetName}. Follow-up scheduled for ${result.followUpDate}.`);
+  };
+
+  const handleMeetingBooked = (result: {
+    meetingId: string;
+    followUpDate: string;
+    updatedNotes: string;
+  }) => {
+    if (!meetingModalLead) return;
+    const targetId = meetingModalLead.companyId;
+    const targetName = meetingModalLead.name;
+    setQueue((prev) =>
+      prev.map((lead) => {
+        if (lead.companyId !== targetId) return lead;
+        return {
+          ...lead,
+          status: "MEETING_BOOKED",
+          nextFollowUp: result.followUpDate,
+          nextFollowUpAt: result.followUpDate ? new Date(result.followUpDate) : null,
+          notes: result.updatedNotes,
+        };
+      })
+    );
+    setMeetingModalLead(null);
+    showToast(`Discovery meeting booked for ${targetName}! Follow-up scheduled for ${result.followUpDate}.`);
   };
 
   // Open Full Edit Lead Modal
@@ -1105,6 +1157,9 @@ export function CallerClient({
       )
     );
     setSelectedLead(null);
+    if (chosenOutcome === "MEETING_BOOKED") {
+      setMeetingModalLead(targetLead);
+    }
     showToast(
       `Call logged for ${targetLead.name} (${outcomeLabel}). ${
         chosenFollowUp ? "Next callback scheduled." : "Lead updated."
@@ -1212,6 +1267,11 @@ export function CallerClient({
           : ""
       }`
     );
+
+    // If meeting booked, immediately pop up structured booking modal to capture time, platform & send confirmation
+    if (chosenOutcome === "MEETING_BOOKED") {
+      setMeetingModalLead(targetLead);
+    }
 
     startTransition(async () => {
       const res = await logCallFeedbackAction({
@@ -2466,6 +2526,8 @@ export function CallerClient({
             onRescheduleFollowUp={handleCockpitRescheduleFollowUp}
             onSmartFieldChange={handleSmartFieldChange}
             onOpenEditLead={openEditModal}
+            onOpenEmailModal={(lead) => setEmailModalLead(lead)}
+            onOpenMeetingModal={(lead) => setMeetingModalLead(lead)}
             onResetLead={handleResetLead}
             onDeleteCallLog={handleDeleteCallLogEntry}
             onSwitchToFullCrm={isOwner ? (filterStatus) => {
@@ -2963,6 +3025,28 @@ export function CallerClient({
                           {/* Automatic Log-Derived Call Status (Unified Pipeline) */}
                           <CallStatusBadge lead={lead} showAttempts showLastCalled />
 
+                          {/* Email Status Badge (Pending / Sent) */}
+                          {(() => {
+                            const emailStatus = getLeadEmailStatus(lead);
+                            if (emailStatus === "PENDING") {
+                              return (
+                                <span className="inline-flex items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-300">
+                                  <Mail className="w-3 h-3 text-amber-400" />
+                                  <span>Email Pending</span>
+                                </span>
+                              );
+                            }
+                            if (emailStatus === "SENT") {
+                              return (
+                                <span className="inline-flex items-center gap-1 rounded-lg border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-xs font-semibold text-sky-300">
+                                  <Mail className="w-3 h-3 text-sky-400" />
+                                  <span>Email Sent</span>
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+
                           {recentlyDialedIds.has(lead.companyId) && (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-sm animate-in fade-in">
                               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
@@ -3143,6 +3227,24 @@ export function CallerClient({
                       </div>
 
                       <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setMeetingModalLead(lead)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-950/40 hover:bg-emerald-900/60 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:text-white transition cursor-pointer"
+                          title="Book Discovery Meeting"
+                        >
+                          <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Book Meeting</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEmailModalLead(lead)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-950/40 hover:bg-sky-900/60 px-3 py-1.5 text-xs font-semibold text-sky-300 hover:text-white transition cursor-pointer"
+                          title="Compose & Send Sales Email to Prospect"
+                        >
+                          <Mail className="w-3.5 h-3.5 text-sky-400" />
+                          <span>Send Email</span>
+                        </button>
                         {canEditContacts && (
                           <button
                             type="button"
@@ -4068,6 +4170,28 @@ export function CallerClient({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Outbound Prospect Email Compose Modal */}
+      {emailModalLead && (
+        <EmailComposeModal
+          isOpen={!!emailModalLead}
+          onClose={() => setEmailModalLead(null)}
+          lead={emailModalLead}
+          actorName={actor.trim() || activeActorName || "Sales Agent"}
+          onEmailSent={handleEmailSent}
+        />
+      )}
+
+      {/* Structured Discovery Meeting Booking Modal */}
+      {meetingModalLead && (
+        <MeetingBookingModal
+          isOpen={!!meetingModalLead}
+          onClose={() => setMeetingModalLead(null)}
+          lead={meetingModalLead}
+          actorName={actor.trim() || activeActorName || "Sales Caller"}
+          onMeetingBooked={handleMeetingBooked}
+        />
       )}
 
       {/* Bulk CSV / Sheet Import Modal */}

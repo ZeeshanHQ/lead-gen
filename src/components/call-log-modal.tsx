@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { X, CheckCircle2, ChevronDown, ChevronUp, Phone, PhoneCall, Mail } from "lucide-react";
+import { X, CheckCircle2, ChevronDown, ChevronUp, Phone, PhoneCall, Mail, ShieldAlert } from "lucide-react";
 import { CallOutcomePicker } from "@/components/call-status-ui";
 import { type CallOutcomeKey, refineConnectedOutcome } from "@/server/domain/call-outcomes";
 import { buildPresetFollowUpIso } from "@/components/crm-lead-sheet";
@@ -33,6 +33,7 @@ export interface CallLogSubmitData {
   softwareConfirmed?: string | null;
   fleetSizeConfirmed?: number | null;
   clientLogId?: string;
+  requestDnc?: boolean;
 }
 
 export interface CallLogModalProps {
@@ -60,6 +61,7 @@ export const CallLogModal = React.memo(function CallLogModal({
   const [confirmedSoftware, setConfirmedSoftware] = useState(detectedSoft);
   const [confirmedFleet, setConfirmedFleet] = useState<string>("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [requestDnc, setRequestDnc] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [clientLogId] = useState(
     () => `cl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -85,6 +87,7 @@ export const CallLogModal = React.memo(function CallLogModal({
       softwareConfirmed: confirmedSoftware.trim() || null,
       fleetSizeConfirmed: fleetNum && !isNaN(fleetNum) ? fleetNum : null,
       clientLogId,
+      requestDnc: requestDnc || undefined,
     });
   };
 
@@ -151,6 +154,26 @@ export const CallLogModal = React.memo(function CallLogModal({
                 disabled={isSubmitting}
               />
             </div>
+
+            {/* Phase 5: DNC Blocklist Suggestion Checkbox */}
+            {outcome === "NOT_INTERESTED" && (
+              <div className="p-3 rounded-lg border border-rose-800/50 bg-rose-950/20 flex items-center justify-between transition-all">
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-rose-200 font-semibold select-none">
+                  <input
+                    type="checkbox"
+                    checked={requestDnc}
+                    disabled={isSubmitting}
+                    onChange={(e) => setRequestDnc(e.target.checked)}
+                    className="w-4 h-4 rounded text-rose-500 border-zinc-700 bg-zinc-900 focus:ring-rose-500 focus:ring-offset-0 cursor-pointer"
+                  />
+                  <ShieldAlert className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  <span>Flag for Do Not Call (DNC) blocklist</span>
+                </label>
+                <span className="text-[10px] text-rose-300/80">
+                  Suggests exclusion to Admin
+                </span>
+              </div>
+            )}
 
             {/* Quick Follow-Up Scheduler */}
             <div>

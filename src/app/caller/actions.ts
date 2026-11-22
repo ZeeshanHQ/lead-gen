@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getDb, type Db } from "@/server/db/client";
-import { recordCallFeedback, type CallFeedbackInput } from "@/server/repo/caller";
+import { recordCallFeedback, updateCompanyDealStage, type CallFeedbackInput } from "@/server/repo/caller";
 import { getSetting, setSetting, getActor } from "@/server/repo/settings";
 import { getActiveTeamMember } from "@/server/repo/team";
 import { DEFAULT_DIALER_CONFIG, type DialerConfig } from "@/server/domain/dialer";
@@ -14,6 +14,21 @@ import {
   type CallerShiftRule,
 } from "@/server/domain/focus-queue";
 import { audit } from "@/server/repo/audit";
+import {
+  sendAndLogProspectEmail,
+  getEmailActivitiesForCompany,
+} from "@/server/repo/email-activities";
+import {
+  bookDiscoveryMeeting,
+  updateMeetingOutcome,
+  getMeetingsForCompany,
+} from "@/server/repo/meetings";
+import type {
+  MeetingPlatform,
+  MeetingStatus,
+  MeetingOutcome,
+  DealStage,
+} from "@/server/db/schema";
 
 async function resolveCallerActor(db: Db, explicitActor?: string | null): Promise<string> {
   const trimmed = (explicitActor || "").trim();
@@ -37,6 +52,8 @@ function revalidateCrmAndAnalytics(companyId?: string) {
   revalidatePath("/caller");
   revalidatePath("/leads");
   revalidatePath("/analytics");
+  revalidatePath("/exclusions");
+  revalidatePath("/admin/monitor");
   if (companyId) {
     revalidatePath(`/company/${companyId}`);
   }
@@ -594,6 +611,162 @@ export async function saveCallerShiftConfigAction(input: {
     return {
       ok: false as const,
       error: err.message || "Could not save shift sequence config",
+    };
+  }
+}
+
+export async function sendProspectEmailAction(input: {
+  companyId: string;
+  contactId?: string | null;
+  recipientEmail: string;
+  recipientName?: string | null;
+  templateKey?: string | null;
+  subject: string;
+  bodyText: string;
+  actor?: string | null;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await resolveCallerActor(db, input.actor);
+    const result = await sendAndLogProspectEmail(db, {
+      ...input,
+      actor,
+    });
+
+    revalidateCrmAndAnalytics(input.companyId);
+    revalidatePath("/admin/monitor");
+
+    return {
+      success: true,
+      emailActivityId: result.emailActivityId,
+      followUpDate: result.followUpDate,
+      updatedNotes: result.updatedNotes,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || "Failed to send email to prospect",
+    };
+  }
+}
+
+export async function getCompanyEmailsAction(companyId: string) {
+  try {
+    const db = await getDb();
+    const emails = await getEmailActivitiesForCompany(db, companyId);
+    return { success: true, emails };
+  } catch (err: any) {
+    return { success: false, emails: [], error: err.message };
+  }
+}
+
+export async function bookDiscoveryMeetingAction(input: {
+  companyId: string;
+  meetingAt: string;
+  platform?: MeetingPlatform;
+  meetingUrl?: string | null;
+  attendeeName?: string | null;
+  attendeeEmail?: string | null;
+  bookedBy?: string | null;
+  prepNotes?: string | null;
+  sendConfirmationEmail?: boolean;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await resolveCallerActor(db, input.bookedBy);
+    const result = await bookDiscoveryMeeting(db, {
+      ...input,
+      bookedBy: actor,
+    });
+
+    revalidateCrmAndAnalytics(input.companyId);
+    revalidatePath("/admin/monitor");
+
+    return {
+      success: true,
+      meetingId: result.meetingId,
+      meetingAt: result.meetingAt.toISOString(),
+      followUpDate: result.followUpDate,
+      updatedNotes: result.updatedNotes,
+      confirmationEmailSent: result.confirmationEmailSent,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || "Failed to book discovery meeting",
+    };
+  }
+}
+
+export async function updateMeetingOutcomeAction(input: {
+  meetingId: string;
+  status: MeetingStatus;
+  outcome?: MeetingOutcome | null;
+  outcomeNotes?: string | null;
+  actor?: string | null;
+  newMeetingAt?: string | null;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await resolveCallerActor(db, input.actor);
+    const result = await updateMeetingOutcome(db, {
+      ...input,
+      actor,
+    });
+
+    revalidatePath("/caller");
+    revalidatePath("/admin/monitor");
+    revalidatePath("/analytics");
+
+    return {
+      success: true,
+      status: result.status,
+      updatedFollowUp: result.updatedFollowUp?.toISOString() || null,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || "Failed to update meeting outcome",
+    };
+  }
+}
+
+export async function getCompanyMeetingsAction(companyId: string) {
+  try {
+    const db = await getDb();
+    const meetings = await getMeetingsForCompany(db, companyId);
+    return { success: true, meetings };
+  } catch (err: any) {
+    return { success: false, meetings: [], error: err.message };
+  }
+}
+
+
+export async function updateCompanyDealStageAction(input: {
+  companyId: string;
+  dealStage: DealStage;
+  dealValueUsd?: number | null;
+  notes?: string | null;
+  actor?: string | null;
+}) {
+  try {
+    const db = await getDb();
+    const actor = await resolveCallerActor(db, input.actor);
+    const result = await updateCompanyDealStage(db, {
+      ...input,
+      actor,
+    });
+
+    revalidatePath("/caller");
+    revalidatePath("/pipeline");
+    revalidatePath("/analytics");
+    revalidatePath(`/company/${input.companyId}`);
+
+    return { success: true };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || "Failed to update deal stage",
     };
   }
 }

@@ -349,6 +349,9 @@ export function canMemberAccessPath(member: TeamMember | null | undefined, pathn
   if (pathname.startsWith("/analytics")) {
     return canViewSalesAnalytics(member);
   }
+  if (pathname.startsWith("/pipeline")) {
+    return Boolean(member.permissions.manageTeamAndSettings);
+  }
   return Boolean(member.permissions.manageTeamAndSettings);
 }
 

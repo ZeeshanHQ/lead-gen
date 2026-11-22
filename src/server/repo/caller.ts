@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { auditLogs, companies, contacts, leadScores, systemSettings } from "../db/schema";
+import { auditLogs, companies, contacts, leadScores, systemSettings, type QualificationStatus, type DealStage } from "../db/schema";
 import { POST_APPROVAL, type LifecycleStatus } from "../domain/lifecycle";
 import { getContactsForCompanies, toContactInput } from "./contacts";
 import { classifyEmail, classifyTitle, pickBestContact } from "../domain/contact";
@@ -12,6 +12,7 @@ import { type CustomCrmColumn } from "../domain/niche-fields";
 import { setFact } from "./facts";
 import { audit } from "./audit";
 import { createNotification } from "./notifications";
+import { createDncSuggestion } from "./dnc-suggestions";
 import {
   CALL_STATUS_DEFS,
   extractFollowUp,
@@ -21,10 +22,17 @@ import {
   outcomeKeyFromEnum,
   parseCallLog,
   refineConnectedOutcome,
+  detectDncLanguage,
   type CallOutcomeKey,
 } from "../domain/call-outcomes";
-import { CALLER_TIMEZONE } from "../domain/call-time";
+import { CALLER_TIMEZONE, parseFollowUpMs } from "../domain/call-time";
 import { computeAutoFollowUpCadence } from "../domain/focus-queue";
+import {
+  ensureAssignmentTask,
+  reassignOpenActivities,
+  syncNextActivityForCompany,
+  syncActivityDueAt,
+} from "./activities";
 
 export function extractLatestFollowUp(notes: string | null | undefined): string | null {
   return extractFollowUp(notes);
@@ -79,6 +87,11 @@ export interface CallerLeadView {
   installSignalObserved?: boolean;
   onlineBookingObserved?: boolean;
   researchSummary: string | null;
+  painIdentified?: string | null;
+  nextFollowUpAt?: Date | null;
+  qualificationStatus?: QualificationStatus | null;
+  dealStage?: DealStage | null;
+  dealValueUsd?: number | null;
   notes: string | null;
   nextFollowUp: string | null;
   assignedMemberId: string | null;
@@ -136,6 +149,8 @@ export interface CallFeedbackInput {
    * saves a given clientLogId at most once.
    */
   clientLogId?: string | null;
+  /** Phase 5: Flag lead for Do Not Call blocklist review */
+  requestDnc?: boolean | null;
 }
 
 export async function getCallerQueue(
@@ -225,7 +240,12 @@ export async function getCallerQueue(
       onlineBookingObserved: flatFacts["onlineBooking"] === "YES",
       researchSummary: c.researchSummary,
       notes: c.notes,
+      painIdentified: c.painIdentified,
+      qualificationStatus: (c.qualificationStatus as QualificationStatus) || "UNQUALIFIED",
+      dealStage: (c.dealStage as DealStage) || "NONE",
+      dealValueUsd: c.dealValueUsd ?? null,
       nextFollowUp: extractLatestFollowUp(c.notes),
+      nextFollowUpAt: c.nextFollowUpAt,
       assignedMemberId: c.assignedMemberId ?? null,
       assignedMemberName: c.assignedMemberName ?? null,
       marketId: c.marketId,
@@ -357,6 +377,8 @@ export interface CallFeedbackResult {
   duplicate?: boolean;
   /** Set when the system re-scheduled an existing callback because the caller did not reach anyone. */
   autoRescheduleReason?: string | null;
+  /** Phase 5: Whether a DNC blocklist suggestion was automatically created or updated */
+  dncSuggested?: boolean;
 }
 
 export async function recordCallFeedback(
@@ -549,14 +571,71 @@ async function recordCallFeedbackInTransaction(
   const finalNotes = prependLogEntry(company.notes, newCallLogEntry, effectiveFollowUp);
 
   const updatedAt = new Date();
+  // Phase 1 dual-write: derive next_follow_up_at from effectiveFollowUp (PKT-naive â†’ UTC Date)
+  const followUpUtc = effectiveFollowUp
+    ? (() => { const ms = parseFollowUpMs(effectiveFollowUp); return ms ? new Date(ms) : null; })()
+    : null;
   await db
-    .update(companies)
-    .set({
-      status: nextStatus,
-      notes: finalNotes,
-      updatedAt,
-    })
+    .update(companies)      .set({
+        status: nextStatus,
+        notes: finalNotes,
+        updatedAt,
+        nextFollowUpAt: followUpUtc,
+        // Only write painIdentified when the caller provided a non-empty value
+        ...(input.painIdentified?.trim() ? { painIdentified: input.painIdentified.trim() } : {}),
+        // Phase 6: auto-sync qualification_status and deal_stage from call outcome
+        ...(effectiveOutcome === "NOT_INTERESTED"
+          ? {
+              qualificationStatus: "DISQUALIFIED" as QualificationStatus,
+              ...(company.dealStage !== "NONE" ? { dealStage: "CLOSED_LOST" as DealStage } : {}),
+            }
+          : effectiveOutcome === "MEETING_BOOKED"
+          ? {
+              qualificationStatus: "QUALIFIED" as QualificationStatus,
+              dealStage: "MEETING_BOOKED" as DealStage,
+            }
+          : (input.painIdentified?.trim() && company.qualificationStatus === "UNQUALIFIED")
+          ? { qualificationStatus: "PAIN_IDENTIFIED" as QualificationStatus }
+          : {}),
+      })
     .where(eq(companies.id, input.companyId));
+
+  // Phase 2: Complete previous open task and create next activity (CALL, EMAIL, MEETING_PREP, or SKIPPED)
+  await syncNextActivityForCompany(db, {
+    companyId: input.companyId,
+    outcome: effectiveOutcome,
+    nextStatus,
+    followUpDate: followUpUtc,
+    assignedMemberId: company.assignedMemberId,
+    assignedMemberName: company.assignedMemberName,
+    callerNotes: noteBody,
+    actor: input.actor,
+  });
+
+  // Phase 5: DNC Automation & Blocklist Suggestion
+  // Triggered when caller marks NOT_INTERESTED with DNC keywords, explicitly flags requestDnc,
+  // or when DNC refusal language is detected in caller notes.
+  const dncCheck = detectDncLanguage(cleanUserNote);
+  const shouldSuggestDnc =
+    Boolean(input.requestDnc) ||
+    dncCheck.isDnc ||
+    (effectiveOutcome === "NOT_INTERESTED" && dncCheck.isDnc);
+
+  if (shouldSuggestDnc) {
+    try {
+      await createDncSuggestion(db, {
+        companyId: company.id,
+        companyName: company.name,
+        phone: company.phoneDisplay || company.phoneE164 || null,
+        domain: company.domain || null,
+        callerNotes: noteBody,
+        detectedKeyword: dncCheck.matchedKeyword || (input.requestDnc ? "caller_requested" : "not_interested"),
+        suggestedBy: input.actor,
+      });
+    } catch (dncErr) {
+      console.warn("Failed to create DNC suggestion:", dncErr);
+    }
+  }
 
   // 4. Append audit log (this row is also the idempotency key and the durable call record)
   await audit(db, {
@@ -578,6 +657,7 @@ async function recordCallFeedbackInTransaction(
       effectiveFollowUp,
       previousFollowUp,
       autoRescheduleReason,
+      dncSuggested: shouldSuggestDnc,
       clientLogId: input.clientLogId ?? null,
     },
   });
@@ -589,6 +669,7 @@ async function recordCallFeedbackInTransaction(
     nextFollowUp: effectiveFollowUp,
     updatedAt: updatedAt.toISOString(),
     autoRescheduleReason,
+    dncSuggested: shouldSuggestDnc,
   };
 }
 
@@ -802,6 +883,12 @@ async function updateLeadCrmDetailsInTransaction(
         ? `[Next Follow-up Scheduled: ${desiredFollowUp}]\n${cleanedNotes}`
         : `[Next Follow-up Scheduled: ${desiredFollowUp}]`
       : cleanedNotes || null;
+    // Phase 1 dual-write: sync next_follow_up_at whenever nextFollowUp is explicitly provided
+    if (input.nextFollowUp !== undefined) {
+      companyUpdates.nextFollowUpAt = desiredFollowUp
+        ? (() => { const ms = parseFollowUpMs(desiredFollowUp); return ms ? new Date(ms) : null; })()
+        : null;
+    }
   }
 
   // Auto-clear terminal outcome when phone is changed or when explicitly reset/approved.
@@ -821,6 +908,8 @@ async function updateLeadCrmDetailsInTransaction(
       .replace(/\(Not Interested\)/gi, "(Outcome Reset)");
     if (input.nextFollowUp === undefined && (input.resetCallOutcome || isPhoneChanged)) {
       sanitizedNotes = stripFollowUpTags(sanitizedNotes);
+      // Phase 1: clear the indexed column when the notes follow-up tag is stripped
+      companyUpdates.nextFollowUpAt = null;
     }
     companyUpdates.notes = sanitizedNotes || null;
   }
@@ -1049,6 +1138,10 @@ async function updateLeadFollowUpInTransaction(
     .set({
       notes: finalNotes,
       updatedAt: new Date(),
+      // Phase 1 dual-write: keep next_follow_up_at in sync with the notes tag
+      nextFollowUpAt: trimmedDate
+        ? (() => { const ms = parseFollowUpMs(trimmedDate); return ms ? new Date(ms) : null; })()
+        : null,
     })
     .where(eq(companies.id, companyId));
 
@@ -1116,6 +1209,8 @@ async function resetLeadCallStatusInTransaction(
 
   if (params.clearFollowUp !== false) {
     cleanNotes = stripFollowUpTags(cleanNotes);
+    // Phase 1: clear the indexed column in sync with stripping the notes tag
+    companyUpdates.nextFollowUpAt = null;
   }
 
   const timeStr = formatCallerTimeStr();
@@ -1466,6 +1561,14 @@ export async function assignLeadToMember(
     details: { assignedMemberId: memberId || null, assignedMemberName: memberName || null },
   });
 
+  // Phase 2: Ensure caller has a mandatory open task for the assigned lead
+  await ensureAssignmentTask(db, {
+    companyId,
+    memberId: memberId || null,
+    memberName: memberName || null,
+    actor,
+  });
+
   try {
     if (memberId) {
       await createNotification(db, {
@@ -1532,6 +1635,13 @@ export async function autoDistributeLeads(
       .where(eq(companies.id, row.id));
     if (distributionCounts[targetMember.id]) {
       distributionCounts[targetMember.id]!.count++;
+    // Phase 2: Ensure task for auto-distributed lead
+    await ensureAssignmentTask(db, {
+      companyId: row.id,
+      memberId: targetMember.id,
+      memberName: targetMember.name,
+      actor,
+    });
     }
     idx++;
   }
@@ -1863,6 +1973,16 @@ export async function unassignCallerLeads(
     })
     .where(inArray(companies.id, ids));
 
+  // Phase 2: Ensure assignment tasks for bulk unassigned leads
+  for (const id of ids) {
+    await ensureAssignmentTask(db, {
+      companyId: id,
+      memberId: null,
+      memberName: null,
+      actor: params.actor,
+    });
+  }
+
   await audit(db, {
     actor: params.actor,
     action: "lead.bulk_unassigned",
@@ -1889,4 +2009,102 @@ export async function unassignCallerLeads(
   }
 
   return { unassignedCount: ids.length };
+}
+
+/**
+ * Phase 6: Update company deal stage (manual advancement or auto-sync)
+ * Aligns dealStage with qualificationStatus and companies.status while preserving audit history.
+ */
+export async function updateCompanyDealStage(
+  db: Db,
+  input: {
+    companyId: string;
+    dealStage: DealStage;
+    dealValueUsd?: number | null;
+    actor: string;
+    notes?: string | null;
+  }
+): Promise<{ ok: boolean }> {
+  const [company] = await db
+    .select()
+    .from(companies)
+    .where(eq(companies.id, input.companyId))
+    .limit(1);
+
+  if (!company) {
+    throw new Error(`Company not found: ${input.companyId}`);
+  }
+
+  const prevStage = (company.dealStage as DealStage) || "NONE";
+  const newStage = input.dealStage;
+
+  let nextStatus = company.status;
+  let nextQualification: QualificationStatus =
+    (company.qualificationStatus as QualificationStatus) || "UNQUALIFIED";
+
+  if (newStage === "MEETING_BOOKED") {
+    nextStatus = "MEETING_BOOKED";
+    nextQualification = "QUALIFIED";
+  } else if (newStage === "DISCOVERY") {
+    nextStatus = "DISCOVERY";
+    nextQualification = "QUALIFIED";
+  } else if (newStage === "PROPOSAL") {
+    nextStatus = "PROPOSAL";
+    nextQualification = "QUALIFIED";
+  } else if (newStage === "NEGOTIATION") {
+    nextStatus = "PILOT";
+    nextQualification = "QUALIFIED";
+  } else if (newStage === "CLOSED_WON") {
+    nextStatus = "CLOSED";
+    nextQualification = "QUALIFIED";
+  } else if (newStage === "CLOSED_LOST") {
+    nextStatus = "LOST";
+    nextQualification = "DISQUALIFIED";
+  }
+
+  const now = new Date();
+  const timeStr = now.toLocaleString("en-US", {
+    timeZone: CALLER_TIMEZONE,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  const dealValStr =
+    input.dealValueUsd != null
+      ? ` • Deal Value: $${input.dealValueUsd.toLocaleString()}`
+      : "";
+  const customNotesStr = input.notes?.trim() ? ` — ${input.notes.trim()}` : "";
+  const logEntry = `[${timeStr} • ${input.actor} (Deal Stage Updated)]: Stage changed from ${prevStage} to ${newStage}${dealValStr}${customNotesStr}`;
+
+  const updatedNotes = prependLogEntry(company.notes, logEntry, null);
+
+  await db
+    .update(companies)
+    .set({
+      dealStage: newStage,
+      qualificationStatus: nextQualification,
+      status: nextStatus as never,
+      ...(input.dealValueUsd !== undefined ? { dealValueUsd: input.dealValueUsd } : {}),
+      notes: updatedNotes,
+      updatedAt: now,
+    })
+    .where(eq(companies.id, input.companyId));
+
+  await audit(db, {
+    actor: input.actor,
+    action: "company.deal_stage_updated",
+    entityType: "company",
+    entityId: input.companyId,
+    details: {
+      previousStage: prevStage,
+      newStage,
+      dealValueUsd: input.dealValueUsd,
+      qualificationStatus: nextQualification,
+      lifecycleStatus: nextStatus,
+    },
+  });
+
+  return { ok: true };
 }

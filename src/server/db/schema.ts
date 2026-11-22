@@ -99,6 +99,12 @@ export const companies = pgTable(
     assignedMemberId: text("assigned_member_id"),
     assignedMemberName: text("assigned_member_name"),
     lastResearchedAt: tz("last_researched_at"),
+    nextFollowUpAt: tz("next_follow_up_at"),
+    painIdentified: text("pain_identified"),
+    /** Phase 6 — Structured Qualification & Deal Stage Separation */
+    qualificationStatus: text("qualification_status").notNull().default("UNQUALIFIED"),
+    dealStage: text("deal_stage").notNull().default("NONE"),
+    dealValueUsd: integer("deal_value_usd"),
   },
   (t) => [
     index("companies_domain_idx").on(t.domain),
@@ -106,6 +112,9 @@ export const companies = pgTable(
     index("companies_name_key_idx").on(t.nameKey),
     index("companies_state_idx").on(t.state),
     index("companies_status_idx").on(t.status),
+    index("companies_follow_up_idx").on(t.nextFollowUpAt),
+    index("companies_qualification_status_idx").on(t.qualificationStatus),
+    index("companies_deal_stage_idx").on(t.dealStage),
   ],
 );
 
@@ -388,3 +397,151 @@ export const fieldSuggestions = pgTable(
   },
   (t) => [index("suggestions_company_idx").on(t.companyId)],
 );
+
+export type ActivityStatus = "TODO" | "IN_PROGRESS" | "DONE" | "SKIPPED" | "OVERDUE";
+export type ActivityType = "CALL" | "EMAIL" | "MEETING_PREP" | "REVIEW";
+
+/**
+ * Phase 2 — Dedicated Activities (Tasks) Table
+ * Ensures every active lead has a concrete next action and due date.
+ */
+export const activities = pgTable(
+  "activities",
+  {
+    ...common("TODO"),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    type: text("type").$type<ActivityType>().notNull(),
+    dueAt: tz("due_at"),
+    completedAt: tz("completed_at"),
+    assignedMemberId: text("assigned_member_id"),
+    assignedMemberName: text("assigned_member_name"),
+    outcome: text("outcome"),
+    notes: text("notes"),
+    referenceId: text("reference_id"),
+  },
+  (t) => [
+    index("activities_company_idx").on(t.companyId),
+    index("activities_due_at_idx").on(t.dueAt),
+    index("activities_assigned_member_idx").on(t.assignedMemberId),
+    index("activities_status_idx").on(t.status),
+  ],
+);
+
+export type EmailActivityStatus = "DRAFT" | "SENT" | "OPENED" | "REPLIED" | "BOUNCED" | "FAILED";
+
+/**
+ * Phase 3 — Dedicated Prospect Email Tracking Table
+ * Stores outbound emails sent to prospects along with Resend message IDs and delivery state.
+ */
+export const emailActivities = pgTable(
+  "email_activities",
+  {
+    ...common("SENT"),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    recipientEmail: text("recipient_email").notNull(),
+    recipientName: text("recipient_name"),
+    templateKey: text("template_key"),
+    subject: text("subject").notNull(),
+    bodyText: text("body_text").notNull(),
+    sentAt: tz("sent_at"),
+    resendMessageId: text("resend_message_id"),
+    openedAt: tz("opened_at"),
+    repliedAt: tz("replied_at"),
+    actor: text("actor").notNull(),
+    replyText: text("reply_text"),
+  },
+  (t) => [
+    index("email_activities_company_idx").on(t.companyId),
+    index("email_activities_sent_at_idx").on(t.sentAt),
+  ],
+);
+
+export const meetingStatusEnum = ["SCHEDULED", "ATTENDED", "NO_SHOW", "RESCHEDULED", "CANCELLED"] as const;
+export type MeetingStatus = (typeof meetingStatusEnum)[number];
+
+export const meetingPlatformEnum = ["ZOOM", "GOOGLE_MEET", "PHONE", "IN_PERSON"] as const;
+export type MeetingPlatform = (typeof meetingPlatformEnum)[number];
+
+export const meetingOutcomeEnum = ["QUALIFIED", "NOT_QUALIFIED", "PROPOSAL_SENT", "LOST"] as const;
+export type MeetingOutcome = (typeof meetingOutcomeEnum)[number];
+
+/**
+ * Phase 4 — Structured Discovery Meetings & Show/No-Show Loop
+ * Tracks scheduled demos, attendee contact details, video links, prep notes, and attendance.
+ */
+export const meetings = pgTable(
+  "meetings",
+  {
+    ...common("SCHEDULED"),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    meetingAt: tz("meeting_at").notNull(),
+    platform: text("platform").notNull().default("ZOOM"),
+    meetingUrl: text("meeting_url"),
+    attendeeName: text("attendee_name"),
+    attendeeEmail: text("attendee_email"),
+    bookedBy: text("booked_by").notNull(),
+    prepNotes: text("prep_notes"),
+    outcomeNotes: text("outcome_notes"),
+    outcome: text("outcome"),
+  },
+  (t) => [
+    index("meetings_company_idx").on(t.companyId),
+    index("meetings_meeting_at_idx").on(t.meetingAt),
+  ],
+);
+
+export const dncSuggestionStatusEnum = ["PENDING", "ACCEPTED", "DISMISSED"] as const;
+export type DncSuggestionStatus = (typeof dncSuggestionStatusEnum)[number];
+
+/**
+ * Phase 5 — DNC Automation & Blocklist Suggestions
+ * Captures auto-detected DNC requests from call logs with 1-click admin approval.
+ */
+export const dncSuggestions = pgTable(
+  "dnc_suggestions",
+  {
+    ...common("PENDING"),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    suggestedKind: text("suggested_kind").notNull(), // phone | domain | name
+    suggestedValue: text("suggested_value").notNull(),
+    companyName: text("company_name").notNull(),
+    phone: text("phone"),
+    domain: text("domain"),
+    callerNotes: text("caller_notes"),
+    detectedKeyword: text("detected_keyword"),
+    suggestedBy: text("suggested_by").notNull(),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: tz("reviewed_at"),
+    exclusionId: uuid("exclusion_id").references(() => exclusions.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    index("dnc_suggestions_company_idx").on(t.companyId),
+    index("dnc_suggestions_status_idx").on(t.status),
+  ],
+);
+
+export const qualificationStatusEnum = ["UNQUALIFIED", "PAIN_IDENTIFIED", "QUALIFIED", "DISQUALIFIED"] as const;
+export type QualificationStatus = (typeof qualificationStatusEnum)[number];
+
+export const dealStageEnum = [
+  "NONE",
+  "MEETING_BOOKED",
+  "DISCOVERY",
+  "PROPOSAL",
+  "NEGOTIATION",
+  "CLOSED_WON",
+  "CLOSED_LOST",
+] as const;
+export type DealStage = (typeof dealStageEnum)[number];
+
+
+

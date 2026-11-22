@@ -7,7 +7,7 @@ export interface AppNotification {
   recipientMemberId: string; // Target member ID, "ALL", or "OWNER"
   title: string;
   message: string;
-  category: "lead_assigned" | "lead_unassigned" | "niche_updated" | "system" | "followup_due";
+  category: "lead_assigned" | "lead_unassigned" | "niche_updated" | "system" | "followup_due" | "meeting_booked" | "dnc_suggested";
   link?: string;
   entityType?: string;
   entityId?: string;

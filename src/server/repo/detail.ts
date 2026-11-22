@@ -17,6 +17,9 @@ import { getContactsForCompanies, toContactInput } from "./contacts";
 import { pendingSuggestions } from "./approvals";
 import { getDefaultRule } from "./rules";
 import { getStaleDays } from "./settings";
+import { getUnifiedCompanyTimeline } from "./timeline";
+
+export { getUnifiedCompanyTimeline };
 
 export type EvidenceRow = typeof evidence.$inferSelect;
 
@@ -47,6 +50,7 @@ export async function getCompanyDetail(db: Db, id: string) {
     .where(eq(auditLogs.companyId, id))
     .orderBy(desc(auditLogs.createdAt))
     .limit(50);
+  const timeline = await getUnifiedCompanyTimeline(db, id);
   return {
     company: c,
     status: c.status as LifecycleStatus,
@@ -63,6 +67,7 @@ export async function getCompanyDetail(db: Db, id: string) {
     stale: isStale(c.lastVerifiedAt, staleDays),
     staleDays,
     history,
+    timeline,
   };
 }
 

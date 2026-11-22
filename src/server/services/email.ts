@@ -323,3 +323,109 @@ The Astraventa Team`;
     };
   }
 }
+
+export interface SendProspectEmailParams {
+  to: string;
+  recipientName?: string | null;
+  subject: string;
+  bodyText: string;
+  replyTo?: string | null;
+  fromName?: string | null;
+  actor?: string | null;
+}
+
+export interface ProspectEmailDispatchResult {
+  ok: boolean;
+  directSent: boolean;
+  provider: "resend" | "none";
+  messageId?: string;
+  error?: string;
+}
+
+/**
+ * Sends an outbound sales email to a prospect via Resend.
+ * CAN-SPAM compliant with clean HTML wrapper and automatic plain text fallback.
+ * Falls back gracefully to mock return when RESEND_API_KEY is not configured.
+ */
+export async function sendProspectEmail(
+  params: SendProspectEmailParams
+): Promise<ProspectEmailDispatchResult> {
+  const resendApiKey = process.env.RESEND_API_KEY?.trim();
+  if (!resendApiKey) {
+    // Graceful fallback for local development & testing
+    return {
+      ok: true,
+      directSent: false,
+      provider: "none",
+      messageId: `mock_resend_${Date.now()}`,
+    };
+  }
+
+  try {
+    const senderName = params.fromName?.trim() || "Astraventa Sales";
+    const fromAddress =
+      process.env.EMAIL_FROM?.trim() || `${senderName} <onboarding@resend.dev>`;
+
+    const paragraphs = params.bodyText
+      .split("\n\n")
+      .map((p) => `<p style="margin: 0 0 16px 0; font-size: 14px; line-height: 1.6; color: #27272a;">${p.replace(/\n/g, "<br>")}</p>`)
+      .join("");
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${params.subject}</title>
+</head>
+<body style="margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #ffffff; color: #18181b;">
+  <div style="max-width: 600px; margin: 0 auto;">
+    ${paragraphs}
+    <hr style="border: none; border-top: 1px solid #e4e4e7; margin: 24px 0 16px 0;" />
+    <p style="font-size: 11px; color: #71717a; margin: 0;">
+      Astraventa Sales Intelligence &bull; If you'd prefer not to hear from us, simply reply with "unsubscribe".
+    </p>
+  </div>
+</body>
+</html>`;
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: [params.to],
+        subject: params.subject,
+        text: params.bodyText,
+        html,
+        ...(params.replyTo ? { reply_to: params.replyTo } : {}),
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        directSent: false,
+        provider: "resend",
+        error: (data as any)?.message || `Resend returned HTTP ${res.status}`,
+      };
+    }
+
+    return {
+      ok: true,
+      directSent: true,
+      provider: "resend",
+      messageId: (data as any)?.id || `resend_${Date.now()}`,
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      directSent: false,
+      provider: "resend",
+      error: err.message || "Failed to contact Resend API",
+    };
+  }
+}

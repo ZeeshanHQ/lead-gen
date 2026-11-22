@@ -60,6 +60,7 @@ import {
   Calendar,
   ArrowUpRight,
   Info,
+  Briefcase,
 } from "lucide-react";
 
 export interface CallAuditEntry {
@@ -378,6 +379,9 @@ export function SalesFunnelClient({
       assignedMemberId: l.assignedMemberId || null,
       createdAtMs: l.createdAt ? new Date(l.createdAt).getTime() : null,
       updatedAtMs: l.updatedAt ? new Date(l.updatedAt).getTime() : null,
+      qualificationStatus: l.qualificationStatus || null,
+      dealStage: l.dealStage || null,
+      dealValueUsd: l.dealValueUsd || null,
     }));
   }, [leads]);
 
@@ -795,6 +799,14 @@ export function SalesFunnelClient({
           <div className="text-[11px] text-emerald-300/90 mt-0.5 font-semibold">
             {closingRate}% close rate from Owner talks
           </div>
+          {funnelResult.dial.meetingShowRate !== undefined && (
+            <div className="text-[10px] text-zinc-400 mt-1 flex items-center justify-between border-t border-emerald-500/20 pt-1">
+              <span>Meeting Show Rate:</span>
+              <span className="font-bold text-emerald-300 font-mono">
+                {funnelResult.dial.meetingShowRate}%
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Metric 6: Follow-Up & Callback Queue */}
@@ -1219,6 +1231,103 @@ export function SalesFunnelClient({
               </div>
             </div>
           )}
+
+          {/* SECTION C: COMMERCIAL DEAL PIPELINE STAGE BREAKDOWN */}
+          <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-6 shadow-sm space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800/80 pb-4">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Briefcase className="w-4 h-4 text-cyan-400" />
+                  <span>Executive Deal Stage Pipeline</span>
+                </h2>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Synchronized stages from discovery meetings, proposals, and commercial contracts.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <span className="text-[10px] text-zinc-500 uppercase font-mono block">
+                    Active Deals
+                  </span>
+                  <span className="text-sm font-bold text-cyan-300 font-mono">
+                    {funnelResult.activeDealCount} Deals (
+                    {funnelResult.totalDealValueUsd > 0
+                      ? `$${funnelResult.totalDealValueUsd.toLocaleString()}`
+                      : "Unset"}
+                    )
+                  </span>
+                </div>
+                <Link
+                  href="/pipeline"
+                  className="px-3 py-1.5 rounded-lg bg-cyan-950/60 border border-cyan-700/60 text-cyan-300 hover:bg-cyan-900/60 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                >
+                  <span>Open Pipeline Board</span>
+                  <ExternalLink className="w-3 h-3" />
+                </Link>
+              </div>
+            </div>
+
+            {/* Stage Cards Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              {[
+                {
+                  key: "MEETING_BOOKED",
+                  label: "Discovery Scheduled",
+                  count: funnelResult.dealStageCounts.MEETING_BOOKED || 0,
+                  color: "text-blue-400",
+                  bg: "bg-blue-950/20 border-blue-500/30",
+                },
+                {
+                  key: "DISCOVERY",
+                  label: "Discovery Held",
+                  count: funnelResult.dealStageCounts.DISCOVERY || 0,
+                  color: "text-cyan-400",
+                  bg: "bg-cyan-950/20 border-cyan-500/30",
+                },
+                {
+                  key: "PROPOSAL",
+                  label: "Proposal Sent",
+                  count: funnelResult.dealStageCounts.PROPOSAL || 0,
+                  color: "text-amber-400",
+                  bg: "bg-amber-950/20 border-amber-500/30",
+                },
+                {
+                  key: "NEGOTIATION",
+                  label: "Negotiation / Pilot",
+                  count: funnelResult.dealStageCounts.NEGOTIATION || 0,
+                  color: "text-purple-400",
+                  bg: "bg-purple-950/20 border-purple-500/30",
+                },
+                {
+                  key: "CLOSED_WON",
+                  label: "Closed Won",
+                  count: funnelResult.dealStageCounts.CLOSED_WON || 0,
+                  color: "text-emerald-400",
+                  bg: "bg-emerald-950/20 border-emerald-500/30",
+                },
+                {
+                  key: "CLOSED_LOST",
+                  label: "Closed Lost",
+                  count: funnelResult.dealStageCounts.CLOSED_LOST || 0,
+                  color: "text-rose-400",
+                  bg: "bg-rose-950/20 border-rose-500/30",
+                },
+              ].map((s) => (
+                <div
+                  key={s.key}
+                  className={`p-3.5 rounded-xl border ${s.bg} flex flex-col justify-between space-y-2`}
+                >
+                  <span className="text-[11px] font-semibold text-zinc-300 line-clamp-1">
+                    {s.label}
+                  </span>
+                  <div className={`text-2xl font-black font-mono ${s.color}`}>
+                    {s.count}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 

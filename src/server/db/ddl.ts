@@ -62,7 +62,12 @@ CREATE TABLE IF NOT EXISTS "companies" (
 	"discovered_via" text DEFAULT 'manual_entry' NOT NULL,
 	"approved_at" timestamp with time zone,
 	"approved_by" text,
-	"last_researched_at" timestamp with time zone
+	"last_researched_at" timestamp with time zone,
+	"next_follow_up_at" timestamp with time zone,
+	"pain_identified" text,
+	"qualification_status" text DEFAULT 'UNQUALIFIED' NOT NULL,
+	"deal_stage" text DEFAULT 'NONE' NOT NULL,
+	"deal_value_usd" integer
 );
 CREATE TABLE IF NOT EXISTS "company_source_refs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -279,6 +284,27 @@ CREATE TABLE IF NOT EXISTS "sources" (
 	"last_error" text,
 	"config" jsonb DEFAULT '{}'::jsonb NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS "email_activities" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_verified_at" timestamp with time zone,
+	"status" text DEFAULT 'SENT' NOT NULL,
+	"company_id" uuid NOT NULL REFERENCES "companies"("id") ON DELETE CASCADE,
+	"contact_id" uuid REFERENCES "contacts"("id") ON DELETE SET NULL,
+	"recipient_email" text NOT NULL,
+	"recipient_name" text,
+	"template_key" text,
+	"subject" text NOT NULL,
+	"body_text" text NOT NULL,
+	"sent_at" timestamp with time zone,
+	"resend_message_id" text,
+	"opened_at" timestamp with time zone,
+	"replied_at" timestamp with time zone,
+	"actor" text NOT NULL,
+	"reply_text" text
+);
 CREATE TABLE IF NOT EXISTS "system_settings" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -289,6 +315,44 @@ CREATE TABLE IF NOT EXISTS "system_settings" (
 	"value" jsonb NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS "meetings" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_verified_at" timestamp with time zone,
+	"status" text DEFAULT 'SCHEDULED' NOT NULL,
+	"company_id" uuid NOT NULL REFERENCES "companies"("id") ON DELETE CASCADE,
+	"meeting_at" timestamp with time zone NOT NULL,
+	"platform" text DEFAULT 'ZOOM' NOT NULL,
+	"meeting_url" text,
+	"attendee_name" text,
+	"attendee_email" text,
+	"booked_by" text NOT NULL,
+	"prep_notes" text,
+	"outcome_notes" text,
+	"outcome" text
+);
+
+CREATE TABLE IF NOT EXISTS "dnc_suggestions" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_verified_at" timestamp with time zone,
+	"status" text DEFAULT 'PENDING' NOT NULL,
+	"company_id" uuid NOT NULL REFERENCES "companies"("id") ON DELETE CASCADE,
+	"suggested_kind" text NOT NULL,
+	"suggested_value" text NOT NULL,
+	"company_name" text NOT NULL,
+	"phone" text,
+	"domain" text,
+	"caller_notes" text,
+	"detected_keyword" text,
+	"suggested_by" text NOT NULL,
+	"reviewed_by" text,
+	"reviewed_at" timestamp with time zone,
+	"exclusion_id" uuid REFERENCES "exclusions"("id") ON DELETE SET NULL
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS "markets_key_uq" ON "markets" ("key");
 CREATE UNIQUE INDEX IF NOT EXISTS "sources_key_uq" ON "sources" ("key");
 CREATE UNIQUE INDEX IF NOT EXISTS "system_settings_key_uq" ON "system_settings" ("key");
@@ -296,8 +360,17 @@ CREATE INDEX IF NOT EXISTS "companies_domain_idx" ON "companies" ("domain");
 CREATE INDEX IF NOT EXISTS "companies_phone_idx" ON "companies" ("phone_e164");
 CREATE INDEX IF NOT EXISTS "companies_state_idx" ON "companies" ("state");
 CREATE INDEX IF NOT EXISTS "companies_status_idx" ON "companies" ("status");
+CREATE INDEX IF NOT EXISTS "companies_follow_up_idx" ON "companies" ("next_follow_up_at");
 CREATE INDEX IF NOT EXISTS "contacts_company_idx" ON "contacts" ("company_id");
 CREATE INDEX IF NOT EXISTS "evidence_company_idx" ON "evidence" ("company_id");
 CREATE INDEX IF NOT EXISTS "lead_scores_company_idx" ON "lead_scores" ("company_id");
 CREATE INDEX IF NOT EXISTS "research_rules_market_idx" ON "research_rules" ("market_id");
+CREATE INDEX IF NOT EXISTS "email_activities_company_idx" ON "email_activities" ("company_id");
+CREATE INDEX IF NOT EXISTS "email_activities_sent_at_idx" ON "email_activities" ("sent_at");
+CREATE INDEX IF NOT EXISTS "meetings_company_idx" ON "meetings" ("company_id");
+CREATE INDEX IF NOT EXISTS "meetings_meeting_at_idx" ON "meetings" ("meeting_at");
+CREATE INDEX IF NOT EXISTS "dnc_suggestions_company_idx" ON "dnc_suggestions" ("company_id");
+CREATE INDEX IF NOT EXISTS "dnc_suggestions_status_idx" ON "dnc_suggestions" ("status");
+CREATE INDEX IF NOT EXISTS "companies_qualification_status_idx" ON "companies" ("qualification_status");
+CREATE INDEX IF NOT EXISTS "companies_deal_stage_idx" ON "companies" ("deal_stage");
 `;

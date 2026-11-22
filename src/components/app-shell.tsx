@@ -460,11 +460,23 @@ function AppShellInner({
           icon: TrendingUp,
           analyticsOnly: true,
         },
+        {
+          href: "/pipeline",
+          label: "Deal Pipeline",
+          icon: Briefcase,
+          perm: "manageTeamAndSettings",
+        },
       ],
     },
     {
       group: "Administration",
       items: [
+        {
+          href: "/admin/monitor",
+          label: "Lead Operations Monitor",
+          icon: Zap,
+          perm: "manageTeamAndSettings",
+        },
         {
           href: "/settings",
           label: canManageTeam ? "Team & Settings" : "Account Settings",

@@ -1246,6 +1246,7 @@ export function CrmLeadSheet({
         callerNotes: combinedNotes,
         followUpDate: chosenFollowUp,
         clientLogId: data.clientLogId || null,
+        requestDnc: data.requestDnc,
       });
 
       if (res.success && res.nextStatus) {

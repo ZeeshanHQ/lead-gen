@@ -34,6 +34,7 @@ import {
   zoneForState,
   type UsTimezoneGroup,
 } from "./call-time";
+import type { DealStage } from "../db/schema";
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -51,6 +52,9 @@ export interface FunnelLead {
   assignedMemberId: string | null;
   createdAtMs: number | null;
   updatedAtMs?: number | null;
+  qualificationStatus?: string | null;
+  dealStage?: string | null;
+  dealValueUsd?: number | null;
 }
 
 export interface FunnelMember {
@@ -370,6 +374,10 @@ export interface FunnelResult {
   outcomeCounts: Record<CallOutcomeKey, number>;
   /** Mutually exclusive: every lead in the pool has exactly one current status. */
   statusCounts: Record<CallStatusKey, number>;
+  /** Phase 6: Deal Stage breakdown across leads in the analyzed pool. */
+  dealStageCounts: Record<DealStage, number>;
+  activeDealCount: number;
+  totalDealValueUsd: number;
   dial: {
     total: number;
     human: number;
@@ -382,6 +390,9 @@ export interface FunnelResult {
     dialsPerMeeting: number;
     avgAttempts: number;
     dialedLeads: number;
+    meetingShowRate: number;
+    meetingsAttended: number;
+    meetingsNoShow: number;
   };
   followUps: {
     scheduled: number;
@@ -913,12 +924,62 @@ export function computeFunnel(
 
   const attemptsSum = [...perLead.values()].reduce((s, x) => s + x.attempts, 0);
 
+  let attendedMeetingsCount = 0;
+  let noShowMeetingsCount = 0;
+  for (const l of poolLeads) {
+    if (l.notes) {
+      if (l.notes.includes("(Meeting Attended)")) attendedMeetingsCount++;
+      if (l.notes.includes("(Meeting No-Show)")) noShowMeetingsCount++;
+    }
+  }
+  const completedMeetings = attendedMeetingsCount + noShowMeetingsCount;
+  const meetingShowRate =
+    completedMeetings > 0
+      ? Math.round((attendedMeetingsCount / completedMeetings) * 100)
+      : meetings > 0
+      ? 100
+      : 0;
+
+  // Phase 6: Commercial deal stage aggregation
+  const dealStageCounts: Record<DealStage, number> = {
+    NONE: 0,
+    MEETING_BOOKED: 0,
+    DISCOVERY: 0,
+    PROPOSAL: 0,
+    NEGOTIATION: 0,
+    CLOSED_WON: 0,
+    CLOSED_LOST: 0,
+  };
+  let activeDealCount = 0;
+  let totalDealValueUsd = 0;
+
+  for (const l of poolLeads) {
+    const stage = (l.dealStage as DealStage) || "NONE";
+    if (stage in dealStageCounts) {
+      dealStageCounts[stage]++;
+    }
+    if (
+      stage === "MEETING_BOOKED" ||
+      stage === "DISCOVERY" ||
+      stage === "PROPOSAL" ||
+      stage === "NEGOTIATION"
+    ) {
+      activeDealCount++;
+      if (typeof l.dealValueUsd === "number") {
+        totalDealValueUsd += l.dealValueUsd;
+      }
+    }
+  }
+
   return {
     pool,
     totalPool: totalLifetimePool,
     stages,
     outcomeCounts,
     statusCounts,
+    dealStageCounts,
+    activeDealCount,
+    totalDealValueUsd,
     dial: {
       total: dialsTotal,
       human,
@@ -931,6 +992,9 @@ export function computeFunnel(
       dialsPerMeeting: meetings > 0 ? Math.round(dialsTotal / meetings) : 0,
       avgAttempts: dialedLeads > 0 ? Math.round((attemptsSum / dialedLeads) * 10) / 10 : 0,
       dialedLeads,
+      meetingShowRate,
+      meetingsAttended: attendedMeetingsCount,
+      meetingsNoShow: noShowMeetingsCount,
     },
     followUps: { scheduled: fuScheduled, overdue: fuOverdue, ownerNoNextStep: ownerNoNext },
     attemptLadder: ladder,

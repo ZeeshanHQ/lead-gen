@@ -1,6 +1,7 @@
 import React from "react";
 import { getDb } from "@/server/db/client";
 import { listExclusions } from "@/server/repo/exclusions";
+import { listPendingDncSuggestions } from "@/server/repo/dnc-suggestions";
 import { ExclusionManager } from "./exclusion-manager";
 import { ShieldAlert } from "lucide-react";
 
@@ -8,7 +9,10 @@ export const dynamic = "force-dynamic";
 
 export default async function ExclusionsPage() {
   const db = await getDb();
-  const exclusions = await listExclusions(db);
+  const [exclusions, pendingDnc] = await Promise.all([
+    listExclusions(db),
+    listPendingDncSuggestions(db),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -18,11 +22,11 @@ export default async function ExclusionsPage() {
           Exclusions &amp; Blocklist
         </h1>
         <p className="text-xs text-slate-400 mt-1">
-          Block known franchises, aggregators, unserviceable states, or competitors. Evaluated automatically during intake.
+          Block known franchises, aggregators, unserviceable states, or competitors. Evaluated automatically during intake and call outreach.
         </p>
       </div>
 
-      <ExclusionManager initialExclusions={exclusions} />
+      <ExclusionManager initialExclusions={exclusions} initialPendingDnc={pendingDnc} />
     </div>
   );
 }
