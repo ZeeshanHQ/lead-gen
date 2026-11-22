@@ -2073,10 +2073,10 @@ export async function updateCompanyDealStage(
 
   const dealValStr =
     input.dealValueUsd != null
-      ? ` • Deal Value: $${input.dealValueUsd.toLocaleString()}`
+      ? ` â€¢ Deal Value: $${input.dealValueUsd.toLocaleString()}`
       : "";
-  const customNotesStr = input.notes?.trim() ? ` — ${input.notes.trim()}` : "";
-  const logEntry = `[${timeStr} • ${input.actor} (Deal Stage Updated)]: Stage changed from ${prevStage} to ${newStage}${dealValStr}${customNotesStr}`;
+  const customNotesStr = input.notes?.trim() ? ` â€” ${input.notes.trim()}` : "";
+  const logEntry = `[${timeStr} â€¢ ${input.actor} (Deal Stage Updated)]: Stage changed from ${prevStage} to ${newStage}${dealValStr}${customNotesStr}`;
 
   const updatedNotes = prependLogEntry(company.notes, logEntry, null);
 

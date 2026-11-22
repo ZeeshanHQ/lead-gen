@@ -45,15 +45,15 @@ let bootstrappedInProcess = false;
 export async function bootstrap(db: Db): Promise<void> {
   if (bootstrappedInProcess && process.env.NODE_ENV !== "test") return;
 
-  // Fast check: if system is already initialized, return immediately (0 latency)
+  // Fast check: if system and all phase migrations are already initialized, return immediately (0 latency)
   try {
-    const [init] = await db
-      .select({ key: systemSettings.key })
+    const [version] = await db
+      .select({ value: systemSettings.value })
       .from(systemSettings)
-      .where(eq(systemSettings.key, "system_initialized"))
+      .where(eq(systemSettings.key, "schema_version"))
       .limit(1);
 
-    if (init) {
+    if (version?.value === "phases_1_6") {
       bootstrappedInProcess = true;
       return;
     }
@@ -236,6 +236,11 @@ export async function bootstrap(db: Db): Promise<void> {
     .insert(systemSettings)
     .values({ key: "system_initialized", value: true })
     .onConflictDoNothing({ target: systemSettings.key });
+
+  await db
+    .insert(systemSettings)
+    .values({ key: "schema_version", value: "phases_1_6" })
+    .onConflictDoUpdate({ target: systemSettings.key, set: { value: "phases_1_6" } });
 
   bootstrappedInProcess = true;
 }
