@@ -28,7 +28,7 @@ import {
   type FunnelResult,
   type Timeframe,
 } from "@/server/domain/funnel-analytics";
-import { CallStatusBadge, CallStatusLegend } from "@/components/call-status-ui";
+import { CallStatusBadge } from "@/components/call-status-ui";
 import {
   TrendingUp,
   PhoneCall,
@@ -430,19 +430,15 @@ export function SalesFunnelClient({
       ? Math.round((funnelResult.dial.dialedLeads / funnelResult.pool) * 100)
       : 0;
 
-  // Gatekeeper bypass calculation
-  const stage1Count = funnelResult.stages[1]?.count ?? 0;
-  const stage2Count = funnelResult.stages[2]?.count ?? 0;
-  const stage3Count = funnelResult.stages[3]?.count ?? 0;
-
+  // Gatekeeper bypass calculation (Owner / Human Answered)
   const gatekeeperBypassRate =
-    stage1Count > 0 && stage2Count > 0
-      ? Math.round((stage2Count / stage1Count) * 100)
-      : funnelResult.dial.human > 0
+    funnelResult.dial.human > 0
       ? Math.round((funnelResult.dial.owner / funnelResult.dial.human) * 100)
       : 0;
 
   // Decision maker discovery depth
+  const stage2Count = funnelResult.stages[2]?.count ?? 0;
+  const stage3Count = funnelResult.stages[3]?.count ?? 0;
   const discoveryDepthRate =
     stage2Count > 0 && stage3Count > 0
       ? Math.round((stage3Count / stage2Count) * 100)
@@ -693,29 +689,6 @@ export function SalesFunnelClient({
       </div>
 
       {/* ------------------------------------------------------------------- */}
-      {/* UNIFIED COLOR LEGEND (Single Source of Truth)                       */}
-      {/* ------------------------------------------------------------------- */}
-      <div className="rounded-2xl border border-zinc-800/80 bg-[#101014] p-4 shadow-sm">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <Layers className="w-3.5 h-3.5 text-zinc-400" />
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              Unified Call Status &amp; Funnel Legend
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowLegendMeaning((prev) => !prev)}
-            className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1 transition"
-          >
-            <HelpCircle className="w-3 h-3 text-zinc-400" />
-            <span>{showLegendMeaning ? "Hide Guidance" : "Show When To Use"}</span>
-          </button>
-        </div>
-        <CallStatusLegend showMeaning={showLegendMeaning} />
-      </div>
-
-      {/* ------------------------------------------------------------------- */}
       {/* CORE KPI METRIC CARDS (Plain Everyday Language • 100% CRM Parity)   */}
       {/* ------------------------------------------------------------------- */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -762,13 +735,13 @@ export function SalesFunnelClient({
             <span>Human Answered</span>
           </div>
           <div className="text-2xl font-black font-mono text-white mt-1">
-            {funnelResult.stages[1]?.count ?? funnelResult.dial.human}
+            {funnelResult.dial.human}
             <span className="text-sm font-bold text-indigo-400 ml-1.5">
               ({funnelResult.dial.pickRate}%)
             </span>
           </div>
           <div className="text-[11px] text-zinc-400 mt-0.5">
-            {funnelResult.stages[2]?.count ?? funnelResult.dial.owner} Owner +{" "}
+            {funnelResult.dial.owner} Owner +{" "}
             {funnelResult.statusCounts.GATEKEEPER_BLOCKED || 0} Front Desk
           </div>
         </div>
@@ -780,7 +753,7 @@ export function SalesFunnelClient({
             <span>Spoke with Owner</span>
           </div>
           <div className="text-2xl font-black font-mono text-sky-400 mt-1">
-            {funnelResult.stages[2]?.count ?? funnelResult.dial.owner}
+            {funnelResult.dial.owner}
           </div>
           <div className="text-[11px] text-zinc-400 mt-0.5">
             <span className="text-zinc-200 font-semibold">{gatekeeperBypassRate}%</span> bypassed front desk
@@ -867,7 +840,7 @@ export function SalesFunnelClient({
           </div>
           <p className="text-xs text-zinc-300 leading-relaxed">
             Out of <strong>{funnelResult.dial.dialedLeads}</strong> leads called,{" "}
-            <strong>{funnelResult.stages[1]?.count ?? funnelResult.dial.human}</strong> connected with a live human and only{" "}
+            <strong>{funnelResult.dial.human}</strong> connected with a live human and only{" "}
             <strong>{funnelResult.statusCounts.WRONG_NUMBER || 0}</strong> were marked Wrong Number.
           </p>
           <div className="pt-1 flex items-center justify-between text-[11px] text-zinc-400 border-t border-white/[0.06]">
@@ -889,10 +862,10 @@ export function SalesFunnelClient({
             </span>
           </div>
           <p className="text-xs text-zinc-300 leading-relaxed">
-            {funnelResult.stages[2]?.count
-              ? `Callers spoke with ${funnelResult.stages[2].count} Owners, faced ${
+            {funnelResult.dial.owner > 0
+              ? `Callers spoke with ${funnelResult.dial.owner} Owners, faced ${
                   funnelResult.statusCounts.NOT_INTERESTED || 0
-                } objections, and booked ${funnelResult.stages[4]?.count || 0} meetings. ${
+                } objections, and booked ${funnelResult.dial.meetings} meetings. ${
                   (funnelResult.statusCounts.GATEKEEPER_BLOCKED || 0) > 10
                     ? "Coach callers to ask for the Owner by first name to reduce Front Desk blocks."
                     : "Owner reach rate is strong — focus on locking 15-min calendar times on the spot."

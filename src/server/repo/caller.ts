@@ -850,6 +850,12 @@ async function updateLeadCrmDetailsInTransaction(
 
   if (input.status !== undefined) {
     companyUpdates.status = input.status;
+    if (input.status !== "MEETING_BOOKED") {
+      companyUpdates.dealStage = "NONE";
+      companyUpdates.dealValueUsd = null;
+    } else {
+      companyUpdates.dealStage = "MEETING_BOOKED";
+    }
   }
 
   if (input.assignedMemberId !== undefined) {
@@ -902,6 +908,8 @@ async function updateLeadCrmDetailsInTransaction(
 
   if (input.resetCallOutcome || (isPhoneChanged && isWrongNumberInNotes) || input.status === "APPROVED") {
     companyUpdates.status = "APPROVED";
+    companyUpdates.dealStage = "NONE";
+    companyUpdates.dealValueUsd = null;
     const baseNotes = companyUpdates.notes !== undefined ? (companyUpdates.notes || "") : (company.notes || "");
     let sanitizedNotes = baseNotes
       .replace(/\(Wrong Number\)/gi, "(Number Corrected)")
@@ -1068,6 +1076,8 @@ async function updateLeadStatusQuickInTransaction(
     .update(companies)
     .set({
       status,
+      dealStage: status === "MEETING_BOOKED" ? "MEETING_BOOKED" : "NONE",
+      ...(status !== "MEETING_BOOKED" ? { dealValueUsd: null } : {}),
       ...(nextNotes !== (company?.notes ?? null) ? { notes: nextNotes } : {}),
       updatedAt: new Date(),
     })
@@ -1178,6 +1188,8 @@ async function resetLeadCallStatusInTransaction(
 
   const companyUpdates: Record<string, any> = {
     status: "APPROVED" as LifecycleStatus,
+    dealStage: "NONE",
+    dealValueUsd: null,
     updatedAt: new Date(),
   };
 

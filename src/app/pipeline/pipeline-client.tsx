@@ -30,6 +30,7 @@ import {
   BarChart3,
   Mail,
   Zap,
+  RefreshCw,
 } from "lucide-react";
 
 interface PipelineClientProps {
@@ -117,11 +118,23 @@ export function PipelineClient({
   const router = useRouter();
   const [viewMode, setViewMode] = useState<"PIPELINE" | "ANALYTICS">(initialTab);
   const [deals, setDeals] = useState<any[]>(initialDeals);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [editingValueId, setEditingValueId] = useState<string | null>(null);
   const [editValueUsd, setEditValueUsd] = useState<string>("");
   const [isPending, startTransition] = useTransition();
+
+  // Sync deals when server re-renders (e.g. after router.refresh)
+  React.useEffect(() => {
+    setDeals(initialDeals);
+  }, [initialDeals]);
+
+  const handleManualRefresh = () => {
+    setIsRefreshing(true);
+    router.refresh();
+    setTimeout(() => setIsRefreshing(false), 800);
+  };
 
   // Contact lookup map
   const contactMap = React.useMemo(() => {
@@ -306,7 +319,7 @@ export function PipelineClient({
           </div>
         </div>
 
-        {/* View Mode Switcher + Quick Search */}
+        {/* View Mode Switcher + Refresh + Quick Search */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="inline-flex rounded-xl p-1 bg-slate-900 border border-slate-800">
             <button
@@ -334,6 +347,19 @@ export function PipelineClient({
               <span>Funnel Analytics</span>
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold text-slate-300 hover:text-white hover:border-slate-700 transition cursor-pointer disabled:opacity-50"
+            title="Refresh live data from database"
+          >
+            <RefreshCw
+              className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-cyan-400" : "text-slate-400"}`}
+            />
+            <span>{isRefreshing ? "Refreshing..." : "Refresh Live Data"}</span>
+          </button>
 
           {viewMode === "PIPELINE" && (
             <div className="relative w-56">
