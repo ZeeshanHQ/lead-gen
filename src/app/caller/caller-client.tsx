@@ -155,24 +155,27 @@ function getSmartOpeningScript({
     }
   }
 
-  // 2. Synthesize an authentic, high-intent script tailored to the exact industry / niche!
-  const targetGreeting = contactName ? `Hey ${contactName.split(" ")[0]}` : "Hey there";
-  const location = [city, state].filter(Boolean).join(", ") || "your local area";
+  // 2. High-converting direct outbound framework (Pattern Interrupt + 1-Line Pain Hook + Low-Friction Ask)
+  const firstName = contactName ? contactName.trim().split(/\s+/)[0] : null;
+  const greeting = firstName ? `Hey ${firstName}` : "Hey there";
+  const location = [city, state].filter(Boolean).join(", ") || "your area";
   const lowerNiche = (nicheName || "").toLowerCase();
 
+  const opener = `${greeting}, it's your team here. I know you weren't expecting my call — do you have 20 seconds, or should I hang up?`;
+
   if (/real estate|property management|realty|realtor|brokerage|leasing/i.test(lowerNiche)) {
-    return `${targetGreeting}, noticed ${companyName} manages active property listings and real estate client operations in ${location}. The reason for my call: established real estate and property management principals tell us that after-hours buyer inquiries and tenant placement requests often wait hours for response, losing high-value deals. We build custom backend AI intake engines that qualify inbound buyer, seller, and tenant leads and book appointments onto your calendar 24/7. Do you guys currently have an automated instant response system for your property inquiries?`;
+    return `${opener}\n\nReason for the call: We help ${location} property managers and brokerages catch the after-hours owner and leasing calls that usually hit voicemail, so you don't leak new doors to competitors.\n\nNot selling anything today — if I sent you a quick 60-second video of how it works for ${companyName}, would you be totally opposed to taking a look?`;
   }
 
   if (/hvac|heating|air conditioning|cooling|plumbing|roofing|electric|contractor/i.test(lowerNiche)) {
-    return `${targetGreeting}, noticed ${companyName} handles residential installations and mechanical services in ${location}. The reason for my call: established trade owners in the area tell us that after-hours estimate follow-ups often sit idle while techs are in the field, losing big-ticket installation bids to competitors. We build custom AI follow-up engines that automatically re-engage open replacement estimates and book installation jobs onto your schedule. Do you guys currently have an automated follow-up system in place for your open bids?`;
+    return `${opener}\n\nReason for the call: We help ${location} contractors automatically re-engage open replacement estimates and catch emergency calls after 5 PM so jobs don't go cold.\n\nNot pitching anything right now — if I sent a 60-second clip showing how other contractors use this, would you be against seeing it?`;
   }
 
   if (/medical|clinic|healthcare|doctor|physician|dental|dentist|wellness/i.test(lowerNiche)) {
-    return `${targetGreeting}, noticed ${companyName} provides specialized clinical care in ${location}. The reason for my call: clinical directors tell us that front-desk staff are often tied up with in-person patients, meaning inbound new-patient inquiries and consultation requests get delayed. We deploy HIPAA-compliant AI intake assistants that pre-qualify inquiries and schedule consultations directly onto the calendar 24/7. Does your clinic currently use automated 24/7 intake for new patient inquiries?`;
+    return `${opener}\n\nReason for the call: We help ${location} clinics capture and book new patient inquiries live in under 30 seconds 24/7 so they don't call the clinic down the street.\n\nNot selling anything today — if I sent a quick 60-second breakdown for ${companyName}, would you be open to taking a look?`;
   }
 
-  return `${targetGreeting}, noticed ${companyName} is an established provider in ${location}. The reason for my call: many top leaders in ${nicheName} tell us that inbound web inquiries and consultation requests often sit idle after hours before staff can follow up. We deploy custom backend AI intake & follow-up engines that qualify high-intent inquiries and book appointments onto your calendar 24/7. Do you currently have an automated instant follow-up system for your inbound inquiries?`;
+  return `${opener}\n\nReason for the call: We help established ${nicheName} operators in ${location} capture after-hours inquiries and book qualified appointments directly onto your calendar.\n\nNot pitching anything today — if I sent a 60-second video showing how it works, would you be totally opposed to taking a look?`;
 }
 
 export function CallerClient({
@@ -1268,11 +1271,6 @@ export function CallerClient({
       }`
     );
 
-    // If meeting booked, immediately pop up structured booking modal to capture time, platform & send confirmation
-    if (chosenOutcome === "MEETING_BOOKED") {
-      setMeetingModalLead(targetLead);
-    }
-
     startTransition(async () => {
       const res = await logCallFeedbackAction({
         companyId: targetLead.companyId,
@@ -1280,6 +1278,7 @@ export function CallerClient({
         callOutcome: chosenOutcome,
         softwareConfirmed: chosenSoft,
         fleetSizeConfirmed: fleetNum,
+        emailConfirmed: payload.emailConfirmed || null,
         callerNotes: combinedNotes,
         followUpDate: chosenFollowUp,
         clearFollowUp: payload.clearFollowUp || false,

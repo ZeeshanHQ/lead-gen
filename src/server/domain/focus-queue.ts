@@ -539,9 +539,9 @@ export function buildFlashBattlecard(input: {
     : `Ask casually: "Hey, who oversees new property owner intake at ${input.companyName}? Are they in?"`;
 
   const dynamicOpener = isStr
-    ? `"Hey ${firstName || "there"}, I was looking at ${input.companyName}'s vacation rentals in ${location} — quick question: when a guest or property owner calls after hours, does someone pick up live in under 30 seconds, or does it roll to voicemail? We deploy a 24/7 AI Voice Concierge that answers every call live and books direct stays & owner consults on your calendar. Worth a 10-minute look this week?"`
+    ? `"Hey ${firstName || "there"}, I know you weren't expecting my call — got 20 seconds or should I hang up? Reason for the call: We help ${location} vacation rental operators catch after-hours guest and owner calls so you don't leak direct bookings to Airbnb. Not selling anything today — if I sent a 60-second clip of how it works, would you be totally opposed to taking a look?"`
     : isPm
-    ? `"Hey ${firstName || "there"}, saw ${input.companyName} manages properties across ${location}${swName ? ` on ${swName}` : ""} — quick question: when a landlord or prospective tenant calls after 5 PM or while your team is on showings, who catches that call live? We plug a 24/7 AI Voice Concierge into your phone line that qualifies property owners and books consults directly on your calendar. Open to a 10-minute live demo Thursday?"`
+    ? `"Hey ${firstName || "there"}, I know you weren't expecting my call — got 20 seconds or should I hang up? Reason for the call: We help ${location} property managers catch after-hours owner and leasing calls so you don't leak doors to competitors. Not selling anything today — if I sent a 60-second clip of how it works, would you be totally opposed to taking a look?"`
     : input.openingScript;
 
   return {
@@ -551,12 +551,12 @@ export function buildFlashBattlecard(input: {
     scripts: {
       OPENING: dynamicOpener,
       GATEKEEPER: firstName
-        ? `"Hey there — is ${firstName} available for 20 seconds? Just let them know it's regarding ${input.companyName}'s inbound owner & listing inquiries in ${location}."`
-        : `"Hey there — who handles new owner & listing inquiries at ${input.companyName}? Are they available for 20 seconds?"`,
-      OBJ_BUSY: `"Totally respect that, ${dmDisplay} — I'll be gone in 15 seconds. We install a 24/7 Voice AI Receptionist for ${location} ${isPm ? "property managers" : isStr ? "vacation rental operators" : "brokerages"} that answers missed calls in 2 rings, qualifies landlords/buyers, and books them straight onto your calendar. Worth a 10-minute live demo tomorrow, or is Thursday better?"`,
-      OBJ_CURRENT_SYSTEM: `"That's actually why I reached out — we don't replace ${swName || "your current CRM or front desk"}. We only catch the overflow, evening, and weekend calls your team misses and push qualified appointments straight into ${swName || "your calendar"}. If it adds 2 to 4 extra signed management/listing agreements a month, would you be opposed to seeing a 5-minute demo?"`,
-      OBJ_SEND_EMAIL: `"I'll send that right over to your inbox. So I send the exact 60-second voice demo relevant to ${input.companyName} — is your bigger priority right now signing more property owners/listings, or automating tenant & guest calls?"`,
-      OBJ_PRICE: `"It costs less than a single lost management agreement or commission, and if it doesn't book qualified appointments in the first 30 days, you don't pay a cent. Let's do a 10-minute live test call where you can actually speak to the AI yourself — does tomorrow morning or afternoon work better?"`,
+        ? `"Hey there — is ${firstName} around for 20 seconds? Just let them know it's about catching after-hours owner and leasing inquiries in ${location}."`
+        : `"Hey there — who oversees new property owner intake at ${input.companyName}? Are they around for 20 seconds?"`,
+      OBJ_BUSY: `"Totally get it, ${dmDisplay} — 10 seconds and I'm off. We help ${location} operators catch after-hours owner calls so you don't leak deals to competitors. If I shoot a 60-second clip to your email, would you be opposed to looking?"`,
+      OBJ_CURRENT_SYSTEM: `"That's why I reached out — we don't replace ${swName || "your current system"}. We just catch the evening and weekend calls your team misses and push qualified appointments straight to your calendar. If it adds 2 to 4 signed agreements a month, would you be against seeing a 60-second video?"`,
+      OBJ_SEND_EMAIL: `"Sending it right over. What's the best email for you? And so I only send the relevant 60-second clip, is your focus right now adding more doors or saving time?"`,
+      OBJ_PRICE: `"It costs less than a single lost management agreement, and if it doesn't book qualified consults in 30 days, you don't pay anything. Let's do a 5-minute live test call where you speak to it yourself — does tomorrow morning work?"`,
     },
   };
 }

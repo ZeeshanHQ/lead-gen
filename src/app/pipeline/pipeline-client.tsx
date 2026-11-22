@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { type DealStage } from "@/server/db/schema";
 import { type TeamMember } from "@/server/domain/team";
 import { updateCompanyDealStageAction } from "@/app/caller/actions";
+import { SalesFunnelClient } from "@/app/analytics/analytics-client";
+import type { LeadRow } from "@/server/repo/queue";
 import {
   Briefcase,
   Calendar,
@@ -25,12 +27,21 @@ import {
   FileText,
   AlertCircle,
   Loader2,
+  BarChart3,
+  Mail,
+  Zap,
 } from "lucide-react";
 
 interface PipelineClientProps {
   initialDeals: any[];
   contacts: any[];
   activeMember?: any;
+  leads?: LeadRow[];
+  teamCallers?: TeamMember[];
+  callEvents?: any[];
+  marketName?: string;
+  tenantName?: string;
+  initialTab?: "PIPELINE" | "ANALYTICS";
 }
 
 const STAGES: {
@@ -96,8 +107,15 @@ export function PipelineClient({
   initialDeals,
   contacts,
   activeMember,
+  leads = [],
+  teamCallers = [],
+  callEvents = [],
+  marketName = "All Niches",
+  tenantName = "Astraventa",
+  initialTab = "PIPELINE",
 }: PipelineClientProps) {
   const router = useRouter();
+  const [viewMode, setViewMode] = useState<"PIPELINE" | "ANALYTICS">(initialTab);
   const [deals, setDeals] = useState<any[]>(initialDeals);
   const [search, setSearch] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -133,7 +151,7 @@ export function PipelineClient({
     });
   }, [deals, search, contactMap]);
 
-  // Aggregate Metrics
+  // Aggregate Real-time Live Metrics across Leads + Deals
   const metrics = React.useMemo(() => {
     const activeStages = new Set(["MEETING_BOOKED", "DISCOVERY", "PROPOSAL", "NEGOTIATION"]);
     let activeCount = 0;
@@ -159,6 +177,25 @@ export function PipelineClient({
     const totalClosed = wonCount + lostCount;
     const winRate = totalClosed > 0 ? Math.round((wonCount / totalClosed) * 100) : 0;
 
+    // Real-time metrics across all leads
+    const totalLeads = leads.length;
+    let emailRequestedCount = 0;
+    let meetingBookedCount = deals.length;
+    let contactedCount = 0;
+
+    for (const l of leads) {
+      const notes = (l.notes || "").toLowerCase();
+      if (l.status === "MEETING_BOOKED" || notes.includes("meeting booked")) {
+        // already counted in meetingBookedCount
+      }
+      if (notes.includes("email requested") || notes.includes("email_requested") || notes.includes("send info")) {
+        emailRequestedCount++;
+      }
+      if (notes.includes("[") && notes.includes("•")) {
+        contactedCount++;
+      }
+    }
+
     return {
       activeCount,
       activeValue,
@@ -166,8 +203,12 @@ export function PipelineClient({
       wonValue,
       lostCount,
       winRate,
+      totalLeads,
+      contactedCount,
+      emailRequestedCount,
+      meetingBookedCount,
     };
-  }, [deals]);
+  }, [deals, leads]);
 
   const handleStageChange = async (
     companyId: string,
@@ -240,296 +281,366 @@ export function PipelineClient({
     }
   };
 
+  const isOwner = activeMember?.role === "OWNER" || Boolean(activeMember?.permissions?.manageTeamAndSettings);
+
   return (
     <div className="space-y-6">
-      {/* Top Header & Metrics Banner */}
+      {/* Top Unified Header & View Switcher */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
           <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
             <span className="text-cyan-400 font-semibold uppercase tracking-wider">
-              Astraventa CRM
+              {tenantName}
             </span>
             <span>/</span>
-            <span className="text-slate-200">Executive Pipeline</span>
+            <span className="text-slate-200">Unified Sales Hub</span>
           </div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2.5">
               <Briefcase className="w-6 h-6 text-cyan-400" />
-              Founder Deal Pipeline
+              Pipeline & Sales Funnel
             </h1>
             <span className="text-xs font-mono bg-cyan-950/60 text-cyan-300 border border-cyan-700/60 px-2.5 py-0.5 rounded-full font-bold">
-              {metrics.activeCount} Active Opportunities
+              {metrics.activeCount} Active Deals
             </span>
           </div>
         </div>
 
-        {/* Quick Search */}
-        <div className="flex items-center gap-3">
-          <div className="relative w-64">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search companies, contacts..."
-              className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
-            />
+        {/* View Mode Switcher + Quick Search */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="inline-flex rounded-xl p-1 bg-slate-900 border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setViewMode("PIPELINE")}
+              className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                viewMode === "PIPELINE"
+                  ? "bg-cyan-500 text-black shadow-sm"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Deal Pipeline (Kanban)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("ANALYTICS")}
+              className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                viewMode === "ANALYTICS"
+                  ? "bg-cyan-500 text-black shadow-sm"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>Funnel Analytics</span>
+            </button>
           </div>
+
+          {viewMode === "PIPELINE" && (
+            <div className="relative w-56">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search deals..."
+                className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Summary KPI Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
+      {/* Real-Time Live KPI Strip (Always visible across both views) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
           <span className="text-slate-400 text-[11px] font-medium block">
-            Active Pipeline Value
+            Active Deals Value
           </span>
-          <div className="text-xl font-black text-white tracking-tight flex items-center gap-1 font-mono">
+          <div className="text-lg font-black text-white tracking-tight flex items-center gap-0.5 font-mono">
             <DollarSign className="w-4 h-4 text-emerald-400" />
             {metrics.activeValue.toLocaleString()}
           </div>
           <span className="text-[10px] text-slate-500">
-            Across {metrics.activeCount} in-flight deals
+            {metrics.activeCount} in-flight deals
           </span>
         </div>
 
-        <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
+        <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
           <span className="text-slate-400 text-[11px] font-medium block">
             Closed Won Revenue
           </span>
-          <div className="text-xl font-black text-emerald-400 tracking-tight flex items-center gap-1 font-mono">
+          <div className="text-lg font-black text-emerald-400 tracking-tight flex items-center gap-0.5 font-mono">
             <DollarSign className="w-4 h-4 text-emerald-400" />
             {metrics.wonValue.toLocaleString()}
           </div>
           <span className="text-[10px] text-emerald-500 font-semibold">
-            {metrics.wonCount} deals won
+            {metrics.wonCount} won ({metrics.winRate}% win rate)
           </span>
         </div>
 
-        <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
+        <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
           <span className="text-slate-400 text-[11px] font-medium block">
-            Win Rate (Closed)
+            Discovery Scheduled
           </span>
-          <div className="text-xl font-black text-cyan-300 tracking-tight flex items-center gap-1 font-mono">
-            {metrics.winRate}%
+          <div className="text-lg font-black text-blue-400 tracking-tight flex items-center gap-1 font-mono">
+            <Calendar className="w-4 h-4 text-blue-400" />
+            {metrics.meetingBookedCount}
           </div>
           <span className="text-[10px] text-slate-500">
-            {metrics.wonCount} won / {metrics.lostCount} lost
+            Meetings booked
           </span>
         </div>
 
-        <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
+        <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
           <span className="text-slate-400 text-[11px] font-medium block">
-            Pipeline Health
+            Email / Info Sent
           </span>
-          <div className="text-xl font-black text-purple-300 tracking-tight flex items-center gap-1 font-mono">
-            {deals.length} Total
+          <div className="text-lg font-black text-cyan-400 tracking-tight flex items-center gap-1 font-mono">
+            <Mail className="w-4 h-4 text-cyan-400" />
+            {metrics.emailRequestedCount}
           </div>
           <span className="text-[10px] text-slate-500">
-            {metrics.lostCount} closed lost deals archived
+            High-intent requests
+          </span>
+        </div>
+
+        <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
+          <span className="text-slate-400 text-[11px] font-medium block">
+            Total Leads in System
+          </span>
+          <div className="text-lg font-black text-white tracking-tight flex items-center gap-1 font-mono">
+            <User className="w-4 h-4 text-slate-400" />
+            {metrics.totalLeads.toLocaleString()}
+          </div>
+          <span className="text-[10px] text-slate-500">
+            Verified database pool
+          </span>
+        </div>
+
+        <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
+          <span className="text-slate-400 text-[11px] font-medium block">
+            Calls Attempted
+          </span>
+          <div className="text-lg font-black text-amber-400 tracking-tight flex items-center gap-1 font-mono">
+            <Phone className="w-4 h-4 text-amber-400" />
+            {metrics.contactedCount.toLocaleString()}
+          </div>
+          <span className="text-[10px] text-slate-500">
+            Lifetime logged contacts
           </span>
         </div>
       </div>
 
-      {/* Kanban Board Columns */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 items-start overflow-x-auto pb-6">
-        {STAGES.map((col) => {
-          const colDeals = filteredDeals.filter((d) => d.dealStage === col.key);
-          const colTotal = colDeals.reduce((sum, d) => sum + (d.dealValueUsd || 0), 0);
+      {/* VIEW 1: DEAL PIPELINE KANBAN BOARD */}
+      {viewMode === "PIPELINE" ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 min-h-[580px]">
+          {STAGES.map((stage) => {
+            const stageDeals = filteredDeals.filter(
+              (d) => (d.dealStage || "MEETING_BOOKED") === stage.key
+            );
+            const stageValue = stageDeals.reduce(
+              (acc, cur) => acc + (cur.dealValueUsd || 0),
+              0
+            );
 
-          return (
-            <div
-              key={col.key}
-              className="rounded-xl border border-slate-800/80 bg-slate-900/40 flex flex-col min-w-[270px] max-h-[calc(100vh-280px)]"
-            >
-              {/* Column Header */}
+            return (
               <div
-                className={`p-3 border-b-2 ${col.headerBorder} bg-slate-900/80 rounded-t-xl flex items-center justify-between`}
+                key={stage.key}
+                className="flex flex-col bg-slate-900/40 rounded-xl border border-slate-800/80 overflow-hidden"
               >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-xs font-bold ${col.color}`}>
-                      {col.label}
+                {/* Column Header */}
+                <div
+                  className={`p-3 border-b-2 bg-slate-900/90 ${stage.headerBorder} flex flex-col gap-1`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-slate-200">
+                      {stage.label}
                     </span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300 font-semibold">
-                      {colDeals.length}
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-semibold">
+                      {stageDeals.length}
                     </span>
                   </div>
-                  {colTotal > 0 && (
-                    <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
-                      ${colTotal.toLocaleString()}
-                    </span>
+                  <div className="text-[10px] font-mono text-slate-400 flex items-center gap-0.5">
+                    <span>${stageValue.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                {/* Deal Cards Container */}
+                <div className="p-2 space-y-2.5 flex-1 overflow-y-auto max-h-[720px]">
+                  {stageDeals.length === 0 ? (
+                    <div className="h-28 border border-dashed border-slate-800/60 rounded-lg flex items-center justify-center text-[11px] text-slate-600">
+                      No deals in stage
+                    </div>
+                  ) : (
+                    stageDeals.map((deal) => {
+                      const contact = contactMap.get(deal.id);
+                      const isUpdating = updatingId === deal.id;
+                      const isEditingVal = editingValueId === deal.id;
+                      const canAdvance =
+                        stage.key !== "CLOSED_WON" && stage.key !== "CLOSED_LOST";
+
+                      return (
+                        <div
+                          key={deal.id}
+                          className="group relative p-3 rounded-lg border border-slate-800 bg-slate-900/90 hover:border-slate-700 transition shadow-sm space-y-2 text-left"
+                        >
+                          {/* Top Row: Company & Link */}
+                          <div className="flex items-start justify-between gap-1.5">
+                            <Link
+                              href={`/company/${deal.id}`}
+                              className="font-bold text-xs text-white hover:text-cyan-400 transition-colors line-clamp-1"
+                            >
+                              {deal.name}
+                            </Link>
+                            <Link
+                              href={`/company/${deal.id}`}
+                              className="text-slate-500 hover:text-slate-300"
+                              title="Open Full Profile"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                            </Link>
+                          </div>
+
+                          {/* Contact Info */}
+                          {contact && (
+                            <div className="text-[11px] text-slate-400 space-y-0.5">
+                              {contact.name && (
+                                <div className="flex items-center gap-1 font-medium text-slate-300">
+                                  <User className="w-3 h-3 text-slate-500" />
+                                  <span className="truncate">{contact.name}</span>
+                                </div>
+                              )}
+                              {contact.phone && (
+                                <div className="flex items-center gap-1 text-[10px]">
+                                  <Phone className="w-2.5 h-2.5 text-slate-500" />
+                                  <span className="font-mono text-slate-400">
+                                    {contact.phone}
+                                  </span>
+                                </div>
+                              )}
+                              {contact.email && (
+                                <div className="flex items-center gap-1 text-[10px] text-cyan-400/80 truncate">
+                                  <Mail className="w-2.5 h-2.5 text-cyan-500" />
+                                  <span className="truncate">{contact.email}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Location */}
+                          {(deal.city || deal.state) && (
+                            <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                              <MapPin className="w-2.5 h-2.5" />
+                              <span>
+                                {[deal.city, deal.state].filter(Boolean).join(", ")}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Deal Value Editor */}
+                          <div className="pt-1.5 border-t border-slate-800/80 flex items-center justify-between">
+                            {isEditingVal ? (
+                              <div className="flex items-center gap-1 w-full">
+                                <span className="text-slate-400 text-xs">$</span>
+                                <input
+                                  type="text"
+                                  autoFocus
+                                  value={editValueUsd}
+                                  onChange={(e) => setEditValueUsd(e.target.value)}
+                                  placeholder="5000"
+                                  className="w-20 bg-black border border-cyan-500 rounded px-1.5 py-0.5 text-xs text-white font-mono focus:outline-none"
+                                />
+                                <button
+                                  onClick={() => handleSaveDealValue(deal.id)}
+                                  className="text-[10px] bg-cyan-600 hover:bg-cyan-500 text-black font-bold px-2 py-0.5 rounded"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  onClick={() => setEditingValueId(null)}
+                                  className="text-[10px] text-slate-400 hover:text-white px-1"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <div
+                                onClick={() => {
+                                  setEditingValueId(deal.id);
+                                  setEditValueUsd(
+                                    deal.dealValueUsd != null
+                                      ? String(deal.dealValueUsd)
+                                      : ""
+                                  );
+                                }}
+                                className="cursor-pointer group-hover:border-b group-hover:border-dashed border-slate-600 text-xs font-mono font-bold text-emerald-400 flex items-center gap-0.5"
+                                title="Click to edit deal value"
+                              >
+                                <span>
+                                  {deal.dealValueUsd != null
+                                    ? `$${deal.dealValueUsd.toLocaleString()}`
+                                    : "+ Set Value"}
+                                </span>
+                              </div>
+                            )}
+
+                            {isUpdating && (
+                              <Loader2 className="w-3 h-3 text-cyan-400 animate-spin" />
+                            )}
+                          </div>
+
+                          {/* Stage Selector Dropdown */}
+                          <div className="flex items-center gap-1.5 pt-1">
+                            <select
+                              value={deal.dealStage || "MEETING_BOOKED"}
+                              onChange={(e) =>
+                                handleStageChange(deal.id, e.target.value as DealStage)
+                              }
+                              className="bg-slate-900 border border-slate-800 text-[10px] text-slate-300 rounded px-1.5 py-1 focus:outline-none focus:border-cyan-500 cursor-pointer flex-1 truncate"
+                            >
+                              {STAGES.map((s) => (
+                                <option key={s.key} value={s.key}>
+                                  {s.label}
+                                </option>
+                              ))}
+                            </select>
+
+                            {/* Quick Advance Button */}
+                            {canAdvance && (
+                              <button
+                                onClick={() => advanceStage(deal)}
+                                className="px-2 py-1 rounded bg-slate-800 hover:bg-cyan-900/40 hover:text-cyan-300 text-slate-300 text-[10px] font-semibold flex items-center gap-0.5 transition-colors shrink-0"
+                                title="Advance to next pipeline stage"
+                              >
+                                <span>Next</span>
+                                <ChevronRight className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>
-
-              {/* Deals Cards List */}
-              <div className="p-2.5 space-y-3 overflow-y-auto flex-1">
-                {colDeals.length === 0 ? (
-                  <div className="p-6 text-center text-slate-600 text-[11px] italic">
-                    No deals in stage
-                  </div>
-                ) : (
-                  colDeals.map((deal) => {
-                    const contact = contactMap.get(deal.id);
-                    const isUpdating = updatingId === deal.id;
-                    const canAdvance =
-                      STAGE_ORDER.includes(deal.dealStage) &&
-                      deal.dealStage !== "CLOSED_WON";
-
-                    return (
-                      <div
-                        key={deal.id}
-                        className={`p-3 rounded-lg border bg-slate-950/70 text-xs space-y-2.5 transition-all shadow-sm ${
-                          isUpdating
-                            ? "opacity-60 border-slate-700 pointer-events-none"
-                            : "border-slate-800 hover:border-slate-700"
-                        }`}
-                      >
-                        {/* Company Name & Link */}
-                        <div className="flex items-start justify-between gap-1.5">
-                          <Link
-                            href={`/company/${deal.id}`}
-                            className="font-bold text-white hover:text-cyan-400 transition-colors line-clamp-1 flex items-center gap-1 group"
-                          >
-                            <span>{deal.name}</span>
-                            <ExternalLink className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 text-cyan-400 transition-opacity" />
-                          </Link>
-                          {isUpdating && (
-                            <Loader2 className="w-3 h-3 text-cyan-400 animate-spin" />
-                          )}
-                        </div>
-
-                        {/* Location */}
-                        {(deal.city || deal.state) && (
-                          <div className="flex items-center gap-1 text-[11px] text-slate-400">
-                            <MapPin className="w-3 h-3 text-slate-500 shrink-0" />
-                            <span className="truncate">
-                              {deal.city ? `${deal.city}, ` : ""}
-                              {deal.state || ""}
-                            </span>
-                          </div>
-                        )}
-
-                        {/* Best Contact */}
-                        {contact ? (
-                          <div className="p-2 rounded bg-slate-900/60 border border-slate-800/60 space-y-1">
-                            <div className="flex items-center gap-1 text-slate-300 font-medium text-[11px]">
-                              <User className="w-2.5 h-2.5 text-cyan-400" />
-                              <span className="truncate">{contact.name || "Contact"}</span>
-                              {contact.title && (
-                                <span className="text-[10px] text-slate-500 truncate">
-                                  ({contact.title})
-                                </span>
-                              )}
-                            </div>
-                            {(contact.phone || deal.phoneDisplay) && (
-                              <div className="text-[10px] font-mono text-cyan-300 flex items-center gap-1">
-                                <Phone className="w-2.5 h-2.5 text-slate-500" />
-                                {contact.phone || deal.phoneDisplay}
-                              </div>
-                            )}
-                          </div>
-                        ) : deal.phoneDisplay ? (
-                          <div className="text-[11px] font-mono text-cyan-300 flex items-center gap-1">
-                            <Phone className="w-2.5 h-2.5 text-slate-500" />
-                            {deal.phoneDisplay}
-                          </div>
-                        ) : null}
-
-                        {/* Deal Value Section */}
-                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-900">
-                          <span className="text-slate-500 text-[10px]">Value:</span>
-                          {editingValueId === deal.id ? (
-                            <div className="flex items-center gap-1">
-                              <span className="text-slate-400 text-xs">$</span>
-                              <input
-                                type="text"
-                                autoFocus
-                                value={editValueUsd}
-                                onChange={(e) => setEditValueUsd(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") handleSaveDealValue(deal.id);
-                                  if (e.key === "Escape") setEditingValueId(null);
-                                }}
-                                placeholder="Value..."
-                                className="w-16 bg-slate-900 border border-cyan-500 rounded px-1 py-0.5 text-xs text-white"
-                              />
-                              <button
-                                onClick={() => handleSaveDealValue(deal.id)}
-                                className="px-1.5 py-0.5 rounded bg-cyan-600 text-[10px] text-white font-bold"
-                              >
-                                ✓
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => {
-                                setEditingValueId(deal.id);
-                                setEditValueUsd(deal.dealValueUsd?.toString() || "");
-                              }}
-                              className="font-mono font-bold text-emerald-400 hover:underline cursor-pointer"
-                              title="Click to edit deal value"
-                            >
-                              {deal.dealValueUsd != null
-                                ? `$${deal.dealValueUsd.toLocaleString()}`
-                                : "+ Set Value"}
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Next Action / Follow-up */}
-                        {deal.nextFollowUpAt && (
-                          <div className="flex items-center gap-1 text-[10px] text-indigo-300 bg-indigo-950/30 px-2 py-1 rounded border border-indigo-900/40">
-                            <Calendar className="w-2.5 h-2.5 text-indigo-400" />
-                            <span>
-                              Follow-up:{" "}
-                              {new Date(deal.nextFollowUpAt).toLocaleDateString("en-US", {
-                                month: "short",
-                                day: "numeric",
-                              })}
-                            </span>
-                          </div>
-                        )}
-
-                        {/* Quick Stage Controls */}
-                        <div className="pt-1.5 border-t border-slate-800/80 flex items-center justify-between gap-1.5">
-                          {/* Dropdown selector */}
-                          <select
-                            value={deal.dealStage}
-                            onChange={(e) =>
-                              handleStageChange(deal.id, e.target.value as DealStage)
-                            }
-                            className="bg-slate-900 border border-slate-800 text-[10px] text-slate-300 rounded px-1.5 py-1 focus:outline-none focus:border-cyan-500 cursor-pointer"
-                          >
-                            {STAGES.map((s) => (
-                              <option key={s.key} value={s.key}>
-                                {s.label}
-                              </option>
-                            ))}
-                          </select>
-
-                          {/* Quick Advance Button */}
-                          {canAdvance && (
-                            <button
-                              onClick={() => advanceStage(deal)}
-                              className="px-2 py-1 rounded bg-slate-800 hover:bg-cyan-900/40 hover:text-cyan-300 text-slate-300 text-[10px] font-semibold flex items-center gap-0.5 transition-colors"
-                              title="Advance to next pipeline stage"
-                            >
-                              <span>Next</span>
-                              <ChevronRight className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      ) : (
+        /* VIEW 2: SALES FUNNEL & CONVERSION ANALYTICS */
+        <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+          <SalesFunnelClient
+            leads={leads}
+            teamCallers={teamCallers}
+            callEvents={callEvents}
+            marketName={marketName}
+            tenantName={tenantName}
+            isOwner={isOwner}
+            activeMemberId={activeMember?.id}
+            activeMemberName={activeMember?.name}
+          />
+        </div>
+      )}
     </div>
   );
 }

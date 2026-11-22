@@ -455,15 +455,9 @@ function AppShellInner({
           perm: "callerWorkbench",
         },
         {
-          href: "/analytics",
-          label: "Sales Funnel",
-          icon: TrendingUp,
-          analyticsOnly: true,
-        },
-        {
           href: "/pipeline",
-          label: "Deal Pipeline",
-          icon: Briefcase,
+          label: "Pipeline & Funnel",
+          icon: TrendingUp,
           perm: "manageTeamAndSettings",
         },
       ],
