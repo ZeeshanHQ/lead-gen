@@ -1776,15 +1776,7 @@ export function CallerClient({
               </a>
             )}
 
-            {canEditRules && marketId && (
-              <ActiveQualityGateCard
-                marketId={marketId}
-                marketName={nicheName}
-                initialRuleConfig={initialRuleConfig}
-                canEditRules={canEditRules}
-                compactTriggerOnly={true}
-              />
-            )}
+
           </div>
         </div>
       )}
@@ -1948,21 +1940,7 @@ export function CallerClient({
                       {cAssigned} leads
                     </span>
                   </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-zinc-400">
-                    <span>Dials: <strong className="text-sky-300">{cDialed}</strong></span>
-                    <span>&bull;</span>
-                    <span>Ans: <strong className="text-cyan-300">{cAnswered}</strong></span>
-                    <span>&bull;</span>
-                    <span>Spoke: <strong className="text-indigo-300">{cConnected}</strong></span>
-                    <span>&bull;</span>
-                    <span>Booked: <strong className="text-emerald-400">{cMeetings}</strong></span>
-                    {cFollowUps > 0 && (
-                      <>
-                        <span>&bull;</span>
-                        <span>Follow-Up: <strong className="text-amber-300">{cFollowUps}</strong></span>
-                      </>
-                    )}
-                  </div>
+
                 </button>
               );
             })}
@@ -2009,15 +1987,7 @@ export function CallerClient({
             <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
               Gatekeeper: <strong className="text-orange-400">{gatekeeperCount}</strong>
             </span>
-            {canEditRules && marketId && (
-              <ActiveQualityGateCard
-                marketId={marketId}
-                marketName={nicheName}
-                initialRuleConfig={initialRuleConfig}
-                canEditRules={canEditRules}
-                compactTriggerOnly={true}
-              />
-            )}
+
           </div>
         </div>
       ) : null}
@@ -2611,181 +2581,6 @@ export function CallerClient({
         />
       ) : (
         <div className="space-y-4">
-          {/* Live Calling & CRM Telemetry Bar for Cards View */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2.5">
-            <button
-              type="button"
-              onClick={() => setStatusFilterAndPersist("TO_CALL")}
-              className={`rounded-xl border p-3 text-left transition ${
-                statusFilter === "TO_CALL"
-                  ? "border-white bg-zinc-800/90 shadow-sm"
-                  : "border-zinc-800/80 bg-[#121215] hover:border-zinc-700"
-              }`}
-            >
-              <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                Ready to Call
-              </div>
-              <div className="mt-1 flex items-baseline justify-between gap-1">
-                <span className="text-xl font-bold text-white tabular-nums">
-                  {toCallCount}
-                </span>
-                <span className="text-[10px] text-zinc-500">
-                  of {totalCount} leads
-                </span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStatusFilterAndPersist("ALL")}
-              className="rounded-xl border border-zinc-800/80 bg-[#121215] hover:border-zinc-700 p-3 text-left transition"
-            >
-              <div className="text-[10px] font-bold uppercase tracking-wider text-sky-400">
-                Calls Dialed
-              </div>
-              <div className="mt-1 flex items-baseline justify-between gap-1">
-                <span className="text-xl font-bold text-sky-300 tabular-nums">
-                  {scopedTelemetry.totalCallsDialed}
-                </span>
-                <span className="text-[10px] text-zinc-400">
-                  {scopedTelemetry.dialedLeads} leads dialed
-                </span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStatusFilterAndPersist("CONNECTED")}
-              className="rounded-xl border border-zinc-800/80 bg-[#121215] hover:border-zinc-700 p-3 text-left transition"
-            >
-              <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">
-                Answered (Human)
-              </div>
-              <div className="mt-1 flex items-baseline justify-between gap-1">
-                <span className="text-xl font-bold text-cyan-300 tabular-nums">
-                  {scopedTelemetry.answeredLeads}
-                </span>
-                <span className="text-[10px] font-semibold text-cyan-400/90">
-                  {scopedTelemetry.answerRatePct}% pickup
-                </span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStatusFilterAndPersist("CONNECTED")}
-              className={`rounded-xl border p-3 text-left transition ${
-                statusFilter === "CONNECTED"
-                  ? "border-indigo-400 bg-indigo-500/15 shadow-sm"
-                  : "border-zinc-800/80 bg-[#121215] hover:border-zinc-700"
-              }`}
-            >
-              <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">
-                Connected (DM)
-              </div>
-              <div className="mt-1 flex items-baseline justify-between gap-1">
-                <span className="text-xl font-bold text-indigo-300 tabular-nums">
-                  {connectedCount}
-                </span>
-                <span className="text-[10px] font-semibold text-indigo-300/90">
-                  {scopedTelemetry.connectRatePct}% spoke
-                </span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStatusFilterAndPersist("NO_ANSWER")}
-              className={`rounded-xl border p-3 text-left transition ${
-                statusFilter === "NO_ANSWER"
-                  ? "border-amber-400 bg-amber-500/15 shadow-sm"
-                  : "border-zinc-800/80 bg-[#121215] hover:border-zinc-700"
-              }`}
-            >
-              <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
-                No Answer / VM
-              </div>
-              <div className="mt-1 flex items-baseline justify-between gap-1">
-                <span className="text-xl font-bold text-amber-300 tabular-nums">
-                  {noAnswerCount + scopedTelemetry.voicemailLeads}
-                </span>
-                <span className="text-[10px] text-zinc-400">
-                  {noAnswerCount} NA &bull; {scopedTelemetry.voicemailLeads} VM
-                </span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStatusFilterAndPersist("GATEKEEPER")}
-              className={`rounded-xl border p-3 text-left transition ${
-                statusFilter === "GATEKEEPER"
-                  ? "border-orange-400 bg-orange-500/15 shadow-sm"
-                  : "border-zinc-800/80 bg-[#121215] hover:border-zinc-700"
-              }`}
-            >
-              <div className="text-[10px] font-bold uppercase tracking-wider text-orange-400">
-                Gatekeeper
-              </div>
-              <div className="mt-1 flex items-baseline justify-between gap-1">
-                <span className="text-xl font-bold text-orange-300 tabular-nums">
-                  {gatekeeperCount}
-                </span>
-                <span className="text-[10px] text-zinc-400">
-                  {scopedTelemetry.notInterestedLeads} Not Int.
-                </span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStatusFilterAndPersist("FOLLOW_UP")}
-              className={`rounded-xl border p-3 text-left transition ${
-                statusFilter === "FOLLOW_UP"
-                  ? "border-amber-400 bg-amber-500/15 shadow-sm"
-                  : "border-zinc-800/80 bg-[#121215] hover:border-zinc-700"
-              }`}
-            >
-              <div className="text-[10px] font-bold uppercase tracking-wider text-amber-300">
-                Follow-Ups
-              </div>
-              <div className="mt-1 flex items-baseline justify-between gap-1">
-                <span className="text-xl font-bold text-amber-300 tabular-nums">
-                  {followUpCount}
-                </span>
-                <span
-                  className={`text-[10px] font-semibold ${
-                    overdueCount > 0 ? "text-rose-400" : "text-zinc-500"
-                  }`}
-                >
-                  {overdueCount} overdue
-                </span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStatusFilterAndPersist("MEETINGS")}
-              className={`rounded-xl border p-3 text-left transition ${
-                statusFilter === "MEETINGS"
-                  ? "border-emerald-400 bg-emerald-500/15 shadow-sm"
-                  : "border-emerald-500/30 bg-emerald-950/15 hover:border-emerald-500/50"
-              }`}
-            >
-              <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                Meetings Booked
-              </div>
-              <div className="mt-1 flex items-baseline justify-between gap-1">
-                <span className="text-xl font-bold text-emerald-400 tabular-nums">
-                  {meetingsCount}
-                </span>
-                <span className="text-[10px] text-emerald-300/80">
-                  {scopedTelemetry.qualifiedLeadsCount} qualified
-                </span>
-              </div>
-            </button>
-          </div>
-
           {/* Date Intake Batch Tabs (Breaks today's vs yesterday's vs older leads) */}
           <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-xl bg-[#121215] border border-zinc-800 text-xs font-semibold">
             <span className="px-2 text-[11px] uppercase tracking-wider text-zinc-500 flex items-center gap-1.5">

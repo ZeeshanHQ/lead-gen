@@ -1423,258 +1423,14 @@ export function CrmLeadSheet({
         </div>
       )}
 
-      {/* Real-Time Calling & CRM Telemetry Bar (Visible to Both Callers & Owners) */}
-      <div className="border-b border-zinc-800/80 bg-[#0b0b0f] p-3 text-xs space-y-2.5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-bold text-white text-xs">
-              Live Calling &amp; CRM Telemetry
-            </span>
-            <span className="text-[10px] text-zinc-300 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800 font-mono">
-              {dateFilter === "TODAY"
-                ? "Today's Intake"
-                : dateFilter === "YESTERDAY"
-                ? "Yesterday's Intake"
-                : dateFilter === "OLDER"
-                ? "Older Leads"
-                : "All-Time"}
-              {callerFilter !== "ALL" && (
-                <span className="text-emerald-400 font-semibold ml-1">
-                  • {teamCallers.find((c) => c.id === callerFilter)?.name || (callerFilter === "UNASSIGNED" ? "Unassigned Pool" : callerFilter)}
-                </span>
-              )}
-              {" "}({scopedFilterLeads.length} of {leads.length} leads)
-            </span>
-            {(dateFilter !== "ALL" || callerFilter !== "ALL") && (
-              <button
-                type="button"
-                onClick={() => {
-                  setDateFilterAndPersist("ALL");
-                  setCallerFilter("ALL");
-                }}
-                className="text-[10px] text-indigo-400 hover:text-indigo-300 underline font-semibold ml-1"
-              >
-                Reset to All-Time
-              </button>
-            )}
-          </div>
-          {isOwner && (
-            <Link
-              href="/analytics"
-              className="text-[11px] text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 transition"
-            >
-              <TrendingUp className="w-3 h-3" />
-              <span>Open Real-Time Funnel Analytics &rarr;</span>
-            </Link>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              if (liveTelemetry.untouchedLeads === 0) {
-                if (statusFilter === "UNTOUCHED") {
-                  toggleStatusFilter("ALL");
-                } else {
-                  setSyncFeedback("All leads have already been dialed! Showing full CRM queue.");
-                  setTimeout(() => setSyncFeedback(null), 3000);
-                  toggleStatusFilter("ALL");
-                }
-              } else {
-                toggleStatusFilter("UNTOUCHED");
-              }
-            }}
-            className={`p-2.5 rounded-lg border text-left transition ${
-              statusFilter === "UNTOUCHED"
-                ? "border-emerald-400 bg-emerald-950/40 text-white ring-1 ring-emerald-400/50"
-                : "border-zinc-800/90 bg-[#121215] hover:border-zinc-700"
-            }`}
-          >
-            <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-400">
-              Ready to Call
-            </div>
-            <div className="text-base font-extrabold text-white mt-0.5 font-mono">
-              {liveTelemetry.untouchedLeads}
-            </div>
-            <div className="text-[10px] text-zinc-500 mt-0.5">
-              of {liveTelemetry.totalLeads} {dateFilter !== "ALL" || callerFilter !== "ALL" ? "filtered" : "total"} leads
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStatusFilterAndPersist("ALL")}
-            className="p-2.5 rounded-lg border border-sky-500/25 bg-sky-500/5 hover:bg-sky-500/10 text-left transition"
-          >
-            <div className="text-[10px] uppercase tracking-wider font-bold text-sky-300">
-              Calls Dialed
-            </div>
-            <div className="text-base font-extrabold text-white mt-0.5 font-mono">
-              {liveTelemetry.totalCallsDialed}
-            </div>
-            <div className="text-[10px] text-sky-300/80 mt-0.5">
-              {liveTelemetry.dialedLeads} unique leads dialed
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStatusFilterAndPersist("CONNECTED")}
-            className="p-2.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/15 text-left transition"
-          >
-            <div className="text-[10px] uppercase tracking-wider font-bold text-indigo-300">
-              Answered (Pickup)
-            </div>
-            <div className="flex items-baseline gap-1.5 mt-0.5">
-              <span className="text-base font-extrabold text-indigo-200 font-mono">
-                {liveTelemetry.answeredLeads}
-              </span>
-              <span className="text-[10px] font-bold text-indigo-300 font-mono">
-                ({liveTelemetry.answerRatePct}%)
-              </span>
-            </div>
-            <div className="text-[10px] text-indigo-300/80 mt-0.5">
-              Human picked up phone
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStatusFilterAndPersist("CONNECTED")}
-            className={`p-2.5 rounded-lg border text-left transition ${
-              statusFilter === "CONNECTED"
-                ? "border-sky-400 bg-sky-500/20 text-white"
-                : "border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/15"
-            }`}
-          >
-            <div className="text-[10px] uppercase tracking-wider font-bold text-sky-300">
-              Connected (Spoke)
-            </div>
-            <div className="flex items-baseline gap-1.5 mt-0.5">
-              <span className="text-base font-extrabold text-sky-200 font-mono">
-                {liveTelemetry.connectedLeads}
-              </span>
-              <span className="text-[10px] font-bold text-sky-300 font-mono">
-                ({liveTelemetry.connectRatePct}%)
-              </span>
-            </div>
-            <div className="text-[10px] text-sky-300/80 mt-0.5">
-              Spoke w/ Decision Maker
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStatusFilterAndPersist("NO_ANSWER")}
-            className={`p-2.5 rounded-lg border text-left transition ${
-              statusFilter === "NO_ANSWER"
-                ? "border-amber-400 bg-amber-500/20 text-white"
-                : "border-zinc-800/90 bg-[#121215] hover:border-zinc-700"
-            }`}
-          >
-            <div className="text-[10px] uppercase tracking-wider font-bold text-amber-300">
-              No Answer / VM
-            </div>
-            <div className="text-base font-extrabold text-amber-200 mt-0.5 font-mono">
-              {liveTelemetry.noAnswerLeads + liveTelemetry.voicemailLeads}
-            </div>
-            <div className="text-[10px] text-zinc-400 mt-0.5">
-              {liveTelemetry.noAnswerLeads} No Ans &bull; {liveTelemetry.voicemailLeads} VM
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStatusFilterAndPersist("GATEKEEPER")}
-            className={`p-2.5 rounded-lg border text-left transition ${
-              statusFilter === "GATEKEEPER"
-                ? "border-orange-400 bg-orange-500/20 text-white"
-                : "border-zinc-800/90 bg-[#121215] hover:border-zinc-700"
-            }`}
-          >
-            <div className="text-[10px] uppercase tracking-wider font-bold text-orange-300">
-              Gatekeeper
-            </div>
-            <div className="text-base font-extrabold text-orange-200 mt-0.5 font-mono">
-              {liveTelemetry.gatekeeperLeads}
-            </div>
-            <div className="text-[10px] text-zinc-400 mt-0.5">
-              Stopped at front desk
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => toggleStatusFilter("FOLLOW_UP")}
-            className={`p-2.5 rounded-lg border text-left transition ${
-              statusFilter === "FOLLOW_UP"
-                ? "border-indigo-400 bg-indigo-500/20 text-white"
-                : liveTelemetry.followUpsOverdue > 0
-                ? "border-rose-500/40 bg-rose-500/10"
-                : "border-zinc-800/90 bg-[#121215] hover:border-zinc-700"
-            }`}
-          >
-            <div className="text-[10px] uppercase tracking-wider font-bold text-indigo-300">
-              Follow-Ups
-            </div>
-            <div className="text-base font-extrabold text-white mt-0.5 font-mono">
-              {liveTelemetry.followUpsScheduled}
-            </div>
-            <div className="text-[10px] mt-0.5">
-              {liveTelemetry.followUpsOverdue > 0 ? (
-                <span className="text-rose-300 font-bold">
-                  {liveTelemetry.followUpsOverdue} Overdue
-                </span>
-              ) : (
-                <span className="text-zinc-400">Callbacks scheduled</span>
-              )}
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStatusFilterAndPersist("MEETINGS")}
-            className={`p-2.5 rounded-lg border text-left transition ${
-              statusFilter === "MEETINGS"
-                ? "border-emerald-400 bg-emerald-500/25 text-white"
-                : "border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/15"
-            }`}
-          >
-            <div className="text-[10px] uppercase tracking-wider font-bold text-emerald-300">
-              Meetings Booked
-            </div>
-            <div className="text-base font-extrabold text-emerald-300 mt-0.5 font-mono">
-              {liveTelemetry.meetingsBooked}
-            </div>
-            <div className="text-[10px] text-emerald-200/80 mt-0.5">
-              {liveTelemetry.qualifiedLeadsCount} leads qualified
-            </div>
-          </button>
-        </div>
-      </div>
-
       {/* Owner Caller Activity & Live Performance Tracker */}
       {isOwner && teamCallers.length > 0 && (
         <div className="border-b border-zinc-800/80 bg-[#0a0a0d] p-3 text-xs">
           <div className="flex items-center justify-between mb-2">
             <div className="flex flex-wrap items-center gap-2">
               <Users className="w-4 h-4 text-indigo-400" />
-              <span className="font-bold text-white text-xs">Per-Caller Live Queue &amp; Activity Filter</span>
-              <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-400 bg-zinc-900/80 px-2 py-0.5 rounded border border-zinc-800">
-                <span className="text-zinc-200 font-semibold">{callerStats.teamTotals.callsLogged} Calls</span>
-                <span>&bull;</span>
-                <span className="text-indigo-300 font-semibold">{callerStats.teamTotals.answered} Answered</span>
-                <span>&bull;</span>
-                <span className="text-sky-300 font-semibold">{callerStats.teamTotals.connected} Spoke</span>
-                <span>&bull;</span>
-                <span className="text-emerald-400 font-semibold">{callerStats.teamTotals.meetings} Booked</span>
-                <span>&bull;</span>
-                <span className="text-amber-300 font-medium">{callerStats.teamTotals.noAnswer} No Ans</span>
-                <span>&bull;</span>
-                <span className="text-orange-300 font-medium">{callerStats.teamTotals.gatekeeper} GK</span>
-              </div>
+              <span className="font-bold text-white text-xs">Filter by Caller</span>
+              
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {callerStats.unassignedCount > 0 && (
@@ -1765,9 +1521,7 @@ export function CrmLeadSheet({
                   : "All Queue"}
               </div>
               <div className="text-base font-extrabold text-white mt-0.5">{scopedFilterLeads.length} leads</div>
-              <div className="text-[10px] text-emerald-400 mt-0.5">
-                {liveTelemetry.dialedLeads} dialed &bull; {statusCounts.MEETING_BOOKED} booked
-              </div>
+
             </button>
 
             <button
@@ -1821,35 +1575,8 @@ export function CrmLeadSheet({
                   <div className="flex items-baseline gap-1 mt-0.5">
                     <span className="text-base font-extrabold text-white">{stats.total}</span>
                     <span className="text-[10px] text-zinc-400">leads</span>
-                    <span className="text-zinc-600 ml-1">&bull;</span>
-                    <span className="text-[10px] text-zinc-300 font-semibold">{stats.callsLogged} calls</span>
                   </div>
-                  <div className="flex flex-wrap items-center gap-1 text-[9px] mt-1.5 font-semibold">
-                    <span className="px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                      {stats.answered} Answered
-                    </span>
-                    <span className="px-1 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                      {stats.connected} Spoke
-                    </span>
-                    <span className="px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                      {stats.meetings} Booked
-                    </span>
-                    {stats.noAnswer > 0 && (
-                      <span className="px-1 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                        {stats.noAnswer} No Ans
-                      </span>
-                    )}
-                    {stats.gatekeeper > 0 && (
-                      <span className="px-1 py-0.5 rounded bg-orange-500/15 text-orange-300 border border-orange-500/30">
-                        {stats.gatekeeper} GK
-                      </span>
-                    )}
-                    {stats.followUps > 0 && (
-                      <span className="px-1 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                        {stats.followUps} Follow-ups
-                      </span>
-                    )}
-                  </div>
+                  
                 </button>
               );
             })}
