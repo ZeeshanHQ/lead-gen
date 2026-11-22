@@ -94,6 +94,22 @@ import {
   Zap,
 } from "lucide-react";
 
+export function extractEmailFromText(text?: string | null): string | null {
+  if (!text) return null;
+  const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  return match ? match[0].trim() : null;
+}
+
+export function resolveLeadEmail(lead: CrmLeadItem): string | null {
+  const direct = lead.bestContact?.email?.trim();
+  if (direct && direct.includes("@")) return direct;
+  const fromNotes = extractEmailFromText(lead.notes);
+  if (fromNotes) return fromNotes;
+  const fromSummary = extractEmailFromText(lead.researchSummary);
+  if (fromSummary) return fromSummary;
+  return null;
+}
+
 export interface CrmLeadItem {
   id: string;
   name: string;
@@ -982,7 +998,7 @@ export function CrmLeadSheet({
           golden++;
         }
       }
-      const em = l.bestContact?.email;
+      const em = resolveLeadEmail(l);
       if (em && em.trim().length > 0 && em.includes("@")) {
         emailCount++;
       }
@@ -1007,9 +1023,9 @@ export function CrmLeadSheet({
       return matchLeadSearchQuery(lead, search);
     }
 
-    // Email Presence Filter
+    // Email Presence Filter (Inspects direct contact email + notes/summary extractions)
     if (hasEmailOnly) {
-      const em = lead.bestContact?.email;
+      const em = resolveLeadEmail(lead);
       if (!em || !em.trim() || !em.includes("@")) return false;
     }
 
@@ -1758,20 +1774,20 @@ export function CrmLeadSheet({
             <span>Intake Day:</span>
           </span>
           {[
-            { key: "ALL", label: `All Batches (${totalCount})` },
+            { key: "ALL", label: "All Batches" },
             {
               key: "TODAY",
-              label: `Today's Intake (${todayCount})`,
+              label: "Today's Intake",
               activeClass: "bg-emerald-500/20 text-emerald-300 border-emerald-500/40",
             },
             {
               key: "YESTERDAY",
-              label: `Yesterday (${yesterdayCount})`,
+              label: "Yesterday",
               activeClass: "bg-amber-500/20 text-amber-300 border-amber-500/40",
             },
             {
               key: "OLDER",
-              label: `Earlier Batches (${olderCount})`,
+              label: "Earlier Batches",
               activeClass: "bg-zinc-700/40 text-zinc-200 border-zinc-600",
             },
           ].map((tab) => (
@@ -1821,9 +1837,6 @@ export function CrmLeadSheet({
             title="Show only prospects currently in their local peak pickup window (8–10 AM or 4–6 PM local time)"
           >
             <span>⚡ Golden Window</span>
-            <span className="rounded bg-black/40 px-1 text-[10px] font-bold text-amber-300">
-              {goldenWindowLeadCount}
-            </span>
           </button>
 
           <span className="mx-1 hidden h-4 w-px bg-zinc-800 sm:block shrink-0" />
@@ -1839,7 +1852,6 @@ export function CrmLeadSheet({
             ] as const
           ).map((t) => {
             const isSelected = tzFilter === t.id;
-            const count = t.id === "ALL" ? leads.length : (tzLeadCounts[t.id] || 0);
             return (
               <button
                 key={t.id}
@@ -1854,7 +1866,7 @@ export function CrmLeadSheet({
                     : "border-zinc-800 bg-[#09090b] text-zinc-400 hover:text-zinc-200"
                 }`}
               >
-                {t.label} ({count})
+                {t.label}
               </button>
             );
           })}
@@ -1891,9 +1903,6 @@ export function CrmLeadSheet({
           >
             <Mail className="w-3 h-3 text-cyan-400" />
             <span>Has Email</span>
-            <span className="rounded bg-black/40 px-1 text-[10px] font-bold text-cyan-300">
-              {emailLeadCount}
-            </span>
           </button>
 
           <button
@@ -1913,9 +1922,6 @@ export function CrmLeadSheet({
               <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z"/>
             </svg>
             <span>Has LinkedIn</span>
-            <span className="rounded bg-black/40 px-1 text-[10px] font-bold text-sky-300">
-              {linkedinLeadCount}
-            </span>
           </button>
 
           {(hasEmailOnly || hasLinkedinOnly) && (
@@ -2387,52 +2393,59 @@ export function CrmLeadSheet({
                             className="w-40 bg-[#09090b] border border-emerald-500 rounded px-2 py-1 font-mono text-xs text-amber-300 focus:outline-none shadow-sm"
                             placeholder="name@company.com"
                           />
-                        ) : lead.bestContact?.email ? (
-                          <div className="inline-flex items-center gap-1.5">
-                            <a
-                              href={`mailto:${lead.bestContact.email}`}
-                              className="group inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#09090b] hover:bg-zinc-800 border border-zinc-800/80 hover:border-amber-500/30 transition text-left cursor-pointer"
-                              title={`Click to send email to ${lead.bestContact.email}`}
-                            >
-                              <Mail className="w-3 h-3 text-amber-400 group-hover:text-amber-300 shrink-0" />
-                              <span className="font-mono text-xs text-amber-300 group-hover:text-amber-200 truncate max-w-[130px]">
-                                {lead.bestContact.email}
-                              </span>
-                            </a>
-                            <button
-                              type="button"
-                              onClick={() => copyToClipboard(lead.bestContact!.email!, `email_${lead.id}`)}
-                              className="p-1 rounded text-zinc-500 hover:text-white hover:bg-zinc-800 transition"
-                              title="Copy email address"
-                            >
-                              {copiedId === `email_${lead.id}` ? (
-                                <Check className="w-3 h-3 text-emerald-400" />
-                              ) : (
-                                <Copy className="w-2.5 h-2.5 text-zinc-500 hover:text-amber-400" />
-                              )}
-                            </button>
-                            {canEdit && (
+                        ) : (() => {
+                          const resolvedEmail = resolveLeadEmail(lead);
+                          if (!resolvedEmail) {
+                            return (
                               <button
                                 type="button"
-                                onClick={() => startInlineEdit(lead.id, "contactEmail", lead.bestContact?.email || "")}
-                                className="p-1 rounded text-zinc-500 hover:text-white hover:bg-zinc-800 transition"
-                                title="Edit email address inline"
+                                onClick={() => canEdit && startInlineEdit(lead.id, "contactEmail", "")}
+                                className="text-zinc-500 hover:text-amber-400 text-[11px] underline flex items-center gap-1"
+                                title="Add contact email address"
                               >
-                                <Pencil className="w-2.5 h-2.5" />
+                                <Plus className="w-2.5 h-2.5" />
+                                <span>Add email</span>
                               </button>
-                            )}
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => canEdit && startInlineEdit(lead.id, "contactEmail", "")}
-                            className="text-zinc-500 hover:text-amber-400 text-[11px] underline flex items-center gap-1"
-                            title="Add contact email address"
-                          >
-                            <Plus className="w-2.5 h-2.5" />
-                            <span>Add email</span>
-                          </button>
-                        )}
+                            );
+                          }
+                          const isFromNotes = !lead.bestContact?.email && Boolean(resolvedEmail);
+                          return (
+                            <div className="inline-flex items-center gap-1.5">
+                              <a
+                                href={`mailto:${resolvedEmail}`}
+                                className="group inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#09090b] hover:bg-zinc-800 border border-zinc-800/80 hover:border-amber-500/30 transition text-left cursor-pointer"
+                                title={`Click to send email to ${resolvedEmail}${isFromNotes ? " (from notes)" : ""}`}
+                              >
+                                <Mail className={`w-3 h-3 ${isFromNotes ? "text-cyan-400" : "text-amber-400"} group-hover:text-amber-300 shrink-0`} />
+                                <span className={`font-mono text-xs ${isFromNotes ? "text-cyan-300 font-semibold" : "text-amber-300"} group-hover:text-amber-200 truncate max-w-[130px]`}>
+                                  {resolvedEmail}
+                                </span>
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(resolvedEmail, `email_${lead.id}`)}
+                                className="p-1 rounded text-zinc-500 hover:text-white hover:bg-zinc-800 transition"
+                                title="Copy email address"
+                              >
+                                {copiedId === `email_${lead.id}` ? (
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                ) : (
+                                  <Copy className="w-2.5 h-2.5 text-zinc-500 hover:text-amber-400" />
+                                )}
+                              </button>
+                              {canEdit && (
+                                <button
+                                  type="button"
+                                  onClick={() => startInlineEdit(lead.id, "contactEmail", resolvedEmail)}
+                                  className="p-1 rounded text-zinc-500 hover:text-white hover:bg-zinc-800 transition"
+                                  title="Edit email address inline"
+                                >
+                                  <Pencil className="w-2.5 h-2.5" />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       {/* Assigned Caller (Only visible to Owner and Managers) */}

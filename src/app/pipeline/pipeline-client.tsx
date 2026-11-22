@@ -433,7 +433,7 @@ export function PipelineClient({
 
       {/* VIEW 1: DEAL PIPELINE KANBAN BOARD */}
       {viewMode === "PIPELINE" ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 min-h-[580px]">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 min-h-[580px] w-full">
           {STAGES.map((stage) => {
             const stageDeals = filteredDeals.filter(
               (d) => (d.dealStage || "MEETING_BOOKED") === stage.key
@@ -446,7 +446,7 @@ export function PipelineClient({
             return (
               <div
                 key={stage.key}
-                className="flex flex-col bg-slate-900/40 rounded-xl border border-slate-800/80 overflow-hidden"
+                className="flex flex-col bg-slate-900/40 rounded-xl border border-slate-800/80 overflow-hidden min-w-0 w-full"
               >
                 {/* Column Header */}
                 <div
@@ -466,7 +466,7 @@ export function PipelineClient({
                 </div>
 
                 {/* Deal Cards Container */}
-                <div className="p-2 space-y-2.5 flex-1 overflow-y-auto max-h-[720px]">
+                <div className="p-2 space-y-2.5 flex-1 overflow-y-auto max-h-[720px] min-w-0">
                   {stageDeals.length === 0 ? (
                     <div className="h-28 border border-dashed border-slate-800/60 rounded-lg flex items-center justify-center text-[11px] text-slate-600">
                       No deals in stage
@@ -482,20 +482,25 @@ export function PipelineClient({
                       return (
                         <div
                           key={deal.id}
-                          className="group relative p-3 rounded-lg border border-slate-800 bg-slate-900/90 hover:border-slate-700 transition shadow-sm space-y-2 text-left"
+                          className="group relative p-2.5 rounded-lg border border-slate-800 bg-slate-900/90 hover:border-slate-700 transition shadow-sm space-y-2 text-left min-w-0 w-full overflow-hidden"
                         >
-                          {/* Top Row: Company & Link */}
-                          <div className="flex items-start justify-between gap-1.5">
+                          {/* Top Row: Company & Link (Opens in New Tab) */}
+                          <div className="flex items-start justify-between gap-1.5 min-w-0">
                             <Link
                               href={`/company/${deal.id}`}
-                              className="font-bold text-xs text-white hover:text-cyan-400 transition-colors line-clamp-1"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="font-bold text-xs text-white hover:text-cyan-400 transition-colors truncate block flex-1"
+                              title={`${deal.name} (Opens in new tab)`}
                             >
                               {deal.name}
                             </Link>
                             <Link
                               href={`/company/${deal.id}`}
-                              className="text-slate-500 hover:text-slate-300"
-                              title="Open Full Profile"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-slate-500 hover:text-slate-300 shrink-0 p-0.5"
+                              title="Open Full Profile in New Tab"
                             >
                               <ExternalLink className="w-3 h-3" />
                             </Link>
