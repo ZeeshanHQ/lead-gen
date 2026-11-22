@@ -735,18 +735,27 @@ export function deriveCallStatus(lead: {
   notes?: string | null;
   facts?: Record<string, unknown> | null;
   nextFollowUp?: string | null;
+  dealStage?: string | null;
 }): DerivedCallStatus {
   const log = parseCallLog(lead.notes);
   const lastLog = log[0] ?? null;
   const status = lead.status || "";
+  const dealStage = lead.dealStage || (lead.facts as any)?.["deal_stage"] || "";
   const { qualifiedFieldsCount, inferredOutcome } = inspectCallerSmartFields(lead.facts);
   const hasFollowUp = Boolean(lead.nextFollowUp || extractFollowUp(lead.notes));
 
   let key: CallStatusKey;
-  if (status === "MEETING_BOOKED" || status === "QUALIFIED" || status === "CLOSED") {
+  if (
+    status === "MEETING_BOOKED" ||
+    status === "QUALIFIED" ||
+    status === "CLOSED" ||
+    (dealStage && dealStage !== "NONE" && dealStage !== "CLOSED_LOST")
+  ) {
     key = "MEETING_BOOKED";
   } else if (lastLog) {
-    if (
+    if (lastLog.outcome === "MEETING_BOOKED") {
+      key = "MEETING_BOOKED";
+    } else if (
       status === "PAIN_FOUND" &&
       CALL_STATUS_DEFS[lastLog.outcome].depth < 3
     ) {
@@ -758,13 +767,6 @@ export function deriveCallStatus(lead: {
       (lastLog.outcome === "WRONG_NUMBER" || lastLog.outcome === "NOT_INTERESTED")
     ) {
       key = "UNTOUCHED";
-    } else if (
-      lastLog.outcome === "MEETING_BOOKED" &&
-      status !== "MEETING_BOOKED" &&
-      status !== "QUALIFIED" &&
-      status !== "CLOSED"
-    ) {
-      key = "CONNECTED";
     } else {
       key = lastLog.outcome;
     }
@@ -1021,7 +1023,7 @@ export function computeLiveCrmTelemetry(
             )
           : undefined;
         const targetCallerSummary =
-          assignedSummary ?? (matchedCaller ? callerMap[matchedCaller.id] : undefined);
+          (matchedCaller ? callerMap[matchedCaller.id] : undefined) ?? assignedSummary;
 
         teamTotals.callsLogged++;
         if (targetCallerSummary) targetCallerSummary.callsLogged++;

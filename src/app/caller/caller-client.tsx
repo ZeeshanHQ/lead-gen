@@ -155,27 +155,41 @@ function getSmartOpeningScript({
     }
   }
 
-  // 2. High-converting direct outbound framework (Pattern Interrupt + 1-Line Pain Hook + Low-Friction Ask)
+  // 2. Authoritative Role & Responsibility Verification (Zero pitch upfront, pure diagnostic authority)
   const firstName = contactName ? contactName.trim().split(/\s+/)[0] : null;
-  const greeting = firstName ? `Hey ${firstName}` : "Hey there";
+  const targetName = firstName || "there";
   const location = [city, state].filter(Boolean).join(", ") || "your area";
   const lowerNiche = (nicheName || "").toLowerCase();
 
-  const opener = `${greeting}, it's your team here. I know you weren't expecting my call — do you have 20 seconds, or should I hang up?`;
-
   if (/real estate|property management|realty|realtor|brokerage|leasing/i.test(lowerNiche)) {
-    return `${opener}\n\nReason for the call: We help ${location} property managers and brokerages catch the after-hours owner and leasing calls that usually hit voicemail, so you don't leak new doors to competitors.\n\nNot selling anything today — if I sent you a quick 60-second video of how it works for ${companyName}, would you be totally opposed to taking a look?`;
+    return `Hey ${targetName}, just trying to see — am I connected with the person who oversees property owner acquisitions and after-hours intake at ${companyName}, or did I get the wrong desk?
+
+[Wait for confirmation: "Yeah, this is ${targetName} / That's me, what's this regarding?"]
+
+Got it. ${targetName}, quick question regarding your intake in ${location} — when new property owners or tenant inquiries call after hours or on weekends, who handles that intake live, or does it roll over to voicemail?`;
   }
 
   if (/hvac|heating|air conditioning|cooling|plumbing|roofing|electric|contractor/i.test(lowerNiche)) {
-    return `${opener}\n\nReason for the call: We help ${location} contractors automatically re-engage open replacement estimates and catch emergency calls after 5 PM so jobs don't go cold.\n\nNot pitching anything right now — if I sent a 60-second clip showing how other contractors use this, would you be against seeing it?`;
+    return `Hey ${targetName}, just trying to see — am I connected with the person responsible for estimate follow-ups and service dispatch at ${companyName}, or did I get the wrong line?
+
+[Wait for confirmation: "Yeah, this is ${targetName} / That's me, what's this regarding?"]
+
+Got it. ${targetName}, quick question regarding your service operations in ${location} — when replacement bids or emergency service calls come in after 5 PM, who catches that live, or does it hit voicemail until morning?`;
   }
 
   if (/medical|clinic|healthcare|doctor|physician|dental|dentist|wellness/i.test(lowerNiche)) {
-    return `${opener}\n\nReason for the call: We help ${location} clinics capture and book new patient inquiries live in under 30 seconds 24/7 so they don't call the clinic down the street.\n\nNot selling anything today — if I sent a quick 60-second breakdown for ${companyName}, would you be open to taking a look?`;
+    return `Hey ${targetName}, just trying to see — am I connected with the practice manager responsible for new patient intake at ${companyName}, or did I get the wrong desk?
+
+[Wait for confirmation: "Yeah, this is ${targetName} / That's me, what's this regarding?"]
+
+Got it. ${targetName}, quick question regarding your patient intake in ${location} — when consultation inquiries call in after hours, does someone answer live in under 30 seconds, or does it wait until the front desk opens?`;
   }
 
-  return `${opener}\n\nReason for the call: We help established ${nicheName} operators in ${location} capture after-hours inquiries and book qualified appointments directly onto your calendar.\n\nNot pitching anything today — if I sent a 60-second video showing how it works, would you be totally opposed to taking a look?`;
+  return `Hey ${targetName}, just trying to see — am I connected with the person responsible for client intake and operations at ${companyName}, or did I get the wrong line?
+
+[Wait for confirmation: "Yeah, this is ${targetName} / That's me, what's this regarding?"]
+
+Got it. ${targetName}, quick question regarding your intake in ${location} — when high-intent inquiries call after hours or while your team is busy, who catches those calls live?`;
 }
 
 export function CallerClient({

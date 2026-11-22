@@ -466,12 +466,6 @@ function AppShellInner({
       group: "Administration",
       items: [
         {
-          href: "/admin/monitor",
-          label: "Lead Operations Monitor",
-          icon: Zap,
-          perm: "manageTeamAndSettings",
-        },
-        {
           href: "/settings",
           label: canManageTeam ? "Team & Settings" : "Account Settings",
           icon: Settings,

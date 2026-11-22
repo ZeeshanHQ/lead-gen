@@ -539,9 +539,9 @@ export function buildFlashBattlecard(input: {
     : `Ask casually: "Hey, who oversees new property owner intake at ${input.companyName}? Are they in?"`;
 
   const dynamicOpener = isStr
-    ? `"Hey ${firstName || "there"}, I know you weren't expecting my call — got 20 seconds or should I hang up? Reason for the call: We help ${location} vacation rental operators catch after-hours guest and owner calls so you don't leak direct bookings to Airbnb. Not selling anything today — if I sent a 60-second clip of how it works, would you be totally opposed to taking a look?"`
+    ? `"Hey ${firstName || "there"}, just trying to see — am I connected with the person who oversees guest bookings and owner acquisitions for ${input.companyName}, or did I get the wrong line?\n\n[After confirmation]: Got it. Quick question: when prospective property owners or guests call after hours in ${location}, does someone answer live in under 30 seconds, or does it roll to voicemail?"`
     : isPm
-    ? `"Hey ${firstName || "there"}, I know you weren't expecting my call — got 20 seconds or should I hang up? Reason for the call: We help ${location} property managers catch after-hours owner and leasing calls so you don't leak doors to competitors. Not selling anything today — if I sent a 60-second clip of how it works, would you be totally opposed to taking a look?"`
+    ? `"Hey ${firstName || "there"}, just trying to see — am I connected with the person who oversees property owner acquisitions and after-hours intake at ${input.companyName}, or did I get the wrong desk?\n\n[After confirmation]: Got it. Quick question regarding your intake in ${location}: when landlords or prospective tenants call after hours or on weekends, who catches that call live?"`
     : input.openingScript;
 
   return {
@@ -551,12 +551,12 @@ export function buildFlashBattlecard(input: {
     scripts: {
       OPENING: dynamicOpener,
       GATEKEEPER: firstName
-        ? `"Hey there — is ${firstName} around for 20 seconds? Just let them know it's about catching after-hours owner and leasing inquiries in ${location}."`
-        : `"Hey there — who oversees new property owner intake at ${input.companyName}? Are they around for 20 seconds?"`,
-      OBJ_BUSY: `"Totally get it, ${dmDisplay} — 10 seconds and I'm off. We help ${location} operators catch after-hours owner calls so you don't leak deals to competitors. If I shoot a 60-second clip to your email, would you be opposed to looking?"`,
-      OBJ_CURRENT_SYSTEM: `"That's why I reached out — we don't replace ${swName || "your current system"}. We just catch the evening and weekend calls your team misses and push qualified appointments straight to your calendar. If it adds 2 to 4 signed agreements a month, would you be against seeing a 60-second video?"`,
-      OBJ_SEND_EMAIL: `"Sending it right over. What's the best email for you? And so I only send the relevant 60-second clip, is your focus right now adding more doors or saving time?"`,
-      OBJ_PRICE: `"It costs less than a single lost management agreement, and if it doesn't book qualified consults in 30 days, you don't pay anything. Let's do a 5-minute live test call where you speak to it yourself — does tomorrow morning work?"`,
+        ? `"Hey there — just trying to see if ${firstName} is in? It's regarding ${input.companyName}'s after-hours owner & leasing intake."`
+        : `"Hey there — who oversees new property owner intake and leasing operations at ${input.companyName}? Are they in?"`,
+      OBJ_BUSY: `"Totally understand, ${dmDisplay} — not pitching you. Quick question: who handles after-hours intake when you're tied up? If it's rolling to voicemail, we just install an AI concierge that catches those calls so you don't leak doors."`,
+      OBJ_CURRENT_SYSTEM: `"Understood — we don't replace ${swName || "your current system"}. We just catch the overflow, evening, and weekend calls your team misses and push qualified appointments straight to your calendar. Worth a quick look?"`,
+      OBJ_SEND_EMAIL: `"Sure, what's the best email for you? I'll send a 60-second clip showing how it catches after-hours intake for ${input.companyName}."`,
+      OBJ_PRICE: `"It costs less than a single lost management agreement. If it doesn't book qualified consults in the first 30 days, you don't pay anything. Let's do a 5-minute live test call — does tomorrow work?"`,
     },
   };
 }

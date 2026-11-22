@@ -170,7 +170,7 @@ export function buildCallEvents(
         const matchedAudit = leadAudits[idx];
         const actorName = entry.author || matchedAudit?.actor || "Caller";
         const memberId =
-          lead.assignedMemberId ?? resolveMemberId(actorName, members, lead.assignedMemberId);
+          resolveMemberId(actorName, members, null) ?? lead.assignedMemberId;
         if (matchedAudit) {
           events.push({
             id: matchedAudit.id,
