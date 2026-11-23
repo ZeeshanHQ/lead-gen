@@ -749,12 +749,24 @@ export function deriveCallStatus(lead: {
     status === "MEETING_BOOKED" ||
     status === "QUALIFIED" ||
     status === "CLOSED" ||
-    (dealStage && dealStage !== "NONE" && dealStage !== "CLOSED_LOST")
+    (dealStage && dealStage !== "NONE" && dealStage !== "CLOSED_LOST" && (!status || status === "APPROVED" || status === "MEETING_BOOKED"))
   ) {
     key = "MEETING_BOOKED";
   } else if (lastLog) {
-    if (lastLog.outcome === "MEETING_BOOKED") {
+    if (lastLog.outcome === "MEETING_BOOKED" && (!status || status === "MEETING_BOOKED" || status === "QUALIFIED" || status === "CLOSED")) {
       key = "MEETING_BOOKED";
+    } else if (lastLog.outcome === "MEETING_BOOKED") {
+      if (status === "EMAIL_REQUESTED") {
+        key = "EMAIL_REQUESTED";
+      } else if (status === "CONNECTED" || status === "PAIN_FOUND") {
+        key = "CONNECTED";
+      } else if (status === "LOST") {
+        key = "NOT_INTERESTED";
+      } else if (status === "APPROVED" || status === "DISCOVERED") {
+        key = "UNTOUCHED";
+      } else {
+        key = "CONNECTED";
+      }
     } else if (
       status === "PAIN_FOUND" &&
       CALL_STATUS_DEFS[lastLog.outcome].depth < 3
@@ -772,6 +784,8 @@ export function deriveCallStatus(lead: {
     }
   } else if (status === "CONNECTED" || status === "PAIN_FOUND") {
     key = "CONNECTED";
+  } else if (status === "EMAIL_REQUESTED") {
+    key = "EMAIL_REQUESTED";
   } else if (status === "LOST") {
     key = "NOT_INTERESTED";
   } else if (inferredOutcome) {

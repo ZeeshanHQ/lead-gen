@@ -48,7 +48,7 @@ import {
   type CallOutcomeKey,
   type CallStatusKey,
 } from "@/server/domain/call-outcomes";
-import { CallOutcomePicker, CallStatusBadge, CallStatusLegend } from "@/components/call-status-ui";
+import { CallOutcomePicker, CallStatusBadge } from "@/components/call-status-ui";
 import { CallLogModal, type CallLogSubmitData } from "@/components/call-log-modal";
 import { computeAutoFollowUpCadence } from "@/server/domain/focus-queue";
 import {
@@ -1940,13 +1940,7 @@ export function CrmLeadSheet({
         </div>
       </div>
 
-      {/* Color key: same colors as the Sales Funnel page */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/60 bg-[#0a0a0d] px-3 py-2">
-        <CallStatusLegend />
-        <span className="text-[10px] text-zinc-500">
-          Status updates automatically from <strong className="text-zinc-300">Log Call</strong>
-        </span>
-      </div>
+
 
       {/* Active Global Search Banner */}
       {hasActiveSearch && (

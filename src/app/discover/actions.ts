@@ -279,7 +279,7 @@ export async function getDiscoveryProgressAction(runId: string, sinceIso?: strin
       );
       crmReadyCount = qualifiedLeads.filter((l) => postApprovalSet.has(l.status)).length;
       totalReviewCount = pendingLeads.length;
-      leads = JSON.parse(JSON.stringify(pendingLeads.slice(0, 60)));
+      leads = JSON.parse(JSON.stringify(pendingLeads.slice(0, 100)));
     }
 
     return {
@@ -853,7 +853,7 @@ export async function runLeadDiscoveryAction(
       // Non-blocking in non-request contexts or tests
     }
 
-    const safeLeads = JSON.parse(JSON.stringify(pendingLeads.slice(0, 60)));
+    const safeLeads = JSON.parse(JSON.stringify(pendingLeads.slice(0, 100)));
     const safeCounters = JSON.parse(JSON.stringify(enrichedCounters));
 
     return {

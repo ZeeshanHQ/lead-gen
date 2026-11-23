@@ -825,7 +825,11 @@ export function LeadProspector({
                   setLeads(data.leads);
                 } else {
                   getLatestReviewLeadsAction().then((latest) => {
-                    if (latest.ok && latest.leads) setLeads(latest.leads as any);
+                    if (latest.ok && latest.leads) {
+                      setLeads(latest.leads as any);
+                      if (typeof latest.totalCount === "number") setTotalReviewCount(latest.totalCount);
+                      if (typeof latest.crmReadyCount === "number") setCrmReadyCount(latest.crmReadyCount);
+                    }
                   });
                 }
 
@@ -2121,7 +2125,7 @@ export function LeadProspector({
               <span>Qualified {activeNicheName} Leads (Passed Must-Have Gate)</span>
             </h2>
             <span className="px-2.5 py-0.5 rounded-full bg-zinc-800 text-zinc-200 text-xs font-semibold">
-              {leads.length} shown
+              {totalReviewCount} in review
             </span>
           </div>
 

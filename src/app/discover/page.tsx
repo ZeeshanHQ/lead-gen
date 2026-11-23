@@ -98,7 +98,7 @@ export default async function DiscoverPage() {
         allMarkets={ctx?.allMarkets || [resolvedMarket]}
         initialRule={ctx?.rule?.config}
         initialGate={activeGate}
-        initialLeads={pendingLeads.slice(0, 80) as any}
+        initialLeads={pendingLeads.slice(0, 100) as any}
         initialTotalCount={pendingLeads.length}
         initialCrmReadyCount={crmReadyCount}
         canEditRules={activeMember.role === "OWNER" || Boolean(activeMember.permissions?.editRules)}

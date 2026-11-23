@@ -2552,6 +2552,12 @@ export function CallerClient({
                       city: updated.city ?? item.city,
                       state: updated.state ?? item.state,
                       status: (updated.status as LifecycleStatus) || item.status,
+                      dealStage:
+                        (updated as any).dealStage !== undefined
+                          ? (updated as any).dealStage
+                          : updated.status === "MEETING_BOOKED"
+                          ? "MEETING_BOOKED"
+                          : "NONE",
                       nextFollowUp: updated.nextFollowUp ?? null,
                       notes: updated.notes ?? item.notes,
                       facts: updated.facts ?? item.facts,
