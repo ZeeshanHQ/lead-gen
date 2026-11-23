@@ -142,6 +142,7 @@ export function LeadProspector({
   const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
   const [distributing, setDistributing] = useState(false);
   const [bulkApproving, setBulkApproving] = useState(false);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
   const [selectedCallerId, setSelectedCallerId] = useState<string>("");
   const [evidenceCompanyId, setEvidenceCompanyId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
@@ -914,20 +915,47 @@ export function LeadProspector({
     }
   };
 
-  // Bulk Approve All Pending Leads into CRM: moves all staged leads to CRM queue
-  const handleBulkApproveAll = async () => {
+  const toggleSelectLead = (id: string) => {
+    setSelectedLeadIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedLeadIds.size === leads.length) {
+      setSelectedLeadIds(new Set());
+    } else {
+      setSelectedLeadIds(new Set(leads.map((l) => l.id)));
+    }
+  };
+
+  const handleSelectCount = (count: number) => {
+    const slice = leads.slice(0, count).map((l) => l.id);
+    setSelectedLeadIds(new Set(slice));
+  };
+
+  const handleClearSelection = () => {
+    setSelectedLeadIds(new Set());
+  };
+
+  // Bulk Approve Selected (or All) Pending Leads into CRM: moves staged leads to CRM queue
+  const handleBulkApprove = async () => {
     setBulkApproving(true);
     const caller = allMembers.find((m) => m.id === selectedCallerId);
-    const pendingIds = leads.map((l) => l.id);
+    const targetIds = selectedLeadIds.size > 0 ? Array.from(selectedLeadIds) : leads.map((l) => l.id);
     const res = await approveAllReviewLeadsAction({
-      leadIds: pendingIds,
+      leadIds: targetIds,
       assignToMemberId: caller ? caller.id : null,
       assignToMemberName: caller ? caller.name : null,
     });
     setBulkApproving(false);
     if (res.ok) {
-      const count = res.approvedCount || pendingIds.length;
-      setLeads((prev) => prev.filter((l) => !pendingIds.includes(l.id)));
+      const count = res.approvedCount || targetIds.length;
+      setLeads((prev) => prev.filter((l) => !targetIds.includes(l.id)));
+      setSelectedLeadIds(new Set());
       setTotalReviewCount((prev) => Math.max(0, prev - count));
       setCrmReadyCount((prev) => prev + count);
       setSuccessBanner(
@@ -936,7 +964,7 @@ export function LeadProspector({
           : `Moved ${count} leads to Leads CRM queue! Ready for dialing.`
       );
     } else {
-      setErrorMsg(res.error || "Failed to bulk approve leads");
+      setErrorMsg(res.error || "Failed to approve leads");
     }
   };
 
@@ -2150,21 +2178,68 @@ export function LeadProspector({
             )}
 
             {leads.length > 0 && (
-              <button
-                type="button"
-                disabled={bulkApproving}
-                onClick={handleBulkApproveAll}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition shadow-sm"
-              >
-                {bulkApproving ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <CheckCircle className="w-3.5 h-3.5" />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  className="px-2.5 py-1.5 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs text-zinc-200 font-medium transition cursor-pointer"
+                >
+                  {selectedLeadIds.size === leads.length ? "Deselect All" : "Select All"}
+                </button>
+                {leads.length >= 10 && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectCount(10)}
+                    className="px-2.5 py-1.5 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs text-zinc-300 transition cursor-pointer"
+                  >
+                    Select 10
+                  </button>
                 )}
-                <span>
-                  Approve All ({leads.length}) &amp; Move to CRM
-                </span>
-              </button>
+                {leads.length >= 20 && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectCount(20)}
+                    className="px-2.5 py-1.5 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs text-zinc-300 transition cursor-pointer"
+                  >
+                    Select 20
+                  </button>
+                )}
+                {leads.length >= 25 && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectCount(25)}
+                    className="px-2.5 py-1.5 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs text-zinc-300 transition cursor-pointer"
+                  >
+                    Select 25
+                  </button>
+                )}
+                {selectedLeadIds.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearSelection}
+                    className="text-xs text-zinc-400 hover:text-white underline px-1 cursor-pointer"
+                  >
+                    Clear ({selectedLeadIds.size})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={bulkApproving}
+                  onClick={handleBulkApprove}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition shadow-sm cursor-pointer"
+                >
+                  {bulkApproving ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {selectedLeadIds.size > 0
+                      ? `Approve Selected (${selectedLeadIds.size}) & Move to CRM`
+                      : `Approve All (${leads.length}) & Move to CRM`}
+                  </span>
+                </button>
+              </div>
             )}
 
             <Link
@@ -2214,40 +2289,54 @@ export function LeadProspector({
                 lead.status === "CONNECTED" ||
                 lead.status === "MEETING_BOOKED";
               const assignedName = (lead as any).assignedMemberName || null;
+              const isSelected = selectedLeadIds.has(lead.id);
 
               return (
                 <div
                   key={lead.id}
-                  className="rounded-xl border border-zinc-800 hover:border-zinc-700 bg-[#121215] p-4 space-y-3 shadow-md transition-all flex flex-col justify-between"
+                  className={`rounded-xl border p-4 space-y-3 shadow-md transition-all flex flex-col justify-between ${
+                    isSelected
+                      ? "border-emerald-500/80 bg-emerald-950/20 ring-1 ring-emerald-500/40"
+                      : "border-zinc-800 hover:border-zinc-700 bg-[#121215]"
+                  }`}
                 >
                   <div className="space-y-2.5">
-                    {/* Top Row: Name + Score Badge */}
+                    {/* Top Row: Checkbox + Name + Score Badge */}
                     <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <h4 className="text-sm font-bold text-white truncate" title={lead.name}>
-                            {lead.name}
-                          </h4>
-                        </div>
-                        <div className="text-[11px] text-zinc-400 flex items-center gap-2 mt-0.5">
-                          <span className="flex items-center gap-1 truncate">
-                            <MapPin className="w-3 h-3 text-zinc-500 shrink-0" />
-                            <span>
-                              {[lead.city, lead.state].filter(Boolean).join(", ") || states[0] || "US"}
+                      <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectLead(lead.id)}
+                          aria-label={`Select ${lead.name}`}
+                          className="mt-1 h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-emerald-500 cursor-pointer shrink-0 accent-emerald-500"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <h4 className="text-sm font-bold text-white truncate" title={lead.name}>
+                              {lead.name}
+                            </h4>
+                          </div>
+                          <div className="text-[11px] text-zinc-400 flex items-center gap-2 mt-0.5">
+                            <span className="flex items-center gap-1 truncate">
+                              <MapPin className="w-3 h-3 text-zinc-500 shrink-0" />
+                              <span>
+                                {[lead.city, lead.state].filter(Boolean).join(", ") || states[0] || "US"}
+                              </span>
                             </span>
-                          </span>
-                          <a
-                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                              `${lead.name} ${(lead as any).address || ""} ${lead.city || ""} ${lead.state || ""}`
-                            )}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] text-zinc-300 hover:text-white hover:underline flex items-center gap-0.5 shrink-0"
-                            title="Verify Google Maps Profile & Reviews"
-                          >
-                            <span>Maps</span>
-                            <ExternalLink className="w-2.5 h-2.5" />
-                          </a>
+                            <a
+                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                                `${lead.name} ${(lead as any).address || ""} ${lead.city || ""} ${lead.state || ""}`
+                              )}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] text-zinc-300 hover:text-white hover:underline flex items-center gap-0.5 shrink-0"
+                              title="Verify Google Maps Profile & Reviews"
+                            >
+                              <span>Maps</span>
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          </div>
                         </div>
                       </div>
 
