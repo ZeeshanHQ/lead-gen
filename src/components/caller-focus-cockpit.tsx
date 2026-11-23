@@ -120,6 +120,7 @@ interface CallerFocusCockpitProps {
 
 type ScriptTabKey =
   | "OPENING"
+  | "SOLUTION"
   | "GATEKEEPER"
   | "OBJ_BUSY"
   | "OBJ_CURRENT_SYSTEM"
@@ -2251,6 +2252,7 @@ export function CallerFocusCockpit({
               <div className="flex flex-wrap items-center gap-1">
                 {[
                   { key: "OPENING" as const, label: "Opener" },
+                  { key: "SOLUTION" as const, label: "Solution Pitch" },
                   { key: "GATEKEEPER" as const, label: "Receptionist" },
                   { key: "OBJ_BUSY" as const, label: "Busy" },
                   { key: "OBJ_CURRENT_SYSTEM" as const, label: "Have CRM / Staff" },
@@ -2288,6 +2290,22 @@ export function CallerFocusCockpit({
                   )}
                 </button>
               </div>
+            </div>
+
+            {/* TARGET OUTCOME & PERSONALIZED SOLUTION CALLOUT */}
+            <div className="rounded-lg border border-emerald-500/25 bg-emerald-950/20 px-3 py-2 space-y-1">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                  <Target className="w-3 h-3" />
+                  Target Solution &amp; Desired Outcome
+                </span>
+                <span className="text-[10px] font-semibold text-emerald-300 bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 rounded-full">
+                  {battlecard.targetOutcome}
+                </span>
+              </div>
+              <p className="text-xs text-zinc-200 font-medium leading-relaxed">
+                {battlecard.personalizedSolution}
+              </p>
             </div>
 
             <div className="p-3 rounded-lg bg-[#040406] border border-white/[0.07] text-zinc-100 text-xs sm:text-[13px] leading-relaxed font-sans select-text">

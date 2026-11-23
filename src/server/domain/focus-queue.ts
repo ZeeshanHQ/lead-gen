@@ -464,8 +464,11 @@ export interface FlashBattlecard {
   painTrigger: string;
   scaleAndTech: string;
   gatekeeperTip: string;
+  targetOutcome: string;
+  personalizedSolution: string;
   scripts: {
     OPENING: string;
+    SOLUTION: string;
     GATEKEEPER: string;
     OBJ_BUSY: string;
     OBJ_CURRENT_SYSTEM: string;
@@ -544,12 +547,33 @@ export function buildFlashBattlecard(input: {
     ? `"Hey ${firstName || "there"}, just trying to see — am I connected with the person who oversees property owner acquisitions and after-hours intake at ${input.companyName}, or did I get the wrong desk?\n\n[After confirmation]: Got it. Quick question regarding your intake in ${location}: when landlords or prospective tenants call after hours or on weekends, who catches that call live?"`
     : input.openingScript;
 
+  const targetOutcome = "Book 15-Min Strategy / Live Demo";
+
+  let personalizedSolution = isStr
+    ? `Deploy a 24/7 AI Voice Concierge for ${input.companyName} in ${location} to instantly capture after-hours guest inquiries & direct-booking calls within 30s, sync directly with ${swName || "their PMS"}, and convert missed calls into high-margin direct revenue.`
+    : isPm
+    ? `Install an AI Intake & Leasing Concierge for ${input.companyName} in ${location} that answers landlord and tenant calls live 24/7${doorsCount ? ` across ${doorsCount} doors` : ""}, qualifies new owner leads, and books appointments directly on ${dmDisplay}'s calendar.`
+    : `Set up an instant speed-to-lead AI caller for ${input.companyName} in ${location} that answers inbound buyer/seller leads in under 30 seconds, pre-qualifies their property criteria, and books listing consultations.`;
+
+  if (facts["google_ads"] === "YES" || facts["bleeding_ads"] === "YES") {
+    personalizedSolution += ` Captures 100% of paid ad traffic live so no marketing budget is wasted.`;
+  }
+
+  const solutionScript = isStr
+    ? `"What we do for ${input.companyName} in ${location} is install an AI voice concierge that answers 100% of guest & owner calls after 6 PM within 30 seconds. It answers FAQs, takes direct bookings, and routes urgent owner issues so you don't leak revenue to OTAs. We're offering a 15-minute live test call this week — would tomorrow morning work?"`
+    : isPm
+    ? `"Here's the solution for ${input.companyName}: We plug in a 24/7 AI leasing & owner receptionist that answers after-hours calls in ${location} within 30 seconds${doorsCount ? ` across your ${doorsCount} doors` : ""}. It pre-screens tenant calls and books prospective landlords straight to your calendar. Would a quick 10-minute demo tomorrow morning make sense?"`
+    : `"What we do for ${input.companyName} is install an instant 24/7 speed-to-lead AI caller that dials back new leads in ${location} under 30 seconds, qualifies them, and books appointments directly onto ${dmDisplay}'s calendar. Are you open to seeing a 5-minute live demo tomorrow?"`;
+
   return {
     painTrigger,
     scaleAndTech,
     gatekeeperTip,
+    targetOutcome,
+    personalizedSolution,
     scripts: {
       OPENING: dynamicOpener,
+      SOLUTION: solutionScript,
       GATEKEEPER: firstName
         ? `"Hey there — just trying to see if ${firstName} is in? It's regarding ${input.companyName}'s after-hours owner & leasing intake."`
         : `"Hey there — who oversees new property owner intake and leasing operations at ${input.companyName}? Are they in?"`,
