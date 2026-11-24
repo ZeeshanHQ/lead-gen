@@ -1264,11 +1264,24 @@ export function CallerFocusCockpit({
         {/* Right HUD: Compact Live Stats + Callbacks & Search Drawer + US Timezones */}
         <div className="flex flex-wrap items-center gap-1.5">
           <div className="hidden xl:flex items-center gap-1 text-[11px] mr-1">
-            <span className="rounded-full bg-black/40 border border-white/10 px-2.5 py-0.5 text-zinc-300">
-              Dials:{" "}
+            <span
+              className="rounded-full bg-black/40 border border-white/10 px-2.5 py-0.5 text-zinc-300"
+              title="Unique distinct leads contacted"
+            >
+              Leads Called:{" "}
+              <strong className="text-emerald-400 font-mono">
+                {telemetry.dialedLeads}
+              </strong>
+            </span>
+            <span
+              className="rounded-full bg-black/40 border border-white/10 px-2.5 py-0.5 text-zinc-300"
+              title="Total dial attempts including 2nd/3rd retries and follow-up calls"
+            >
+              Total Attempts:{" "}
               <strong className="text-sky-300 font-mono">
                 {telemetry.totalCallsDialed}
               </strong>
+              <span className="text-zinc-500 text-[10px] ml-1">(Retries &amp; Follow-ups)</span>
             </span>
             <span className="rounded-full bg-black/40 border border-white/10 px-2.5 py-0.5 text-zinc-300">
               Answered:{" "}

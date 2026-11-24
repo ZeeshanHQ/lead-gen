@@ -718,7 +718,7 @@ export function SalesFunnelClient({
         <div className="p-4 rounded-xl border border-white/[0.09] bg-gradient-to-b from-[#121318] via-[#0b0c10] to-[#060709]">
           <div className="text-[11px] text-zinc-300 font-semibold flex items-center gap-1.5">
             <PhoneCall className="w-3.5 h-3.5 text-sky-400" />
-            <span>Total Call Logs</span>
+            <span>Total Dial Attempts &amp; Retries</span>
           </div>
           <div className="text-2xl font-black font-mono text-white mt-1">
             {funnelResult.dial.total}

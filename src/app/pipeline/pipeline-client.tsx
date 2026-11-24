@@ -449,14 +449,14 @@ export function PipelineClient({
 
         <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
           <span className="text-slate-400 text-[11px] font-medium block">
-            Calls Attempted
+            Unique Leads Called
           </span>
           <div className="text-lg font-black text-amber-400 tracking-tight flex items-center gap-1 font-mono">
             <Phone className="w-4 h-4 text-amber-400" />
             {metrics.contactedCount.toLocaleString()}
           </div>
           <span className="text-[10px] text-slate-500">
-            Lifetime logged contacts
+            Distinct leads with call logs
           </span>
         </div>
       </div>

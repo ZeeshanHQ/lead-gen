@@ -108,7 +108,7 @@ export function computeProspectLocalTimeInfo(
     };
   }
 
-  // Lunch Window: 11:30 AM - 1:30 PM local time
+  // Midday Window: 11:30 AM - 1:30 PM local time (Active calling window - direct owner pickup)
   if (decimalHour >= 11.5 && decimalHour < 13.5) {
     return {
       tzGroupId: zone.groupId,
@@ -117,8 +117,8 @@ export function computeProspectLocalTimeInfo(
       localMinute: minute,
       localTimeFormatted,
       windowStatus: "LUNCH_DIP",
-      windowLabel: `${localTimeFormatted} • Midday / Lunch Hour`,
-      windowScoreBoost: 15,
+      windowLabel: `${localTimeFormatted} • Midday Window (Active & Callable)`,
+      windowScoreBoost: 25,
     };
   }
 
