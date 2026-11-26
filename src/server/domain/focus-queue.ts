@@ -470,6 +470,8 @@ export interface FlashBattlecard {
     OPENING: string;
     SOLUTION: string;
     GATEKEEPER: string;
+    OBJ_NOT_INTERESTED: string;
+    OBJ_WHO_IS_THIS: string;
     OBJ_BUSY: string;
     OBJ_CURRENT_SYSTEM: string;
     OBJ_SEND_EMAIL: string;
@@ -478,8 +480,8 @@ export interface FlashBattlecard {
 }
 
 /**
- * Generates a scannable 3-Bullet Flash Battlecard + Instant Objection Switcher
- * so callers never read walls of text while the phone is ringing.
+ * Generates a scannable 3-Bullet Flash Battlecard + Authoritative Diagnostic Scripts
+ * anchored in real crawled company pain points, ad spend, and tech stack.
  */
 export function buildFlashBattlecard(input: {
   companyName: string;
@@ -493,77 +495,114 @@ export function buildFlashBattlecard(input: {
   replacement?: string | null;
   facts?: Record<string, string> | null;
   researchSummary?: string | null;
+  painIdentified?: string | null;
   openingScript: string;
 }): FlashBattlecard {
   const firstName = input.contactName ? input.contactName.trim().split(/\s+/)[0] : null;
-  const dmDisplay = firstName || "the owner";
+  const dmDisplay = firstName || "there";
   const location = [input.city, input.state].filter(Boolean).join(", ") || "your area";
   const facts = input.facts || {};
 
-  // 1. Pain Trigger Bullet (Hyper-personalized to Real Estate / PM / STR / Brokerage)
-  const nicheLower = `${input.nicheName || ""} ${input.researchSummary || ""} ${Object.values(facts).join(" ")}`.toLowerCase();
+  const nicheLower = `${input.nicheName || ""} ${input.researchSummary || ""} ${input.painIdentified || ""} ${Object.values(facts).join(" ")}`.toLowerCase();
   const isStr = /\b(str|airbnb|vrbo|vacation\s*rental|short[- ]term|guest|guesty|hostaway)\b/i.test(nicheLower);
-  const isPm = /\b(property\s*management|doors|tenant|leasing|appfolio|buildium|yardi|rent\s*manager)\b/i.test(nicheLower);
+  const isHvac =
+    /\b(hvac|heating|cooling|air\s*conditioning|furnace|ductless|servicetitan|housecall|jobber|fieldedge|service\s*fusion)\b/i.test(nicheLower) ||
+    input.replacement === "YES" ||
+    input.financing === "YES";
+  const isPm = !isHvac && /\b(property\s*management|doors|tenant|leasing|appfolio|buildium|yardi|rent\s*manager|landlord)\b/i.test(nicheLower);
   const doorsCount = facts["doors_managed"] || null;
   const swName = input.software && input.software !== "UNKNOWN" ? input.software.toUpperCase() : null;
+  const hasAds =
+    facts["google_ads"] === "YES" ||
+    facts["meta_ads"] === "YES" ||
+    facts["bleeding_ads"] === "YES";
+  const isHiring = facts["hiring"] === "YES" || /hiring|recruiting/i.test(nicheLower);
+  const hasFinancing = input.financing === "YES" || facts["financing"] === "YES";
 
-  let painTrigger = isStr
-    ? `Late-night guest & direct-booking inquiries in ${location} go unanswered after 6 PM, losing high-margin direct bookings to Airbnb/OTAs.`
-    : isPm
-    ? `Owner-acquisition & tenant leasing calls in ${location} hit voicemail during peak hours${doorsCount ? ` across ${doorsCount} doors` : ""}.`
-    : `Inbound Zillow/Realtor & buyer/seller calls in ${location} wait hours for callbacks — 78% list with the first broker who answers live.`;
-
-  if (facts["google_ads"] === "YES" || facts["bleeding_ads"] === "YES") {
-    painTrigger = `Active paid ad traffic in ${location}: missed inbound calls leak high-commission management & listing deals.`;
+  // 1. Pain Trigger Bullet (Use extracted painIdentified first, then verified signals)
+  let painTrigger = (input.painIdentified || "").trim();
+  if (!painTrigger || painTrigger.length < 15) {
+    if (isHvac) {
+      if (hasAds) {
+        painTrigger = `Running paid ads in ${location}${hasFinancing ? " + financing" : ""} — missed after-hours or field-busy calls burn ad spend and hand $10k+ replacements to competitors.`;
+      } else if (isHiring) {
+        painTrigger = `Actively hiring techs in ${location} — dispatchers & lead techs are stretched, leaving open replacement estimates and after-hours calls unbooked.`;
+      } else {
+        painTrigger = `After-hours HVAC replacement & emergency dispatch calls in ${location} hit voicemail — 70%+ of homeowners call the next contractor on Google.`;
+      }
+    } else if (isStr) {
+      painTrigger = `Late-night guest & direct-booking inquiries in ${location} go unanswered after 6 PM, losing high-margin direct bookings to Airbnb/OTAs.`;
+    } else if (isPm) {
+      painTrigger = `Owner-acquisition & tenant leasing calls in ${location} hit voicemail during peak hours${doorsCount ? ` across ${doorsCount} doors` : ""}.`;
+    } else {
+      painTrigger = `Inbound buyer/seller & listing calls in ${location} wait hours for callbacks — 78% list with the first broker who answers live.`;
+    }
+    if (!isHvac && hasAds) {
+      painTrigger = `Active paid ad traffic in ${location}: missed inbound calls leak high-commission management & listing deals.`;
+    }
   }
 
   // 2. Scale & Tech Bullet
   const techParts: string[] = [];
-  if (swName) {
-    techParts.push(`Stack: ${swName}`);
-  }
-  if (doorsCount) {
-    techParts.push(`${doorsCount} Doors Managed`);
-  }
-  if (facts["employees"]) {
-    techParts.push(`${facts["employees"]} Staff`);
-  }
-  if (facts["avg_property_value"]) {
-    techParts.push(facts["avg_property_value"]);
-  }
+  if (swName) techParts.push(`Stack: ${swName}`);
+  if (doorsCount) techParts.push(`${doorsCount} Doors Managed`);
+  if (hasFinancing) techParts.push("Financing Verified");
+  if (hasAds) techParts.push("Active Paid Ads");
+  if (facts["employees"]) techParts.push(`${facts["employees"]} Staff`);
+  if (facts["avg_property_value"]) techParts.push(facts["avg_property_value"]);
   const scaleAndTech =
     techParts.length > 0
       ? techParts.join(" • ")
-      : `Verified ${input.nicheName || "Real Estate"} Operator in ${location}`;
+      : `Verified ${input.nicheName || "Target"} Operator in ${location}`;
 
-  // 3. Gatekeeper Strategy Bullet
+  // 3. Gatekeeper Strategy Bullet (Casual, peer-level, downward inflection)
   const gatekeeperTip = firstName
-    ? `Say casually with downward inflection: "Hey, is ${firstName} in? It's regarding ${input.companyName}'s inbound owner & leasing line."`
-    : `Ask casually: "Hey, who oversees new property owner intake at ${input.companyName}? Are they in?"`;
+    ? `Casual downward inflection: "Hey, is ${firstName} in? Calling about ${input.companyName}'s ${isHvac ? "dispatch & estimate line" : "owner & intake line"}."`
+    : `Ask casually: "Hey, who oversees ${isHvac ? "service dispatch and open estimates" : "new property owner intake"} at ${input.companyName}? Are they in?"`;
 
-  const dynamicOpener = isStr
-    ? `"Hey ${firstName || "there"}, just trying to see — am I connected with the person who oversees guest bookings and owner acquisitions for ${input.companyName}, or did I get the wrong line?\n\n[After confirmation]: Got it. Quick question: when prospective property owners or guests call after hours in ${location}, does someone answer live in under 30 seconds, or does it roll to voicemail?"`
+  // Authoritative Context Anchor (Zero permission-asking, zero premature pitch)
+  const contextHook = hasAds
+    ? `saw your active ads in ${location}`
+    : swName
+    ? `saw your team runs ${swName} in ${location}`
+    : hasFinancing
+    ? `saw you offer replacement financing in ${location}`
+    : `calling about ${input.companyName} in ${location}`;
+
+  const dynamicOpener = isHvac
+    ? `"Hey ${dmDisplay} — ${contextHook}. Am I speaking with the person who oversees service dispatch and open replacement estimates, or did I get the wrong line?\n\n[Wait for confirmation — DO NOT PITCH YET]\n\nGot it. Quick question: when a homeowner calls for a replacement quote or emergency service after 5 PM or while your techs are on roofs, does someone book them live in under 30 seconds, or does it roll to voicemail until morning?"`
+    : isStr
+    ? `"Hey ${dmDisplay} — ${contextHook}. Am I speaking with the person who oversees guest bookings and owner acquisitions for ${input.companyName}, or did I get the wrong desk?\n\n[Wait for confirmation — DO NOT PITCH YET]\n\nGot it. Quick question: when a prospective property owner or guest calls after 6 PM, does someone answer live in under 30 seconds, or does it roll to voicemail?"`
     : isPm
-    ? `"Hey ${firstName || "there"}, just trying to see — am I connected with the person who oversees property owner acquisitions and after-hours intake at ${input.companyName}, or did I get the wrong desk?\n\n[After confirmation]: Got it. Quick question regarding your intake in ${location}: when landlords or prospective tenants call after hours or on weekends, who catches that call live?"`
-    : input.openingScript;
+    ? `"Hey ${dmDisplay} — ${contextHook}. Am I connected with the person who oversees property owner acquisitions and inbound leasing at ${input.companyName}, or did I get the wrong desk?\n\n[Wait for confirmation — DO NOT PITCH YET]\n\nGot it. Quick question: when a landlord or qualified tenant calls after hours or while your team is in the field, who catches that call live?"`
+    : `"Hey ${dmDisplay} — ${contextHook}. Am I speaking with the managing broker or person handling inbound client intake at ${input.companyName}, or did I get the wrong line?\n\n[Wait for confirmation — DO NOT PITCH YET]\n\nGot it. Quick question: when a high-intent buyer or seller calls while your agents are in showings or after hours, does someone qualify and book them live in 30 seconds, or do they hit voicemail?"`;
 
-  const targetOutcome = "Book 15-Min Strategy / Live Demo";
+  const targetOutcome = isHvac
+    ? "Book 10-Min Live Test Call / Dispatch Audit"
+    : "Book 15-Min Strategy / Live Demo";
 
-  let personalizedSolution = isStr
-    ? `Deploy a 24/7 AI Voice Concierge for ${input.companyName} in ${location} to instantly capture after-hours guest inquiries & direct-booking calls within 30s, sync directly with ${swName || "their PMS"}, and convert missed calls into high-margin direct revenue.`
+  const dealUnit = isHvac ? "$10k+ replacement job" : isStr ? "direct booking / owner contract" : "management agreement";
+  const leakMetric = isHvac ? "2–3 replacement or emergency calls" : "2–3 high-intent owner or client calls";
+
+  let personalizedSolution = isHvac
+    ? `Plug a 24/7 AI Dispatch & Estimate Recovery Voice Agent into ${input.companyName}'s phone line${swName ? ` (${swName})` : ""} in ${location} — answers every after-hours & overflow call in <30s, qualifies unit age/urgency, and books installs directly on the dispatch board.`
+    : isStr
+    ? `Deploy a 24/7 AI Voice Concierge for ${input.companyName} in ${location} to capture after-hours guest & owner calls in <30s, sync with ${swName || "their PMS"}, and convert missed calls into direct revenue.`
     : isPm
-    ? `Install an AI Intake & Leasing Concierge for ${input.companyName} in ${location} that answers landlord and tenant calls live 24/7${doorsCount ? ` across ${doorsCount} doors` : ""}, qualifies new owner leads, and books appointments directly on ${dmDisplay}'s calendar.`
-    : `Set up an instant speed-to-lead AI caller for ${input.companyName} in ${location} that answers inbound buyer/seller leads in under 30 seconds, pre-qualifies their property criteria, and books listing consultations.`;
+    ? `Install an AI Intake & Leasing Concierge for ${input.companyName} in ${location} that answers landlord and tenant calls live 24/7${doorsCount ? ` across ${doorsCount} doors` : ""}, qualifies new owner leads, and books appointments directly on ${firstName || "the owner"}'s calendar.`
+    : `Set up an instant speed-to-lead AI caller for ${input.companyName} in ${location} that answers inbound buyer/seller leads in under 30 seconds, pre-qualifies property criteria, and books listing consultations.`;
 
-  if (facts["google_ads"] === "YES" || facts["bleeding_ads"] === "YES") {
-    personalizedSolution += ` Captures 100% of paid ad traffic live so no marketing budget is wasted.`;
+  if (hasAds) {
+    personalizedSolution += ` Captures 100% of paid ad traffic live so zero marketing budget is wasted.`;
   }
 
-  const solutionScript = isStr
-    ? `"What we do for ${input.companyName} in ${location} is install an AI voice concierge that answers 100% of guest & owner calls after 6 PM within 30 seconds. It answers FAQs, takes direct bookings, and routes urgent owner issues so you don't leak revenue to OTAs. We're offering a 15-minute live test call this week — would tomorrow morning work?"`
+  const solutionScript = isHvac
+    ? `"Here's the gap we fix for ${input.companyName}: when you're paying for leads in ${location}, every call that hits voicemail goes straight to the next contractor on Google. We plug an AI voice dispatcher onto your overflow & after-hours line${swName ? ` synced with ${swName}` : ""} that answers in 2 rings, qualifies the homeowner, and books the estimate straight onto your board — zero new staff. If it doesn't put booked estimates on your calendar in 30 days, you don't pay. Open to a 5-minute live test call tomorrow morning?"`
+    : isStr
+    ? `"Here's what we install for ${input.companyName}: a 24/7 AI voice concierge that answers 100% of guest & owner calls after 6 PM in under 30 seconds, handles FAQs, and captures direct bookings so you stop leaking margin to OTAs. Zero disruption to ${swName || "your current setup"}. Open to a 10-minute live test call tomorrow?"`
     : isPm
-    ? `"Here's the solution for ${input.companyName}: We plug in a 24/7 AI leasing & owner receptionist that answers after-hours calls in ${location} within 30 seconds${doorsCount ? ` across your ${doorsCount} doors` : ""}. It pre-screens tenant calls and books prospective landlords straight to your calendar. Would a quick 10-minute demo tomorrow morning make sense?"`
-    : `"What we do for ${input.companyName} is install an instant 24/7 speed-to-lead AI caller that dials back new leads in ${location} under 30 seconds, qualifies them, and books appointments directly onto ${dmDisplay}'s calendar. Are you open to seeing a 5-minute live demo tomorrow?"`;
+    ? `"Here's what we plug in for ${input.companyName}: a 24/7 AI leasing & owner receptionist that answers overflow and after-hours calls in ${location} within 30 seconds${doorsCount ? ` across your ${doorsCount} doors` : ""}, pre-screens tenants, and books prospective landlords straight onto your calendar. Worth a 10-minute live test call tomorrow morning?"`
+    : `"Here's what we do for ${input.companyName}: we install an instant 24/7 speed-to-lead AI caller that picks up or calls back new leads in ${location} in under 30 seconds, qualifies them, and books listing appointments straight onto ${firstName || "your"} calendar. Worth a 5-minute live demo tomorrow?"`;
 
   return {
     painTrigger,
@@ -575,12 +614,14 @@ export function buildFlashBattlecard(input: {
       OPENING: dynamicOpener,
       SOLUTION: solutionScript,
       GATEKEEPER: firstName
-        ? `"Hey there — just trying to see if ${firstName} is in? It's regarding ${input.companyName}'s after-hours owner & leasing intake."`
-        : `"Hey there — who oversees new property owner intake and leasing operations at ${input.companyName}? Are they in?"`,
-      OBJ_BUSY: `"Totally understand, ${dmDisplay} — not pitching you. Quick question: who handles after-hours intake when you're tied up? If it's rolling to voicemail, we just install an AI concierge that catches those calls so you don't leak doors."`,
-      OBJ_CURRENT_SYSTEM: `"Understood — we don't replace ${swName || "your current system"}. We just catch the overflow, evening, and weekend calls your team misses and push qualified appointments straight to your calendar. Worth a quick look?"`,
-      OBJ_SEND_EMAIL: `"Sure, what's the best email for you? I'll send a 60-second clip showing how it catches after-hours intake for ${input.companyName}."`,
-      OBJ_PRICE: `"It costs less than a single lost management agreement. If it doesn't book qualified consults in the first 30 days, you don't pay anything. Let's do a 5-minute live test call — does tomorrow work?"`,
+        ? `"Hey — is ${firstName} around? Calling regarding ${input.companyName}'s ${isHvac ? "after-hours dispatch & estimate line" : "owner & intake line"}."`
+        : `"Hey — who oversees ${isHvac ? "service dispatch and estimate follow-ups" : "new property owner intake"} at ${input.companyName}? Are they in?"`,
+      OBJ_NOT_INTERESTED: `"Totally fair, ${dmDisplay} — you weren't expecting my call. Before I hang up, quick 10-second question: when ${leakMetric} hit voicemail after 5 PM this week${hasAds ? " off your ads" : ""} and call the next competitor in ${location}, is your team tracking how much that's costing, or is it just slipping through?"`,
+      OBJ_WHO_IS_THIS: `"Fair question — I'm calling from Astraventa. I'm not calling to waste your time; we audit ${isHvac ? "HVAC contractors" : "operators"} in ${location} who are leaking high-ticket calls after hours. That's why I asked who catches your calls when the team is busy — is that you?"`,
+      OBJ_BUSY: `"Got it, ${dmDisplay} — I'll be brief, I'm not pitching on this call. Just one yes/no: when your team is tied up after 5 PM, do missed calls roll to voicemail? If yes, let's book 5 minutes tomorrow so you can test our live AI line yourself."`,
+      OBJ_CURRENT_SYSTEM: `"Understood — we never replace ${swName || "your current staff or CRM"}. We only catch the overflow, after-hours, and weekend calls your team can't grab live, and push booked appointments straight into ${swName || "your calendar"}. Worth a 5-minute look?"`,
+      OBJ_SEND_EMAIL: `"Happy to — what's your direct email? I'll send a 60-second recording of how it sounds answering a real ${isHvac ? "homeowner" : "owner"} call for ${input.companyName}, plus a time link if you like what you hear."`,
+      OBJ_PRICE: `"It costs less than a single lost ${dealUnit}. And we run a zero-risk 30-day guarantee: if it doesn't book qualified appointments on your calendar, you don't pay a dime. Let's do a 5-minute live test call tomorrow — morning or afternoon?"`,
     },
   };
 }

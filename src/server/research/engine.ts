@@ -127,41 +127,29 @@ export function buildColdCallerBattlecard(params: {
   if (software) bullets.push(`Tech Stack: Uses ${software} for operations / scheduling`);
   if (brandSnippet) bullets.push(`Authority: ${brandSnippet}`);
 
-  // Synthesize the 15-second opening pitch script tailored to this exact business & niche!
+  // Synthesize an authoritative diagnostic opener (zero permission-asking, zero premature pitch)
   const targetGreeting = dmName ? `Hey ${dmName.split(" ")[0]}` : "Hey there";
-  const repHook = hasStrongPresence ? " and solid local reputation" : "";
+  const repHook = software
+    ? ` and noticed your team runs ${software}`
+    : hasStrongPresence
+    ? " and saw your team's footprint"
+    : "";
 
   let script: string;
   if (isStrAirbnb) {
-    const pmsHook = software ? ` across your ${software} listings` : "";
-    script = `${targetGreeting}, noticed ${params.companyName} manages multi-listing vacation rentals and short-term properties in ${location}${repHook}. The reason for my call: STR portfolio owners tell us that late-night 2 AM tourist calls—whether it's a last-minute booking inquiry, a lockbox check-in issue, or an urgent guest complaint—either wake up the owner or go missed, costing direct bookings and 5-star reviews. We deploy a 24/7 AI Voice Concierge & Speed-to-Lead system that answers every guest and booking call instantly${pmsHook}, resolves check-in questions, and captures late-night reservations automatically. Who currently handles your 2 AM guest and booking calls?`;
+    script = `${targetGreeting}, calling about ${params.companyName} in ${location}${repHook}. Am I speaking with the person who oversees guest bookings and owner acquisitions, or did I get the wrong desk? [Wait] Got it — quick question: when a guest or prospective property owner calls after 6 PM, does someone answer live in under 30 seconds, or does it roll to voicemail?`;
   } else if (isRealEstate) {
-    const hookPain = isHiring
-      ? "with agents busy showing properties in the field, open listing inquiries and rental application requests often sit for hours, losing qualified deals"
-      : "after-hours listing inquiries and buyer/tenant requests often wait until the next day, losing high-intent deals to competing brokerages";
-    script = `${targetGreeting}, noticed ${params.companyName} manages active property listings and real estate client operations in ${location}${repHook}. The reason for my call: established real estate and property management principals tell us that ${hookPain}. We deploy custom backend AI intake engines that qualify inbound buyer, seller, and tenant leads and book appointments onto your calendar 24/7. Do you guys currently have an automated instant response system for your property inquiries?`;
+    script = `${targetGreeting}, calling about ${params.companyName} in ${location}${repHook}. Am I connected with the person who oversees owner acquisitions and inbound inquiry intake, or did I get the wrong line? [Wait] Quick question: when a new landlord or high-intent buyer calls while your team is in the field or after hours, who catches that call live?`;
   } else if (isHvac) {
-    const hookService = hasReplacement ? "residential system replacements" : "residential HVAC";
-    const hookPain = isHiring
-      ? "with lead techs swamped in the field, open replacement quotes take days before dispatchers follow up, losing big-ticket installs"
-      : software
-      ? `using ${software}, inbound quote triage and after-hours estimate follow-ups often fall through the cracks`
-      : "after-hours replacement estimates sit idle before dispatchers can follow up, losing high-ticket installs to competitors";
-    script = `${targetGreeting}, noticed your team handles ${hookService} in ${location}${repHook}${hasFinancing ? " with customer financing" : ""}. The reason for my call: a lot of established trade owners in the area tell us that ${hookPain}. We build custom backend AI agents for contractors to automatically follow up on and book open replacement estimates. Do you guys currently have an automated follow-up system in place for your open installation bids?`;
+    const hookService = hasReplacement ? "residential system replacements" : "service & replacement calls";
+    script = `${targetGreeting}, calling about ${params.companyName}'s ${hookService} in ${location}${repHook}${hasFinancing ? " with financing" : ""}. Am I speaking with the person who oversees dispatch and open estimate follow-ups, or did I get the wrong line? [Wait] Quick question: when an emergency call or replacement lead comes in after 5 PM or while techs are on roofs, does someone book that live, or does it sit until morning?`;
   } else if (isMedical) {
-    const hookPain = isHiring
-      ? "front-desk staff are overwhelmed with patient check-ins, meaning inbound consultation inquiries and callback requests get delayed"
-      : "after-hours patient consultation requests and online appointment inquiries often sit unconfirmed overnight, leading to no-shows";
-    script = `${targetGreeting}, noticed ${params.companyName} provides specialized healthcare and clinical care in ${location}${repHook}. The reason for my call: clinical directors tell us that ${hookPain}. We deploy HIPAA-compliant AI intake assistants that answer questions, triage inquiries, and schedule qualified consultations 24/7. Does your clinic currently use automated 24/7 intake for new patient inquiries?`;
+    script = `${targetGreeting}, calling about ${params.companyName} in ${location}${repHook}. Am I speaking with the person who oversees new patient intake and scheduling, or did I get the wrong desk? [Wait] Quick question: when a consultation inquiry calls in after hours or while the front desk is busy, does someone book them live, or does it hit voicemail?`;
   } else if (isLegal) {
-    const hookPain = "prospective clients seeking urgent legal counsel contact multiple firms at once, and whoever responds first secures the retainer";
-    script = `${targetGreeting}, noticed ${params.companyName} handles legal counsel and client representation in ${location}${repHook}. The reason for my call: managing partners tell us that ${hookPain}. We deploy secure AI client intake systems that screen potential matters and book qualified consultations onto your calendar 24/7. Do you currently have an automated instant intake system in place for your prospective client inquiries?`;
+    script = `${targetGreeting}, calling about ${params.companyName} in ${location}${repHook}. Am I speaking with the person who oversees new client intake, or did I get the wrong line? [Wait] Quick question: when a high-intent prospect calls after hours, does someone screen and book them live, or do they wait until morning?`;
   } else {
     const serviceSnippet = params.keywords && params.keywords.length > 0 ? params.keywords.slice(0, 2).join(" and ") : nicheName;
-    const hookPain = isHiring
-      ? "as your team scales, inbound inquiries and quotation requests often wait hours before a follow-up, losing high-value clients"
-      : "inbound web inquiries and consultation requests often sit idle after hours before staff can follow up and book them";
-    script = `${targetGreeting}, noticed ${params.companyName} is an established provider of ${serviceSnippet} in ${location}${repHook}. The reason for my call: many top leaders in your space tell us that ${hookPain}. We deploy custom AI intake & follow-up engines that qualify and book inbound leads onto your calendar 24/7. Do you currently have an automated instant follow-up system for your inbound inquiries?`;
+    script = `${targetGreeting}, calling about ${params.companyName}'s ${serviceSnippet} in ${location}${repHook}. Am I speaking with the person who handles inbound client intake and bookings, or did I get the wrong line? [Wait] Quick question: when a qualified inquiry calls while your team is tied up or after hours, who catches that call live?`;
   }
 
   const summary = bullets.join(" · ");

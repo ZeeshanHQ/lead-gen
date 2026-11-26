@@ -122,6 +122,8 @@ type ScriptTabKey =
   | "OPENING"
   | "SOLUTION"
   | "GATEKEEPER"
+  | "OBJ_NOT_INTERESTED"
+  | "OBJ_WHO_IS_THIS"
   | "OBJ_BUSY"
   | "OBJ_CURRENT_SYSTEM"
   | "OBJ_SEND_EMAIL"
@@ -1040,6 +1042,7 @@ export function CallerFocusCockpit({
     replacement: activeLead.replacement,
     facts: activeLead.facts,
     researchSummary: activeLead.researchSummary,
+    painIdentified: activeLead.painIdentified,
     openingScript,
   });
 
@@ -2276,6 +2279,8 @@ export function CallerFocusCockpit({
                   { key: "OPENING" as const, label: "Opener" },
                   { key: "SOLUTION" as const, label: "Solution Pitch" },
                   { key: "GATEKEEPER" as const, label: "Receptionist" },
+                  { key: "OBJ_NOT_INTERESTED" as const, label: "Not Interested" },
+                  { key: "OBJ_WHO_IS_THIS" as const, label: "Who's Calling?" },
                   { key: "OBJ_BUSY" as const, label: "Busy" },
                   { key: "OBJ_CURRENT_SYSTEM" as const, label: "Have CRM / Staff" },
                   { key: "OBJ_SEND_EMAIL" as const, label: "Send Email" },

@@ -1,5 +1,6 @@
 import type { DiscoveredCandidate, DiscoveryAdapter, DiscoveryQuery, ProviderMetadata } from "./types";
 import { buildQueryPlan, runPlannedQuery, SearchProviderError } from "./tavily_plan";
+import { runDuckDuckGoFallback } from "./duckduckgo_fallback";
 
 export const TAVILY_PROVIDER_METADATA: ProviderMetadata = {
   id: "tavily_search",
@@ -226,11 +227,6 @@ export class TavilyAdapter implements DiscoveryAdapter {
   async discover(query: DiscoveryQuery, config: Record<string, unknown>): Promise<DiscoveredCandidate[]> {
     const customKey = (query.rule?.discovery as any)?.tavilyApiKey?.trim();
     const apiKey = customKey && customKey.length > 5 ? customKey : getTavilyApiKey(config);
-    if (!apiKey) {
-      throw new Error(
-        "Tavily Search API key is not configured. Please set TAVILY_API_KEY in .env.local or configure it in the Sources tab."
-      );
-    }
 
     const plan = buildQueryPlan({
       keywords: query.keywords,
@@ -242,6 +238,17 @@ export class TavilyAdapter implements DiscoveryAdapter {
     });
     if (plan.length === 0) return [];
 
+    // Card-free automatic fallback if Tavily key is missing
+    if (!apiKey) {
+      console.warn("[Discovery] Tavily API key missing — using free DuckDuckGo fallback.");
+      return runDuckDuckGoFallback(plan, {
+        limit: query.limit,
+        excludeDomains: query.excludeDomains,
+        negativeKeywords: query.rule?.discovery?.negativeKeywords,
+        businessType: query.rule?.businessType,
+      });
+    }
+
     const candidates: DiscoveredCandidate[] = [];
     // Seed seenDomains with existing database domains so previously acquired leads are NEVER re-added
     const seenDomains = new Set<string>(
@@ -251,9 +258,10 @@ export class TavilyAdapter implements DiscoveryAdapter {
     const offset = Math.abs(query.queryOffset ?? 0) % plan.length;
     const batchSize = 6;
     const maxBatches = Math.min(Math.max(Math.ceil(query.limit / 8), 4), 10);
+    let hitQuotaOrAuthError = false;
 
     for (let batch = 0; batch < maxBatches; batch++) {
-      if (candidates.length >= query.limit) break;
+      if (candidates.length >= query.limit || hitQuotaOrAuthError) break;
 
       const chunk: typeof plan = [];
       for (let i = 0; i < batchSize; i++) {
@@ -282,15 +290,15 @@ export class TavilyAdapter implements DiscoveryAdapter {
           }
         } else {
           const err = res.reason;
-          if (err instanceof SearchProviderError && err.fatal) {
-            throw err;
-          }
           if (
+            (err instanceof SearchProviderError && err.fatal) ||
             err?.message?.includes("Authentication") ||
             err?.message?.includes("Quota") ||
             err?.message?.includes("rejected")
           ) {
-            throw err;
+            hitQuotaOrAuthError = true;
+            console.warn("[Tavily Discovery] Quota/auth issue — falling back to free DuckDuckGo:", err?.message || err);
+            break;
           }
           console.warn("[Tavily Discovery] Query non-fatal failure:", err?.message || err);
         }
@@ -298,6 +306,20 @@ export class TavilyAdapter implements DiscoveryAdapter {
 
       // If we already have enough candidates to satisfy requested limit, don't execute next batch
       if (candidates.length >= query.limit) break;
+    }
+
+    if (candidates.length < Math.min(query.limit, 5) && (hitQuotaOrAuthError || candidates.length === 0)) {
+      const existingDomains = [
+        ...(query.excludeDomains ?? []),
+        ...Array.from(seenDomains),
+      ];
+      const fallbackCandidates = await runDuckDuckGoFallback(plan, {
+        limit: query.limit - candidates.length,
+        excludeDomains: existingDomains,
+        negativeKeywords: query.rule?.discovery?.negativeKeywords,
+        businessType: query.rule?.businessType,
+      });
+      candidates.push(...fallbackCandidates);
     }
 
     return candidates;
