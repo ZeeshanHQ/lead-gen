@@ -62,11 +62,20 @@ export default async function CallerQueuePage({
   const activeGate = (rule?.config as any)?.gate;
   const [fullQueue, customColumns] = await Promise.all([
     getCallerQueue(db, market.id, activeGate, {
-      includeCrossMarketForOwner: true,
+      includeCrossMarketForOwner: false,
       marketNames,
     }),
     getCustomCrmColumns(db, market.id),
   ]);
+
+  const verticalMarkets = allMarkets
+    .filter((m) => m.key === "realestate" || m.key === "hvac")
+    .map((m) => ({
+      id: m.id,
+      key: m.key,
+      name: m.key === "hvac" ? "HVAC" : "Real Estate",
+      count: m.approvedCount ?? m.leadCount ?? 0,
+    }));
 
   // Multi-Caller Isolation & Full Owner Transparency:
   // - OWNER / Team Managers see all leads across all callers + unassigned pool across the workspace
@@ -90,6 +99,7 @@ export default async function CallerQueuePage({
       initialShiftConfig={initialShiftConfig}
       activeActorName={activeMember.name}
       marketId={market.id}
+      verticalMarkets={verticalMarkets}
       activeMember={activeMember}
       allMembers={allMembers}
       permissions={activeMember.permissions}

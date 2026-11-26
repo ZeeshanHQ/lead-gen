@@ -7,6 +7,8 @@ import { canMemberAccessPath, getDefaultRouteForMember } from "@/server/domain/t
 import { loadLeadRows, type LeadRow } from "@/server/repo/queue";
 import { resolveGate, passesLeadRowGate, type LeadGate } from "@/server/domain/gate";
 import { POST_APPROVAL } from "@/server/domain/lifecycle";
+import { getSetting } from "@/server/repo/settings";
+import type { SavedIcpPreset } from "./actions";
 import { LeadProspector } from "./lead-prospector";
 
 export const dynamic = "force-dynamic";
@@ -84,11 +86,22 @@ export default async function DiscoverPage() {
 
   const resolvedMarket = ctx?.market || {
     id: "default_market",
-    name: "Target Industry",
+    key: "realestate",
+    name: "Real Estate & Property Management",
     description: "Verified Lead Generation",
     keywords: ["local businesses"],
-    category: "general",
+    category: "realestate",
   };
+
+  let initialSavedPresets: SavedIcpPreset[] = [];
+  try {
+    const presetMap =
+      (await getSetting<Record<string, SavedIcpPreset[]>>(db, "saved_icp_presets_by_market")) || {};
+    const mKey = (resolvedMarket.key || resolvedMarket.category || "realestate").toLowerCase();
+    initialSavedPresets = Array.isArray(presetMap[mKey]) ? presetMap[mKey] : [];
+  } catch {
+    initialSavedPresets = [];
+  }
 
   return (
     <div className="space-y-6">
@@ -101,6 +114,7 @@ export default async function DiscoverPage() {
         initialLeads={pendingLeads.slice(0, 100) as any}
         initialTotalCount={pendingLeads.length}
         initialCrmReadyCount={crmReadyCount}
+        initialSavedPresets={initialSavedPresets}
         canEditRules={activeMember.role === "OWNER" || Boolean(activeMember.permissions?.editRules)}
         allMembers={isOwnerOrManager ? allMembers : []}
       />

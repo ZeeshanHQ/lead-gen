@@ -47,6 +47,9 @@ import {
   saveSearchApiKeyAction,
   getTavilyStatusAction,
   purgeJunkAndOptimizeStorageAction,
+  saveIcpPresetAction,
+  deleteIcpPresetAction,
+  type SavedIcpPreset,
 } from "./actions";
 import { switchMarketAction } from "@/app/actions/tenant";
 import { autoDistributeLeadsAction } from "@/app/caller/actions";
@@ -99,11 +102,13 @@ export function LeadProspector({
   initialLeads = [],
   initialTotalCount = 0,
   initialCrmReadyCount = 0,
+  initialSavedPresets = [],
   canEditRules = true,
   allMembers = [],
 }: {
   activeMarket?: {
     id: string;
+    key?: string;
     name: string;
     description: string;
     keywords: string[];
@@ -115,6 +120,7 @@ export function LeadProspector({
   initialLeads?: LeadItem[];
   initialTotalCount?: number;
   initialCrmReadyCount?: number;
+  initialSavedPresets?: SavedIcpPreset[];
   canEditRules?: boolean;
   allMembers?: TeamMember[];
 }) {
@@ -191,6 +197,24 @@ export function LeadProspector({
       ? initialRule.discovery.negativeKeywords.join(", ")
       : "web design, web development, digital marketing agency, seo agency, software vendor, directory"
   );
+  const initialIsHvac =
+    activeMarket?.key === "hvac" ||
+    activeMarket?.category === "hvac" ||
+    (activeMarket?.name || "").toLowerCase().includes("hvac");
+  const [editTargetTitles, setEditTargetTitles] = useState<string>(
+    initialRule?.contacts?.targetTitles?.length
+      ? initialRule.contacts.targetTitles.join(", ")
+      : initialIsHvac
+      ? "Owner, Founder, President, Operations Manager, General Manager, Service Manager"
+      : "Broker Owner, Founder, Managing Partner, Principal Broker, Director of Property Management"
+  );
+  const [selectedOfferings, setSelectedOfferings] = useState<string[]>(
+    initialRule?.discovery?.serviceIntents?.length
+      ? initialRule.discovery.serviceIntents
+      : initialIsHvac
+      ? ["replacement", "installation"]
+      : []
+  );
   const [savingFilters, setSavingFilters] = useState(false);
 
   // Live Discovery Console & Telemetry state
@@ -250,28 +274,33 @@ export function LeadProspector({
           "airbnb_str",
           "residential_real_estate",
           "commercial_real_estate",
+          "hvac_replacement",
+          "hvac_emergency",
+          "commercial_hvac",
         ].includes(sn)
     );
   });
 
-  interface CustomIcpPreset {
-    id: string;
-    label: string;
-    kw: string;
-    sub: string;
-    bType: "both" | "residential" | "commercial";
-    doors: number | null;
-  }
-  const [customPresets, setCustomPresets] = useState<CustomIcpPreset[]>([]);
+  const [savedPresets, setSavedPresets] = useState<SavedIcpPreset[]>(initialSavedPresets);
   const [showSavePresetInput, setShowSavePresetInput] = useState(false);
   const [presetLabelInput, setPresetLabelInput] = useState("");
+  const [savingPreset, setSavingPreset] = useState(false);
 
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("astra_custom_icp_presets");
-      if (saved) setCustomPresets(JSON.parse(saved));
-    } catch {}
-  }, []);
+  const activeMarketKey = (
+    nicheInfo?.key ||
+    nicheInfo?.category ||
+    ((nicheInfo?.name || "").toLowerCase().includes("hvac") ? "hvac" : "realestate")
+  ).toLowerCase();
+  const isHvacActive =
+    activeMarketKey === "hvac" ||
+    nicheInfo?.category === "hvac" ||
+    (nicheInfo?.name || "").toLowerCase().includes("hvac");
+  const realEstateMarket = allMarkets.find(
+    (m) => m.key === "realestate" || m.category === "realestate"
+  );
+  const hvacMarket = allMarkets.find(
+    (m) => m.key === "hvac" || m.category === "hvac"
+  );
 
   useEffect(() => {
     (async () => {
@@ -317,34 +346,111 @@ export function LeadProspector({
     }
   };
 
-  const handleSaveCustomPreset = () => {
+  const handleSaveCustomPreset = async () => {
     const label = presetLabelInput.trim();
     if (!label) return;
-    const newPreset: CustomIcpPreset = {
-      id: `custom_${Date.now()}`,
+    setSavingPreset(true);
+    const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+    const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const titlesArr = editTargetTitles.split(",").map((t) => t.trim()).filter(Boolean);
+
+    const newPreset: SavedIcpPreset = {
+      id: `icp_${Date.now()}`,
       label,
-      kw: editKeywords,
-      sub: editSubNiche,
-      bType: editBusinessType,
-      doors: editMinDoors,
+      marketKey: activeMarketKey,
+      states: statesArr.length > 0 ? statesArr : ["TX"],
+      cities: citiesArr,
+      keywords: kwsArr,
+      negativeKeywords: negsArr,
+      subNiche: editSubNiche,
+      businessType: editBusinessType,
+      minEmployees: editMinEmployees,
+      maxEmployees: editMaxEmployees,
+      minDoors: editMinDoors,
+      targetTitles: titlesArr,
+      serviceOfferings: selectedOfferings,
+      minScore: editMinScore,
+      gate,
     };
-    const updated = [...customPresets, newPreset];
-    setCustomPresets(updated);
-    try {
-      localStorage.setItem("astra_custom_icp_presets", JSON.stringify(updated));
-    } catch {}
-    setPresetLabelInput("");
-    setShowSavePresetInput(false);
-    setSuccessBanner(`Saved custom ICP preset "${label}".`);
+    const res = await saveIcpPresetAction(activeMarketKey, newPreset);
+    setSavingPreset(false);
+    if (res.ok && res.presets) {
+      setSavedPresets(res.presets);
+      setPresetLabelInput("");
+      setShowSavePresetInput(false);
+      setSuccessBanner(`Saved "${label}" to your ${isHvacActive ? "HVAC" : "Real Estate"} ICP History for 1-click reuse.`);
+    } else {
+      setErrorMsg(res.error || "Failed to save preset");
+    }
   };
 
-  const handleDeleteCustomPreset = (id: string, e: React.MouseEvent) => {
+  const handleDeleteCustomPreset = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const updated = customPresets.filter((p) => p.id !== id);
-    setCustomPresets(updated);
-    try {
-      localStorage.setItem("astra_custom_icp_presets", JSON.stringify(updated));
-    } catch {}
+    const res = await deleteIcpPresetAction(activeMarketKey, id);
+    if (res.ok && res.presets) {
+      setSavedPresets(res.presets);
+    }
+  };
+
+  const handleApplySavedPreset = async (cp: SavedIcpPreset) => {
+    setSelectedPresetId(cp.id);
+    setEditStates((cp.states?.length ? cp.states : ["TX"]).join(", "));
+    setEditCities((cp.cities || []).join(", "));
+    setEditKeywords((cp.keywords || []).join(", "));
+    setEditNegativeKeywords((cp.negativeKeywords || []).join(", "));
+    setEditSubNiche(cp.subNiche || "");
+    setEditBusinessType(cp.businessType || "both");
+    setEditMinEmployees(cp.minEmployees ?? null);
+    setEditMaxEmployees(cp.maxEmployees ?? null);
+    setEditMinDoors(cp.minDoors ?? null);
+    setEditTargetTitles((cp.targetTitles || []).join(", "));
+    setSelectedOfferings(cp.serviceOfferings || []);
+    setEditMinScore(cp.minScore ?? 60);
+    const nextGate = cp.gate ? resolveGate(cp.gate) : gate;
+    setGate(nextGate);
+    setIsCustomSubNicheMode(
+      Boolean(
+        cp.subNiche &&
+          ![
+            "",
+            "property_management",
+            "airbnb_str",
+            "residential_real_estate",
+            "commercial_real_estate",
+            "hvac_replacement",
+            "hvac_emergency",
+            "commercial_hvac",
+          ].includes(cp.subNiche)
+      )
+    );
+    setSuccessBanner(`Loaded saved ICP preset "${cp.label}".`);
+    if (!canEditRules) return;
+    const res = await updateRuleTargetingAction({
+      states: cp.states?.length ? cp.states : ["TX"],
+      cities: cp.cities || [],
+      minScore: cp.minScore ?? 60,
+      keywords: cp.keywords || [],
+      negativeKeywords: cp.negativeKeywords || [],
+      subNiche: cp.subNiche || "",
+      businessType: cp.businessType || "both",
+      minEmployees: cp.minEmployees ?? null,
+      maxEmployees: cp.maxEmployees ?? null,
+      minDoors: cp.minDoors ?? null,
+      targetTitles: cp.targetTitles || [],
+      serviceOfferings: cp.serviceOfferings || [],
+      gate: nextGate,
+    });
+    if (res.ok && res.rule) {
+      setActiveRule(res.rule);
+      const refreshed = await getLatestReviewLeadsAction();
+      if (refreshed.ok && refreshed.leads) {
+        setLeads(refreshed.leads as any);
+        setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
+        setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
+      }
+    }
   };
 
   const handleSaveApiKey = async (e: React.FormEvent) => {
@@ -477,6 +583,7 @@ export function LeadProspector({
     const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
     const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
     const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const titlesArr = editTargetTitles.split(",").map((t) => t.trim()).filter(Boolean);
 
     const res = await updateRuleTargetingAction({
       states: statesArr.length > 0 ? statesArr : ["TX"],
@@ -488,7 +595,9 @@ export function LeadProspector({
       businessType: editBusinessType,
       minEmployees: editMinEmployees,
       maxEmployees: editMaxEmployees,
-      minDoors: editMinDoors,
+      minDoors: isHvacActive ? null : editMinDoors,
+      targetTitles: titlesArr,
+      serviceOfferings: selectedOfferings,
       gate: nextGate,
     });
 
@@ -706,6 +815,7 @@ export function LeadProspector({
     const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
     const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
     const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+    const titlesArr = editTargetTitles.split(",").map((t) => t.trim()).filter(Boolean);
 
     // Initialize Live Discovery Console state
     setIsRunningDiscovery(true);
@@ -754,7 +864,9 @@ export function LeadProspector({
       gate,
       minEmployees: editMinEmployees,
       maxEmployees: editMaxEmployees,
-      minDoors: editMinDoors,
+      minDoors: isHvacActive ? null : editMinDoors,
+      targetTitles: titlesArr,
+      serviceOfferings: selectedOfferings,
     })
       .then((startRes) => {
         if (!startRes.ok || !startRes.runId) {
@@ -990,6 +1102,7 @@ export function LeadProspector({
     const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
     const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
     const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const titlesArr = editTargetTitles.split(",").map((t) => t.trim()).filter(Boolean);
 
     const res = await updateRuleTargetingAction({
       states: statesArr.length > 0 ? statesArr : ["TX"],
@@ -1002,7 +1115,9 @@ export function LeadProspector({
       gate,
       minEmployees: editMinEmployees,
       maxEmployees: editMaxEmployees,
-      minDoors: editMinDoors,
+      minDoors: isHvacActive ? null : editMinDoors,
+      targetTitles: titlesArr,
+      serviceOfferings: selectedOfferings,
     });
     setSavingFilters(false);
 
@@ -1061,31 +1176,42 @@ export function LeadProspector({
         {/* Top Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-800/80 pb-5">
           <div className="space-y-1.5">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2.5">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-zinc-800 text-zinc-200 border border-zinc-700">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 Live Web Discovery &bull; AI Verification Engine
               </span>
-              {allMarkets.length > 1 ? (
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-zinc-900 text-zinc-300 border border-zinc-700">
-                  <span className="text-zinc-400">Active Niche:</span>
-                  <select
-                    value={nicheInfo?.id || ""}
-                    onChange={(e) => handleSwitchNicheInline(e.target.value)}
-                    disabled={isPending}
-                    className="bg-transparent font-bold text-white focus:outline-none cursor-pointer"
-                  >
-                    {allMarkets.map((m) => (
-                      <option key={m.id} value={m.id} className="bg-zinc-900 text-white">
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
+              {(realEstateMarket || hvacMarket) && (
+                <div className="inline-flex items-center gap-1 p-0.5 rounded-full bg-[#07080b] border border-white/[0.12] text-xs shadow-sm">
+                  {realEstateMarket && (
+                    <button
+                      type="button"
+                      disabled={isPending || isRunningDiscovery}
+                      onClick={() => handleSwitchNicheInline(realEstateMarket.id)}
+                      className={`px-3 py-1 rounded-full text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                        !isHvacActive
+                          ? "bg-white text-black shadow-sm"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      <span>🏢 Real Estate</span>
+                    </button>
+                  )}
+                  {hvacMarket && (
+                    <button
+                      type="button"
+                      disabled={isPending || isRunningDiscovery}
+                      onClick={() => handleSwitchNicheInline(hvacMarket.id)}
+                      className={`px-3 py-1 rounded-full text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                        isHvacActive
+                          ? "bg-white text-black shadow-sm"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      <span>❄️ HVAC</span>
+                    </button>
+                  )}
                 </div>
-              ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-zinc-900 text-zinc-400 border border-zinc-800">
-                  Active Niche: <strong className="text-zinc-100 ml-1">{activeNicheName}</strong>
-                </span>
               )}
             </div>
             <h1 className="text-xl md:text-2xl font-bold text-white tracking-tight">
@@ -1341,18 +1467,34 @@ export function LeadProspector({
                   className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-zinc-100 focus:outline-none focus:border-zinc-400"
                 >
                   <option value="">All Verified {activeNicheName} Operators</option>
-                  <option value="property_management">
-                    Full-Service Property Management (Long-Term &amp; Multifamily)
-                  </option>
-                  <option value="airbnb_str">
-                    STR &amp; Vacation Rental Managers (24/7 AI Concierge)
-                  </option>
-                  <option value="residential_real_estate">
-                    Residential Real Estate Teams &amp; Brokerages
-                  </option>
-                  <option value="commercial_real_estate">
-                    Commercial Real Estate Brokerage &amp; CRE Leasing
-                  </option>
+                  {isHvacActive ? (
+                    <>
+                      <option value="hvac_replacement">
+                        Residential AC &amp; Heating Replacement Contractors
+                      </option>
+                      <option value="hvac_emergency">
+                        24/7 Emergency HVAC Dispatch &amp; Repair
+                      </option>
+                      <option value="commercial_hvac">
+                        Commercial HVAC &amp; Mechanical / RTU Contractors
+                      </option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="property_management">
+                        Full-Service Property Management (Long-Term &amp; Multifamily)
+                      </option>
+                      <option value="airbnb_str">
+                        STR &amp; Vacation Rental Managers (24/7 AI Concierge)
+                      </option>
+                      <option value="residential_real_estate">
+                        Residential Real Estate Teams &amp; Brokerages
+                      </option>
+                      <option value="commercial_real_estate">
+                        Commercial Real Estate Brokerage &amp; CRE Leasing
+                      </option>
+                    </>
+                  )}
                   <option value="__custom__">
                     + Custom Sub-Vertical (Type your own)...
                   </option>
@@ -1417,7 +1559,7 @@ export function LeadProspector({
 
           {/* Row 2: Custom Search Keywords + Scale & Team Size */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
-            <div className="md:col-span-6 space-y-1.5">
+            <div className={isHvacActive ? "md:col-span-8 space-y-1.5" : "md:col-span-6 space-y-1.5"}>
               <label className="text-zinc-300 font-semibold block">
                 Custom Target ICP Keywords (Comma-separated)
               </label>
@@ -1460,19 +1602,128 @@ export function LeadProspector({
               />
             </div>
 
-            <div className="md:col-span-2 space-y-1.5">
+            {!isHvacActive && (
+              <div className="md:col-span-2 space-y-1.5">
+                <label className="text-zinc-300 font-semibold block">
+                  Min Doors / Units
+                </label>
+                <input
+                  type="number"
+                  min="5"
+                  max="5000"
+                  value={editMinDoors ?? ""}
+                  onChange={(e) => setEditMinDoors(e.target.value ? Number(e.target.value) : null)}
+                  placeholder="e.g. 50+"
+                  className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Row 2b: Custom Decision-Maker Titles & Core Service Offerings */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs pt-0.5">
+            <div className="md:col-span-6 space-y-1.5">
               <label className="text-zinc-300 font-semibold block">
-                Min Doors / Units
+                Decision-Maker Titles (Comma-separated)
               </label>
               <input
-                type="number"
-                min="5"
-                max="5000"
-                value={editMinDoors ?? ""}
-                onChange={(e) => setEditMinDoors(e.target.value ? Number(e.target.value) : null)}
-                placeholder="e.g. 50+"
-                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
+                type="text"
+                value={editTargetTitles}
+                onChange={(e) => setEditTargetTitles(e.target.value)}
+                placeholder={
+                  isHvacActive
+                    ? "Owner, Founder, President, Operations Manager, Service Manager"
+                    : "Broker Owner, Founder, Managing Partner, Principal Broker, Director"
+                }
+                className="w-full bg-[#050507] border border-white/[0.1] rounded-xl px-3.5 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400"
               />
+              <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                {(isHvacActive
+                  ? ["Owner", "Founder", "President", "Operations Manager", "General Manager", "Service Manager"]
+                  : ["Broker Owner", "Founder", "Managing Partner", "Principal Broker", "Director", "Operations Manager"]
+                ).map((titleChip) => {
+                  const hasTitle = editTargetTitles
+                    .toLowerCase()
+                    .split(",")
+                    .map((s) => s.trim())
+                    .includes(titleChip.toLowerCase());
+                  return (
+                    <button
+                      key={titleChip}
+                      type="button"
+                      onClick={() => {
+                        const list = editTargetTitles
+                          .split(",")
+                          .map((s) => s.trim())
+                          .filter(Boolean);
+                        if (hasTitle) {
+                          setEditTargetTitles(
+                            list.filter((t) => t.toLowerCase() !== titleChip.toLowerCase()).join(", ")
+                          );
+                        } else {
+                          setEditTargetTitles([...list, titleChip].join(", "));
+                        }
+                      }}
+                      className={`px-2 py-0.5 rounded-md border text-[10px] font-medium transition cursor-pointer ${
+                        hasTitle
+                          ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+                          : "bg-white/[0.03] border-white/[0.08] text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >
+                      {hasTitle ? "✓ " : "+ "}
+                      {titleChip}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="md:col-span-6 space-y-1.5">
+              <label className="text-zinc-300 font-semibold block">
+                Core Service Offerings ({isHvacActive ? "HVAC Trade Focus" : "Real Estate Focus"})
+              </label>
+              <div className="flex flex-wrap items-center gap-1.5 p-2 rounded-xl bg-[#050507] border border-white/[0.1]">
+                {(isHvacActive
+                  ? [
+                      { key: "replacement", label: "AC & System Replacement" },
+                      { key: "installation", label: "New HVAC Installation" },
+                      { key: "repair", label: "AC & Heating Repair" },
+                      { key: "maintenance", label: "Maintenance Plans" },
+                      { key: "emergency", label: "24/7 Emergency Dispatch" },
+                      { key: "indoor_air_quality", label: "Indoor Air Quality / Ducts" },
+                    ]
+                  : [
+                      { key: "property_management", label: "Property Management" },
+                      { key: "str_vacation_rental", label: "Airbnb / Vacation Rentals" },
+                      { key: "residential_sales", label: "Residential Brokerage" },
+                      { key: "commercial_leasing", label: "Commercial CRE Leasing" },
+                      { key: "corporate_housing", label: "Corporate / Mid-Term Stays" },
+                    ]
+                ).map((srv) => {
+                  const active = selectedOfferings.includes(srv.key);
+                  return (
+                    <button
+                      key={srv.key}
+                      type="button"
+                      onClick={() => {
+                        setSelectedOfferings((prev) =>
+                          prev.includes(srv.key)
+                            ? prev.filter((k) => k !== srv.key)
+                            : [...prev, srv.key]
+                        );
+                      }}
+                      className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium transition cursor-pointer ${
+                        active
+                          ? "bg-white text-black font-bold border-white shadow-sm"
+                          : "bg-zinc-900/80 border-white/[0.08] text-zinc-300 hover:border-white/[0.2]"
+                      }`}
+                    >
+                      {active ? "✓ " : ""}
+                      {srv.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -1507,42 +1758,74 @@ export function LeadProspector({
             </div>
           </div>
 
-          {/* Row 4: High-Ticket Real Estate Quick-Fill Templates & Custom Presets */}
+          {/* Row 4: Vertical-Specific Quick-Fill Templates & Persistent Saved ICP Presets */}
           <div className="space-y-2 pt-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[10px] uppercase tracking-wider font-semibold text-zinc-500 mr-1">
-                Quick-Fill ICP Presets:
+                {isHvacActive ? "HVAC Quick-Fill Presets:" : "Real Estate Quick-Fill Presets:"}
               </span>
-              {[
-                {
-                  label: "Property Management (50+ Doors)",
-                  kw: "residential property management company, full service property management, single family property management, buildium property management, appfolio property management",
-                  sub: "property_management",
-                  bType: "both" as const,
-                  doors: 50,
-                },
-                {
-                  label: "Real Estate Brokerages & Teams",
-                  kw: "independent real estate brokerage, luxury real estate brokerage, real estate team broker owner, boutique real estate agency",
-                  sub: "residential_real_estate",
-                  bType: "residential" as const,
-                  doors: null,
-                },
-                {
-                  label: "STR & Vacation Rental Managers",
-                  kw: "vacation rental management company, short term rental property management, luxury cabin and villa management, direct booking vacation rentals",
-                  sub: "airbnb_str",
-                  bType: "residential" as const,
-                  doors: null,
-                },
-                {
-                  label: "Commercial Real Estate (CRE)",
-                  kw: "commercial real estate brokerage, commercial property management firm, retail and office leasing brokerage, industrial real estate broker",
-                  sub: "commercial_real_estate",
-                  bType: "commercial" as const,
-                  doors: null,
-                },
-              ].map((tpl) => {
+              {(isHvacActive
+                ? [
+                    {
+                      label: "Residential AC & Heating Replacement",
+                      kw: "residential HVAC contractor, AC replacement and installation company, heating and air conditioning company, heat pump installation company",
+                      sub: "hvac_replacement",
+                      bType: "residential" as const,
+                      doors: null,
+                      offerings: ["replacement", "installation"],
+                    },
+                    {
+                      label: "24/7 Emergency HVAC Dispatch",
+                      kw: "24 7 emergency HVAC repair company, after hours emergency AC repair, same day HVAC service contractor, emergency furnace repair company",
+                      sub: "hvac_emergency",
+                      bType: "both" as const,
+                      doors: null,
+                      offerings: ["repair", "emergency"],
+                    },
+                    {
+                      label: "Commercial HVAC & Refrigeration",
+                      kw: "commercial HVAC contractor, commercial refrigeration company, rooftop unit mechanical contractor, commercial chillers",
+                      sub: "commercial_hvac",
+                      bType: "commercial" as const,
+                      doors: null,
+                      offerings: ["commercial", "maintenance", "installation"],
+                    },
+                  ]
+                : [
+                    {
+                      label: "Property Management (50+ Doors)",
+                      kw: "residential property management company, full service property management, single family property management, buildium property management, appfolio property management",
+                      sub: "property_management",
+                      bType: "both" as const,
+                      doors: 50,
+                      offerings: ["property_management"],
+                    },
+                    {
+                      label: "Real Estate Brokerages & Teams",
+                      kw: "independent real estate brokerage, luxury real estate brokerage, real estate team broker owner, boutique real estate agency",
+                      sub: "residential_real_estate",
+                      bType: "residential" as const,
+                      doors: null,
+                      offerings: ["residential_sales"],
+                    },
+                    {
+                      label: "STR & Vacation Rental Managers",
+                      kw: "vacation rental management company, short term rental property management, luxury cabin and villa management, direct booking vacation rentals",
+                      sub: "airbnb_str",
+                      bType: "residential" as const,
+                      doors: null,
+                      offerings: ["str_vacation_rental"],
+                    },
+                    {
+                      label: "Commercial Real Estate (CRE)",
+                      kw: "commercial real estate brokerage, commercial property management firm, retail and office leasing brokerage, industrial real estate broker",
+                      sub: "commercial_real_estate",
+                      bType: "commercial" as const,
+                      doors: null,
+                      offerings: ["commercial_leasing"],
+                    },
+                  ]
+              ).map((tpl) => {
                 const isSelected = editSubNiche === tpl.sub && editKeywords === tpl.kw;
                 return (
                   <button
@@ -1553,6 +1836,7 @@ export function LeadProspector({
                       setEditSubNiche(tpl.sub);
                       setEditBusinessType(tpl.bType);
                       setEditMinDoors(tpl.doors);
+                      setSelectedOfferings(tpl.offerings);
                       setIsCustomSubNicheMode(false);
                       setSuccessBanner(`Applied & saved "${tpl.label}" ICP configuration.`);
                       if (!canEditRules) return;
@@ -1560,6 +1844,7 @@ export function LeadProspector({
                       const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
                       const kwsArr = tpl.kw.split(",").map((k) => k.trim()).filter(Boolean);
                       const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+                      const titlesArr = editTargetTitles.split(",").map((t) => t.trim()).filter(Boolean);
                       const res = await updateRuleTargetingAction({
                         states: statesArr.length > 0 ? statesArr : ["TX"],
                         cities: citiesArr,
@@ -1571,7 +1856,9 @@ export function LeadProspector({
                         gate,
                         minEmployees: editMinEmployees,
                         maxEmployees: editMaxEmployees,
-                        minDoors: tpl.doors,
+                        minDoors: isHvacActive ? null : tpl.doors,
+                        targetTitles: titlesArr,
+                        serviceOfferings: tpl.offerings,
                       });
                       if (res.ok && res.rule) {
                         setActiveRule(res.rule);
@@ -1594,62 +1881,19 @@ export function LeadProspector({
                 );
               })}
 
-              {/* Render Saved Custom Presets */}
-              {customPresets.map((cp) => {
-                const isSelected = editSubNiche === cp.sub && editKeywords === cp.kw;
+              {/* Render DB-Persisted Saved ICP History for Active Vertical */}
+              {savedPresets.map((cp) => {
+                const isSelected = selectedPresetId === cp.id;
                 return (
                   <div
                     key={cp.id}
-                    onClick={async () => {
-                      setEditKeywords(cp.kw);
-                      setEditSubNiche(cp.sub);
-                      setEditBusinessType(cp.bType);
-                      setEditMinDoors(cp.doors);
-                      if (
-                        ![
-                          "",
-                          "property_management",
-                          "airbnb_str",
-                          "residential_real_estate",
-                          "commercial_real_estate",
-                        ].includes(cp.sub)
-                      ) {
-                        setIsCustomSubNicheMode(true);
-                      }
-                      setSuccessBanner(`Applied custom ICP preset "${cp.label}".`);
-                      if (!canEditRules) return;
-                      const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-                      const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
-                      const kwsArr = cp.kw.split(",").map((k) => k.trim()).filter(Boolean);
-                      const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
-                      const res = await updateRuleTargetingAction({
-                        states: statesArr.length > 0 ? statesArr : ["TX"],
-                        cities: citiesArr,
-                        minScore: editMinScore,
-                        keywords: kwsArr,
-                        negativeKeywords: negsArr,
-                        subNiche: cp.sub,
-                        businessType: cp.bType,
-                        gate,
-                        minEmployees: editMinEmployees,
-                        maxEmployees: editMaxEmployees,
-                        minDoors: cp.doors,
-                      });
-                      if (res.ok && res.rule) {
-                        setActiveRule(res.rule);
-                        const refreshed = await getLatestReviewLeadsAction();
-                        if (refreshed.ok && refreshed.leads) {
-                          setLeads(refreshed.leads as any);
-                          setTotalReviewCount(refreshed.totalCount || refreshed.leads.length);
-                          setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
-                        }
-                      }
-                    }}
+                    onClick={() => handleApplySavedPreset(cp)}
                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] transition cursor-pointer ${
                       isSelected
                         ? "bg-white text-black font-bold border-white shadow-sm"
                         : "border-cyan-500/30 bg-cyan-950/20 text-cyan-200 hover:bg-cyan-950/40"
                     }`}
+                    title={`States: ${(cp.states || []).join(", ")} | Keywords: ${(cp.keywords || []).slice(0, 2).join(", ")}`}
                   >
                     <Sparkles className="w-2.5 h-2.5" />
                     <span>{cp.label}</span>
@@ -1657,7 +1901,7 @@ export function LeadProspector({
                       type="button"
                       onClick={(e) => handleDeleteCustomPreset(cp.id, e)}
                       className="text-zinc-400 hover:text-rose-400 ml-0.5 p-0.5 rounded cursor-pointer"
-                      title="Delete preset"
+                      title="Delete saved preset"
                     >
                       <X className="w-2.5 h-2.5" />
                     </button>
@@ -1665,15 +1909,15 @@ export function LeadProspector({
                 );
               })}
 
-              {/* Save Current ICP Button */}
+              {/* Save Current ICP Set Button */}
               {!showSavePresetInput ? (
                 <button
                   type="button"
                   onClick={() => setShowSavePresetInput(true)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-dashed border-white/[0.2] hover:border-white/[0.4] text-zinc-400 hover:text-zinc-200 text-[11px] font-medium transition cursor-pointer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-dashed border-emerald-500/40 hover:border-emerald-400 text-emerald-300 hover:text-emerald-200 text-[11px] font-semibold transition cursor-pointer"
                 >
                   <Plus className="w-3 h-3" />
-                  <span>Save ICP as Preset</span>
+                  <span>Save Current ICP Set</span>
                 </button>
               ) : null}
             </div>
@@ -1683,7 +1927,11 @@ export function LeadProspector({
               <div className="flex items-center gap-2 p-2 rounded-xl bg-black/60 border border-white/[0.15] max-w-md">
                 <input
                   type="text"
-                  placeholder="Enter preset name (e.g. Austin Luxury Homes)"
+                  placeholder={
+                    isHvacActive
+                      ? "Preset name (e.g. Texas Residential HVAC 5-50)"
+                      : "Preset name (e.g. My Saved Real Estate ICP)"
+                  }
                   value={presetLabelInput}
                   onChange={(e) => setPresetLabelInput(e.target.value)}
                   className="flex-1 bg-transparent text-xs text-white placeholder-zinc-500 focus:outline-none font-medium px-2 py-1"
@@ -1691,11 +1939,11 @@ export function LeadProspector({
                 />
                 <button
                   type="button"
-                  disabled={!presetLabelInput.trim()}
+                  disabled={!presetLabelInput.trim() || savingPreset}
                   onClick={handleSaveCustomPreset}
                   className="px-3 py-1 rounded-lg bg-white text-black text-[11px] font-bold hover:bg-zinc-200 disabled:opacity-40 cursor-pointer"
                 >
-                  Save
+                  {savingPreset ? "Saving..." : "Save"}
                 </button>
                 <button
                   type="button"
@@ -1718,21 +1966,25 @@ export function LeadProspector({
             <div>
               <div className="text-xs font-bold text-white flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span>Must-Have Quality Gate (Strict CRM Entry Requirements)</span>
+                <span>Qualification Criteria &amp; Must-Have Gate</span>
               </div>
               <p className="text-[11px] text-zinc-400 mt-0.5">
-                Select what every lead <strong className="text-zinc-200">must have</strong>. Any company missing a selected item is automatically rejected and never enters your CRM.
+                Select what every {isHvacActive ? "HVAC" : "Real Estate"} lead <strong className="text-zinc-200">must have</strong> to qualify and enter your CRM.
               </p>
             </div>
             <span className="text-[11px] text-emerald-400 font-semibold shrink-0">
-              {GATE_FIELDS.filter((f) => gate[f]).length + (gate.customMustHaves?.length || 0)} Mandatory Rules Active
+              {GATE_FIELDS.filter((f) => !(isHvacActive && f === "requireHighValueProperty") && gate[f]).length + (gate.customMustHaves?.length || 0)} Mandatory Rules Active
             </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
-            {GATE_FIELDS.map((field) => {
+            {GATE_FIELDS.filter((f) => !(isHvacActive && f === "requireHighValueProperty")).map((field) => {
               const active = gate[field];
               const meta = GATE_META[field];
+              const displayLabel =
+                isHvacActive && field === "requireBleedingAds"
+                  ? "Active Ad Spend (Google Ads)"
+                  : meta.label;
               return (
                 <button
                   key={field}
@@ -1755,7 +2007,7 @@ export function LeadProspector({
                   >
                     {active && <Check className="w-2.5 h-2.5 stroke-[3]" />}
                   </span>
-                  <span>{meta.label}</span>
+                  <span>{displayLabel}</span>
                   {active && (
                     <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold">
                       Must

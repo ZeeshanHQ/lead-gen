@@ -309,47 +309,13 @@ export function LoginForm({ needsSetup }: { needsSetup: boolean }) {
         ) : (
           /* Standard Invitation-Only Sign In (No Public Registration) */
           <div className="space-y-4">
-            {/* Sign-in Method Tabs */}
-            <div className="grid grid-cols-2 gap-1 p-1 bg-black/40 rounded-xl border border-zinc-800 text-center">
-              <button
-                type="button"
-                onClick={() => {
-                  setSignInMethod("code");
-                  setError(null);
-                }}
-                className={`py-2 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                  signInMethod === "code"
-                    ? "bg-zinc-800 text-white shadow-sm"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                <KeyRound className="w-3.5 h-3.5" />
-                <span>6-Digit Code</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSignInMethod("password");
-                  setError(null);
-                }}
-                className={`py-2 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                  signInMethod === "password"
-                    ? "bg-zinc-800 text-white shadow-sm"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                <Lock className="w-3.5 h-3.5" />
-                <span>Password</span>
-              </button>
-            </div>
-
             {signInMethod === "code" ? (
               otpStep === "email" ? (
                 <form onSubmit={handleRequestOtp} className="space-y-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-zinc-300 flex items-center justify-between">
-                      <span>Invited Email Address</span>
-                      <span className="text-zinc-500 text-[10px]">Invitation Required</span>
+                      <span>Email Address</span>
+                      <span className="text-zinc-500 text-[10px]">Workspace Access</span>
                     </label>
                     <div className="relative">
                       <Mail className="w-4 h-4 text-zinc-500 absolute left-3.5 top-3" />
@@ -373,12 +339,12 @@ export function LoginForm({ needsSetup }: { needsSetup: boolean }) {
                     {isPending ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Generating Code...</span>
+                        <span>Continuing...</span>
                       </>
                     ) : (
                       <>
-                        <KeyRound className="w-3.5 h-3.5" />
-                        <span>Get 6-Digit Code</span>
+                        <span>Continue</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
                       </>
                     )}
                   </button>

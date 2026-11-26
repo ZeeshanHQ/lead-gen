@@ -135,6 +135,7 @@ export const ruleConfigSchema = z.object({
     decisionMakerNameRequired: z.boolean(),
     directPhoneRequired: z.boolean(),
     businessEmailRequired: z.boolean(),
+    targetTitles: z.array(z.string()).optional(),
   }),
   /** Data every lead must carry to count as FULLY QUALIFIED (see domain/completeness). */
   completeness: z
@@ -497,7 +498,17 @@ export function evaluateRule(company: EvalCompany, rule: RuleConfig): RuleEvalua
   }
 
   // --- Contact requirements
-  const dms = company.contacts.filter((c) => c.verified && isDecisionMaker(c.roleClass));
+  const customTitles = (rule.contacts.targetTitles || [])
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  const matchesCustomTitle = (title: string | null | undefined) => {
+    if (!title || customTitles.length === 0) return false;
+    const tl = title.toLowerCase();
+    return customTitles.some((ct) => tl.includes(ct));
+  };
+  const dms = company.contacts.filter(
+    (c) => c.verified && (isDecisionMaker(c.roleClass) || matchesCustomTitle(c.title))
+  );
   const contactCheck = (id: string, label: string, ok: boolean, detail: string): RuleCheck => ({
     id,
     label,
@@ -507,7 +518,7 @@ export function evaluateRule(company: EvalCompany, rule: RuleConfig): RuleEvalua
   });
   const c = rule.contacts;
   if (c.ownerRequired) {
-    const owner = dms.find((d) => isPrimaryDecisionMaker(d.roleClass));
+    const owner = dms.find((d) => isPrimaryDecisionMaker(d.roleClass) || matchesCustomTitle(d.title));
     checks.push(contactCheck("owner", "Owner / president verified", !!owner, owner?.name ?? ""));
   }
   if (c.decisionMakerNameRequired) {

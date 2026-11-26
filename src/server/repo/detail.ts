@@ -8,6 +8,7 @@ import {
   contacts,
   evidence,
   leadScores,
+  markets,
 } from "../db/schema";
 import { pickBestContact } from "../domain/contact";
 import { ALL_FACT_KEYS, FACT_LABELS, type FactKey, type FactMap } from "../domain/facts";
@@ -92,37 +93,127 @@ export interface DrawerFact {
   }[];
 }
 
-const QUESTIONS: Partial<Record<FactKey, string>> = {
-  replacement: "Why did the system mark this company as a replacement HVAC company?",
-  installation: "Why did the system mark this company as doing HVAC installation?",
-  financing: "Why did the system mark financing as available?",
-  residential: "Why did the system mark this company as residential?",
-  employees: "Where does the employee-size signal come from?",
-  software: "Where does the software signal come from?",
-  hvac: "Why is this company classified as HVAC?",
-};
+const HVAC_ONLY_KEYS = new Set<string>([
+  "hvac",
+  "replacement",
+  "installation",
+  "indoor_air_quality",
+  "multiple_technicians",
+  "maintenance_plans",
+]);
 
-/** Evidence grouped by field for the Evidence Drawer. Includes UNKNOWN facts honestly: no evidence → no row. */
+const REAL_ESTATE_ONLY_KEYS = new Set<string>([
+  "str_vacation_rental",
+  "casual_host_only",
+  "doors_managed",
+  "avg_property_value",
+  "property_mgmt_software",
+  "zillow_advertiser",
+  "luxury_high_value",
+]);
+
+function getFactQuestion(
+  field: string,
+  label: string,
+  isRealEstate: boolean,
+  isHvac: boolean
+): string {
+  switch (field) {
+    case "replacement":
+      return isHvac
+        ? "Why did the system mark this company as offering HVAC system replacement?"
+        : `Where does the "${label}" signal come from?`;
+    case "installation":
+      return isHvac
+        ? "Why did the system mark this company as doing HVAC installation?"
+        : `Where does the "${label}" signal come from?`;
+    case "financing":
+      return "Where was customer financing verified?";
+    case "residential":
+      return isRealEstate
+        ? "Why did the system mark this company as serving residential real estate / properties?"
+        : "Why did the system mark this company as residential?";
+    case "commercial":
+      return isRealEstate
+        ? "Why did the system mark this company as serving commercial real estate?"
+        : "Why did the system mark this company as commercial?";
+    case "employees":
+      return "Where does the team / company size signal come from?";
+    case "software":
+      return "Where does the software / tech-stack signal come from?";
+    case "hvac":
+      return isHvac
+        ? "Why is this company verified as an HVAC contractor?"
+        : `Where does the "${label}" verification come from?`;
+    case "niche_verified":
+      return isHvac
+        ? "How was this lead verified as an authentic HVAC contractor?"
+        : isRealEstate
+        ? "How was this lead verified as an authentic Real Estate / Property operator?"
+        : "How was target industry relevance verified?";
+    case "website_alive":
+      return "Was the company website reachable during live verification?";
+    default:
+      return `Where does "${label}" come from?`;
+  }
+}
+
+/** Evidence grouped by field for the Evidence Drawer. Only shows real verified/recorded signals with zero dump rows. */
 export async function getEvidenceDrawer(db: Db, companyId: string) {
   const [c] = await db.select().from(companies).where(eq(companies.id, companyId)).limit(1);
   if (!c) return null;
-  const all = await db.select().from(evidence).where(eq(evidence.companyId, companyId)).orderBy(desc(evidence.retrievedAt));
-  const facts = (c.facts ?? {}) as FactMap;
 
-  const fields = new Set<string>(all.map((e) => e.field));
-  for (const k of ALL_FACT_KEYS) if (facts[k]) fields.add(k);
+  const [all, [marketRow]] = await Promise.all([
+    db.select().from(evidence).where(eq(evidence.companyId, companyId)).orderBy(desc(evidence.retrievedAt)),
+    db.select({ key: markets.key, name: markets.name, config: markets.config }).from(markets).where(eq(markets.id, c.marketId)).limit(1),
+  ]);
+
+  const marketMeta = `${marketRow?.key || ""} ${marketRow?.name || ""} ${(marketRow?.config as any)?.category || ""}`.toLowerCase();
+  const isHvac = /\b(hvac|heating|air\s*conditioning|cooling)\b/i.test(marketMeta);
+  const isRealEstate = /\b(real\s*estate|realestate|airbnb|str|property|rental)\b/i.test(marketMeta) && !isHvac;
+
+  const facts = (c.facts ?? {}) as FactMap;
+  const rowsByField = new Map<string, typeof all>();
+  for (const row of all) {
+    const list = rowsByField.get(row.field) ?? [];
+    list.push(row);
+    rowsByField.set(row.field, list);
+  }
+
+  const fields = new Set<string>();
+  for (const [f, rows] of rowsByField.entries()) {
+    if (rows.length > 0) fields.add(f);
+  }
+  for (const k of ALL_FACT_KEYS) {
+    const entry = facts[k];
+    if (entry && entry.value && entry.value !== "UNKNOWN" && entry.value !== "NO") {
+      fields.add(k);
+    }
+  }
+
+  // Filter out off-niche legacy dump fields so Real Estate never shows HVAC details (and vice versa)
+  const cleanFields = Array.from(fields).filter((field) => {
+    const entry = facts[field as FactKey];
+    const isHuman = entry?.provenance === "HUMAN_CONFIRMED";
+    if (isRealEstate && HVAC_ONLY_KEYS.has(field) && !isHuman) return false;
+    if (isHvac && REAL_ESTATE_ONLY_KEYS.has(field) && !isHuman) return false;
+    // Never render a field with zero evidence unless it has a genuine non-UNKNOWN/non-NO fact value
+    const rows = rowsByField.get(field) ?? [];
+    if (rows.length === 0 && (!entry || entry.value === "UNKNOWN" || entry.value === "NO")) return false;
+    return true;
+  });
 
   const identity = ["company_name", "website", "company_phone", "address", "city", "state"];
-  const factOrder = [...ALL_FACT_KEYS as readonly string[]];
+  const factOrder = [...(ALL_FACT_KEYS as readonly string[])];
   const ordered = [
-    ...factOrder.filter((f) => fields.has(f)),
-    ...identity.filter((f) => fields.has(f)),
-    ...[...fields].filter((f) => !factOrder.includes(f) && !identity.includes(f)).sort(),
+    ...factOrder.filter((f) => cleanFields.includes(f)),
+    ...identity.filter((f) => cleanFields.includes(f)),
+    ...cleanFields.filter((f) => !factOrder.includes(f) && !identity.includes(f)).sort(),
   ];
 
   const result: DrawerFact[] = ordered.map((field) => {
     const entry = facts[field as FactKey];
-    const rows = all.filter((e) => e.field === field);
+    const rows = rowsByField.get(field) ?? [];
     const label = (FACT_LABELS as Record<string, string>)[field] ?? field.replace(/_/g, " ");
     return {
       field,
@@ -130,7 +221,7 @@ export async function getEvidenceDrawer(db: Db, companyId: string) {
       value: entry?.value ?? rows.find((r) => r.status === "ACTIVE")?.value ?? "UNKNOWN",
       confidence: entry?.confidence ?? null,
       provenance: entry?.provenance ?? null,
-      question: QUESTIONS[field as FactKey] ?? `Where does "${label}" come from?`,
+      question: getFactQuestion(field, label, isRealEstate, isHvac),
       evidence: rows.map((e) => ({
         id: e.id,
         value: e.value,

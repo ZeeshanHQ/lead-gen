@@ -23,6 +23,7 @@ import {
   saveCallerShiftConfigAction,
 } from "./actions";
 import { type TeamMember, ROLE_PRESETS } from "@/server/domain/team";
+import { switchMarketAction } from "@/app/actions/tenant";
 import type { LifecycleStatus } from "@/server/domain/lifecycle";
 import {
   getSmartFieldsForNiche,
@@ -118,6 +119,7 @@ interface CallerClientProps {
   nicheCategory?: string;
   initialCustomColumns?: CustomCrmColumn[];
   marketId?: string;
+  verticalMarkets?: Array<{ id: string; key: string; name: string; count: number }>;
   dialerConfig?: DialerConfig;
   initialShiftConfig?: Partial<CallerShiftConfig>;
   activeActorName?: string;
@@ -202,6 +204,7 @@ export function CallerClient({
   nicheCategory,
   initialCustomColumns = [],
   marketId,
+  verticalMarkets = [],
   dialerConfig = DEFAULT_DIALER_CONFIG,
   initialShiftConfig,
   activeActorName = "Sales Caller",
@@ -1552,7 +1555,33 @@ export function CallerClient({
                 {isOwner ? "Calling Console" : `My Calling Console (${activeMember?.name || "Caller"})`}
               </span>
               <span className="text-zinc-700">|</span>
-              <span className="text-xs font-medium text-zinc-300">{nicheName}</span>
+              {canManageSettings && verticalMarkets.length > 1 ? (
+                <span className="inline-flex items-center gap-0.5 rounded-full bg-black/50 p-0.5 border border-white/10">
+                  {verticalMarkets.map((vm) => {
+                    const isActiveVm = vm.id === marketId;
+                    return (
+                      <button
+                        key={vm.id}
+                        type="button"
+                        onClick={async () => {
+                          if (isActiveVm) return;
+                          await switchMarketAction(vm.id);
+                          router.refresh();
+                        }}
+                        className={`px-2 py-0.5 rounded-full text-[11px] font-semibold transition cursor-pointer ${
+                          isActiveVm
+                            ? "bg-white text-black shadow-sm"
+                            : "text-zinc-400 hover:text-white"
+                        }`}
+                      >
+                        {vm.name}
+                      </button>
+                    );
+                  })}
+                </span>
+              ) : (
+                <span className="text-xs font-medium text-zinc-300">{nicheName}</span>
+              )}
               {canManageSettings && (
                 <>
                   <span className="text-zinc-700">|</span>

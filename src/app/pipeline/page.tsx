@@ -39,7 +39,7 @@ export default async function PipelinePage({
     db
       .select()
       .from(companies)
-      .where(ne(companies.dealStage, "NONE"))
+      .where(and(eq(companies.marketId, market.id), ne(companies.dealStage, "NONE")))
       .orderBy(desc(companies.updatedAt)),
     db
       .select({
@@ -61,11 +61,7 @@ export default async function PipelinePage({
         website: companies.website,
       })
       .from(companies)
-      .where(
-        isOwnerOrManager
-          ? inArray(companies.status, POST_APPROVAL)
-          : and(eq(companies.marketId, market.id), inArray(companies.status, POST_APPROVAL))
-      )
+      .where(and(eq(companies.marketId, market.id), inArray(companies.status, POST_APPROVAL)))
       .orderBy(desc(companies.createdAt)),
     db
       .select({

@@ -154,11 +154,26 @@ const CASUAL_HOST_REGEX =
 export function extractServices(pages: CrawledPage[], ruleConfig?: RuleConfig): FactCandidate[] {
   const discovered = new Map<string, FactCandidate>();
 
+  const targetKeywords = ruleConfig?.discovery?.keywords ?? [];
+  const subNicheVal = ruleConfig?.discovery?.subNiche ?? "";
+  const joinedKeywords = `${targetKeywords.join(" ")} ${subNicheVal}`.toLowerCase();
+
+  const isHvacTarget = /\b(hvac|heating|air\s*conditioning|cooling|furnace|heat\s*pump|ac\s*replacement|refrigeration|ductless|mini\s*split)\b/i.test(
+    joinedKeywords
+  );
+  const isRealEstateOrStrTarget =
+    /\b(real\s*estate|realtor|realty|broker|property\s*management|vacation\s*rental|short[- ]term\s*rental|airbnb|vrbo|co-?host|corporate\s*housing|furnished|multifamily|leasing|cabin|villa|beach\s*house)\b/i.test(
+      joinedKeywords
+    ) && !isHvacTarget;
+
+  const HVAC_SKIP_ON_RE = new Set(["hvac", "replacement", "installation", "repair", "indoor_air_quality"]);
+
   for (const page of pages) {
     const text = page.cleanText;
     if (!text) continue;
 
     for (const rule of SERVICE_RULES) {
+      if (isRealEstateOrStrTarget && HVAC_SKIP_ON_RE.has(rule.key)) continue;
       if (discovered.has(rule.key)) continue;
 
       for (const pattern of rule.patterns) {
@@ -184,9 +199,6 @@ export function extractServices(pages: CrawledPage[], ruleConfig?: RuleConfig): 
   const primaryUrl = pages[0]?.url || "";
 
   // Check if user is explicitly searching for a marketing/web agency
-  const targetKeywords = ruleConfig?.discovery?.keywords ?? [];
-  const subNicheVal = ruleConfig?.discovery?.subNiche ?? "";
-  const joinedKeywords = `${targetKeywords.join(" ")} ${subNicheVal}`.toLowerCase();
   const userWantsMarketingOrTech =
     /\b(web\s*design|web\s*dev|marketing\s*agency|seo|digital\s*marketing|software|saas|it\s*services|advertising\s*agency)\b/i.test(
       joinedKeywords

@@ -565,103 +565,7 @@ function AppShellInner({
           </button>
         </div>
 
-        {/* Compact Niche Selector — ONLY shown if member has permission to switch/manage niches */}
-        {!collapsed && canManageNiches && (
-          <div className="px-3 py-2.5 border-b border-[#1f1f23] bg-[#09090b]/40">
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => {
-                  setSidebarNicheOpen(!sidebarNicheOpen);
-                  setHeaderNicheOpen(false);
-                  setTenantDropdownOpen(false);
-                }}
-                className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg bg-[#121215] border border-zinc-800/90 hover:border-zinc-700 text-left transition-all shadow-sm"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span className="text-xs font-semibold text-white truncate">
-                    {currentNicheName}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
-                    {allowedMarketsForMember.length}
-                  </span>
-                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
-                </div>
-              </button>
-
-              {sidebarNicheOpen && (
-                <div className="absolute top-full left-0 mt-1.5 w-64 z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-2 space-y-1.5 max-h-[380px] overflow-y-auto">
-                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 flex items-center justify-between">
-                    <span>Switch Niche</span>
-                    <span className="text-[10px] text-zinc-500">{allowedMarketsForMember.length} available</span>
-                  </div>
-
-                  <div className="space-y-1">
-                    {allowedMarketsForMember.map((n) => {
-                      const isCurrent = activeMarket ? activeMarket.id === n.id : currentNicheName === n.name;
-                      return (
-                        <button
-                          key={n.id}
-                          type="button"
-                          onClick={() => handleSwitchNiche(n.id)}
-                          className={cn(
-                            "w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs transition-all",
-                            isCurrent
-                              ? "bg-zinc-800 text-white font-semibold border border-zinc-700"
-                              : "text-zinc-300 hover:bg-zinc-800/60 border border-transparent"
-                          )}
-                        >
-                          <div className="min-w-0 pr-2 flex items-center gap-1.5">
-                            {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />}
-                            <span className="truncate">{n.name}</span>
-                          </div>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-400 shrink-0 font-medium">
-                            {n.approvedCount ?? n.leadCount ?? 0}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="pt-1.5 mt-1 border-t border-zinc-800 flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSidebarNicheOpen(false);
-                        setNicheModalTab("create");
-                        setModalError(null);
-                        setModalSuccess(null);
-                        setNicheModalOpen(true);
-                      }}
-                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-white hover:bg-zinc-200 text-black text-[11px] font-bold transition-colors"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>New Niche</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSidebarNicheOpen(false);
-                        setNicheModalTab("manage");
-                        setModalError(null);
-                        setModalSuccess(null);
-                        setNicheModalOpen(true);
-                      }}
-                      className="px-2.5 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 hover:text-white text-[11px] font-medium transition-colors"
-                      title="Manage Niches"
-                    >
-                      <Edit3 className="w-3 h-3" />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        {/* Compact Niche Selector removed cleanly per dashboard simplification */}
 
         {/* Navigation Groups (Strictly filtered by liveMember permissions) */}
         <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
@@ -808,7 +712,7 @@ function AppShellInner({
             <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#121215]/80 backdrop-blur-md px-3 py-1 shadow-sm">
               <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
               <span className="text-xs font-semibold text-white truncate max-w-[130px] sm:max-w-[200px]">
-                {currentNicheName}
+                ASTRAVENTA
               </span>
               <span className="text-zinc-600">/</span>
               <span className="text-xs font-bold text-zinc-300 tracking-tight">
@@ -817,59 +721,8 @@ function AppShellInner({
             </div>
           </div>
 
-          {/* Right Header: Niche Switcher (Only if permitted) & User Menu */}
+          {/* Right Header: User Menu */}
           <div className="flex items-center gap-3">
-            {showNicheSwitcher && (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHeaderNicheOpen(!headerNicheOpen);
-                    setSidebarNicheOpen(false);
-                    setMemberDropdownOpen(false);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#141418] hover:bg-[#1a1a20] border border-white/10 text-xs text-zinc-300 hover:text-white transition shadow-sm"
-                  title="Active niche"
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                  <span className="font-medium text-white max-w-[130px] sm:max-w-[180px] truncate">{currentNicheName}</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
-                </button>
-
-                {headerNicheOpen && (
-                  <div className="absolute right-0 top-full mt-1.5 w-64 z-50 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-2 space-y-1 max-h-80 overflow-y-auto">
-                    <div className="px-2 py-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center justify-between">
-                      <span>Switch Niche</span>
-                      <Zap className="w-3 h-3 text-zinc-400" />
-                    </div>
-                    {allowedMarketsForMember.map((n) => {
-                      const isCurrent = activeMarket ? activeMarket.id === n.id : currentNicheName === n.name;
-                      return (
-                        <button
-                          key={n.id}
-                          type="button"
-                          onClick={() => {
-                            handleSwitchNiche(n.id);
-                            setHeaderNicheOpen(false);
-                          }}
-                          className={cn(
-                            "w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left text-xs transition",
-                            isCurrent
-                              ? "bg-zinc-800 text-white font-medium"
-                              : "text-zinc-300 hover:bg-zinc-800/60"
-                          )}
-                        >
-                          <span className="truncate pr-2">{n.name}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-zinc-400 shrink-0 font-medium">
-                            {n.approvedCount ?? n.leadCount ?? 0}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
 
 
             {/* Notifications Bell Dropdown */}

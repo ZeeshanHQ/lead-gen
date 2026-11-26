@@ -5,7 +5,7 @@ import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { getDb, type Db } from "@/server/db/client";
 import { companies, contacts, leadScores, researchRuns, sources } from "@/server/db/schema";
 import { createCandidate, type CandidateInput } from "@/server/repo/companies";
-import { getActor } from "@/server/repo/settings";
+import { getActor, getSetting, setSetting } from "@/server/repo/settings";
 import { getActiveContext } from "@/server/repo/markets";
 import { getActiveTeamMember } from "@/server/repo/team";
 import { resolveGate, passesLeadRowGate, type LeadGate } from "@/server/domain/gate";
@@ -299,6 +299,104 @@ export async function getDiscoveryProgressAction(runId: string, sinceIso?: strin
   }
 }
 
+export interface SavedIcpPreset {
+  id: string;
+  label: string;
+  marketKey: string;
+  states: string[];
+  cities: string[];
+  keywords: string[];
+  negativeKeywords: string[];
+  subNiche: string;
+  businessType: "both" | "residential" | "commercial";
+  minEmployees: number | null;
+  maxEmployees: number | null;
+  minDoors: number | null;
+  targetTitles: string[];
+  serviceOfferings: string[];
+  minScore: number;
+  gate?: Partial<LeadGate>;
+  createdAt?: string;
+}
+
+const SAVED_PRESETS_SETTING_KEY = "saved_icp_presets_by_market";
+
+export async function getSavedIcpPresetsAction(marketKey: string): Promise<{
+  ok: boolean;
+  presets: SavedIcpPreset[];
+}> {
+  try {
+    const db = await getDb();
+    const map =
+      (await getSetting<Record<string, SavedIcpPreset[]>>(db, SAVED_PRESETS_SETTING_KEY)) || {};
+    return {
+      ok: true,
+      presets: Array.isArray(map[marketKey]) ? map[marketKey] : [],
+    };
+  } catch {
+    return { ok: false, presets: [] };
+  }
+}
+
+export async function saveIcpPresetAction(marketKey: string, preset: SavedIcpPreset): Promise<{
+  ok: boolean;
+  presets?: SavedIcpPreset[];
+  error?: string;
+}> {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const map =
+      (await getSetting<Record<string, SavedIcpPreset[]>>(db, SAVED_PRESETS_SETTING_KEY)) || {};
+    const existing = Array.isArray(map[marketKey]) ? map[marketKey] : [];
+    const nextList = [
+      ...existing.filter((p) => p.id !== preset.id),
+      { ...preset, marketKey, createdAt: preset.createdAt || new Date().toISOString() },
+    ];
+    await setSetting(db, SAVED_PRESETS_SETTING_KEY, { ...map, [marketKey]: nextList }, actor);
+    revalidatePath("/discover");
+    return { ok: true, presets: nextList };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to save preset" };
+  }
+}
+
+export async function deleteIcpPresetAction(marketKey: string, presetId: string): Promise<{
+  ok: boolean;
+  presets?: SavedIcpPreset[];
+  error?: string;
+}> {
+  try {
+    const db = await getDb();
+    const actor = await getActor(db);
+    const map =
+      (await getSetting<Record<string, SavedIcpPreset[]>>(db, SAVED_PRESETS_SETTING_KEY)) || {};
+    const existing = Array.isArray(map[marketKey]) ? map[marketKey] : [];
+    const nextList = existing.filter((p) => p.id !== presetId);
+    await setSetting(db, SAVED_PRESETS_SETTING_KEY, { ...map, [marketKey]: nextList }, actor);
+    revalidatePath("/discover");
+    return { ok: true, presets: nextList };
+  } catch (err: any) {
+    return { ok: false, error: err.message || "Failed to delete preset" };
+  }
+}
+
+const VALID_HVAC_SERVICE_KEYS = new Set([
+  "replacement",
+  "installation",
+  "repair",
+  "maintenance",
+  "emergency",
+  "indoor_air_quality",
+]);
+
+function extractServiceKeysFromOfferings(offerings?: string[]): string[] {
+  if (!offerings || offerings.length === 0) return [];
+  return offerings
+    .map((o) => o.trim().toLowerCase())
+    .filter((o) => VALID_HVAC_SERVICE_KEYS.has(o));
+}
+
 export async function startLeadDiscoveryAction(
   options: {
     targetCount?: number;
@@ -313,6 +411,8 @@ export async function startLeadDiscoveryAction(
     minEmployees?: number | null;
     maxEmployees?: number | null;
     minDoors?: number | null;
+    targetTitles?: string[];
+    serviceOfferings?: string[];
   } = {}
 ) {
   const startedAtMs = Date.now();
@@ -391,18 +491,40 @@ export async function startLeadDiscoveryAction(
         options.minEmployees !== undefined ||
         options.maxEmployees !== undefined ||
         options.minDoors !== undefined ||
+        options.targetTitles !== undefined ||
+        options.serviceOfferings !== undefined ||
         options.gate !== undefined)
     ) {
-      const isHvacKw = keywordsToUse.some((k) =>
-        /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k)
-      );
+      const isHvacKw =
+        market.key === "hvac" ||
+        keywordsToUse.some((k) =>
+          /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k)
+        );
+      const selectedServiceKeys = extractServiceKeysFromOfferings(options.serviceOfferings);
+      const targetTitlesToUse =
+        options.targetTitles !== undefined
+          ? options.targetTitles
+          : ruleConfig?.contacts?.targetTitles || [];
+      const serviceIntentsToUse =
+        options.serviceOfferings !== undefined
+          ? options.serviceOfferings
+          : ruleConfig?.discovery?.serviceIntents || (isHvacKw ? ["replacement", "installation"] : []);
+
       const previousRuleJson = JSON.stringify(defaultRule.config ?? {});
       const nextRuleConfig = {
         ...ruleConfig,
         businessType: businessTypeToUse,
         services: {
           ...ruleConfig.services,
-          requiredAnyOf: isHvacKw ? ruleConfig.services?.requiredAnyOf || ["replacement", "installation"] : [],
+          requiredAnyOf: isHvacKw
+            ? selectedServiceKeys.length > 0
+              ? selectedServiceKeys
+              : ruleConfig.services?.requiredAnyOf || ["replacement", "installation"]
+            : [],
+        },
+        contacts: {
+          ...ruleConfig.contacts,
+          targetTitles: targetTitlesToUse,
         },
         geography: {
           ...ruleConfig.geography,
@@ -414,6 +536,7 @@ export async function startLeadDiscoveryAction(
           keywords: keywordsToUse,
           negativeKeywords: negativeKeywordsToUse,
           subNiche: subNicheToUse,
+          serviceIntents: serviceIntentsToUse,
           strictNicheMatch: true,
         },
         scoring: {
@@ -611,6 +734,8 @@ export async function runLeadDiscoveryAction(
     minEmployees?: number | null;
     maxEmployees?: number | null;
     minDoors?: number | null;
+    targetTitles?: string[];
+    serviceOfferings?: string[];
   } = {}
 ) {
   const startedAtMs = Date.now();
@@ -689,17 +814,39 @@ export async function runLeadDiscoveryAction(
         options.minEmployees !== undefined ||
         options.maxEmployees !== undefined ||
         options.minDoors !== undefined ||
+        options.targetTitles !== undefined ||
+        options.serviceOfferings !== undefined ||
         options.gate !== undefined)
     ) {
-      const isHvacKw = keywordsToUse.some((k) =>
-        /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k)
-      );
+      const isHvacKw =
+        market.key === "hvac" ||
+        keywordsToUse.some((k) =>
+          /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k)
+        );
+      const selectedServiceKeys = extractServiceKeysFromOfferings(options.serviceOfferings);
+      const targetTitlesToUse =
+        options.targetTitles !== undefined
+          ? options.targetTitles
+          : ruleConfig?.contacts?.targetTitles || [];
+      const serviceIntentsToUse =
+        options.serviceOfferings !== undefined
+          ? options.serviceOfferings
+          : ruleConfig?.discovery?.serviceIntents || (isHvacKw ? ["replacement", "installation"] : []);
+
       ruleConfig = {
         ...ruleConfig,
         businessType: businessTypeToUse,
         services: {
           ...ruleConfig.services,
-          requiredAnyOf: isHvacKw ? ruleConfig.services?.requiredAnyOf || ["replacement", "installation"] : [],
+          requiredAnyOf: isHvacKw
+            ? selectedServiceKeys.length > 0
+              ? selectedServiceKeys
+              : ruleConfig.services?.requiredAnyOf || ["replacement", "installation"]
+            : [],
+        },
+        contacts: {
+          ...ruleConfig.contacts,
+          targetTitles: targetTitlesToUse,
         },
         geography: {
           ...ruleConfig.geography,
@@ -711,6 +858,7 @@ export async function runLeadDiscoveryAction(
           keywords: keywordsToUse,
           negativeKeywords: negativeKeywordsToUse,
           subNiche: subNicheToUse,
+          serviceIntents: serviceIntentsToUse,
           strictNicheMatch: true,
         },
         scoring: {
@@ -1040,10 +1188,12 @@ export async function updateRuleTargetingAction(params: {
   minEmployees?: number | null;
   maxEmployees?: number | null;
   minDoors?: number | null;
+  targetTitles?: string[];
+  serviceOfferings?: string[];
 }) {
   try {
     const db = await getDb();
-    const [{ rule: defaultRule }, { activeMember }] = await Promise.all([
+    const [{ market, rule: defaultRule }, { activeMember }] = await Promise.all([
       getActiveContext(db),
       getActiveTeamMember(db),
     ]);
@@ -1056,16 +1206,35 @@ export async function updateRuleTargetingAction(params: {
       params.keywords && params.keywords.length > 0
         ? params.keywords
         : cfg.discovery?.keywords || [];
-    const isHvacKw = finalKeywords.some((k: string) =>
-      /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k)
-    );
+    const isHvacKw =
+      market.key === "hvac" ||
+      finalKeywords.some((k: string) =>
+        /\b(hvac|air conditioning|heating|furnace|ac replacement)\b/i.test(k)
+      );
+    const selectedServiceKeys = extractServiceKeysFromOfferings(params.serviceOfferings);
+    const finalTargetTitles =
+      params.targetTitles !== undefined
+        ? params.targetTitles
+        : cfg.contacts?.targetTitles || [];
+    const finalServiceIntents =
+      params.serviceOfferings !== undefined
+        ? params.serviceOfferings
+        : cfg.discovery?.serviceIntents || (isHvacKw ? ["replacement", "installation"] : []);
 
     const newCfg = {
       ...cfg,
       businessType: params.businessType !== undefined ? params.businessType : cfg.businessType || "both",
       services: {
         ...cfg.services,
-        requiredAnyOf: isHvacKw ? cfg.services?.requiredAnyOf || ["replacement", "installation"] : [],
+        requiredAnyOf: isHvacKw
+          ? selectedServiceKeys.length > 0
+            ? selectedServiceKeys
+            : cfg.services?.requiredAnyOf || ["replacement", "installation"]
+          : [],
+      },
+      contacts: {
+        ...cfg.contacts,
+        targetTitles: finalTargetTitles,
       },
       geography: {
         ...cfg.geography,
@@ -1083,6 +1252,7 @@ export async function updateRuleTargetingAction(params: {
           params.subNiche !== undefined
             ? params.subNiche
             : cfg.discovery?.subNiche || "",
+        serviceIntents: finalServiceIntents,
         tavilyApiKey:
           params.tavilyApiKey !== undefined
             ? params.tavilyApiKey

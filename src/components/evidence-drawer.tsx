@@ -96,6 +96,17 @@ export function EvidenceDrawer({ companyId, onClose }: EvidenceDrawerProps) {
               </div>
 
               {/* Claims / Facts list */}
+              {drawerData.facts.length === 0 ? (
+                <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-6 text-center space-y-2">
+                  <HelpCircle className="w-6 h-6 text-slate-500 mx-auto" />
+                  <p className="text-xs font-semibold text-slate-300">
+                    No extracted claim audit records recorded yet for this lead.
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    This company was added directly or has 0 crawled evidence logs stored. Only genuine verified records appear here.
+                  </p>
+                </div>
+              ) : (
               <div className="space-y-4">
                 {drawerData.facts.map((fact: any) => (
                   <div
@@ -187,6 +198,7 @@ export function EvidenceDrawer({ companyId, onClose }: EvidenceDrawerProps) {
                   </div>
                 ))}
               </div>
+              )}
             </>
           )}
         </div>

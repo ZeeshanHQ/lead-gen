@@ -110,6 +110,14 @@ const RESIDENTIAL_TEMPLATES: Array<(kw: string, city: string, stateName: string)
   (kw, city, st) => `${kw} ${city} ${st} "our agents" OR "our team" OR "owner"`,
 ];
 
+const HVAC_TEMPLATES: Array<(kw: string, city: string, stateName: string) => string> = [
+  (kw, city, st) => `${kw} in ${city}, ${st}`,
+  (kw, city, st) => `${kw} company official website phone number ${city} ${st}`,
+  (kw, city, st) => `${kw} ${city} ${st} "heating and cooling" OR "air conditioning" "contact us"`,
+  (kw, city, st) => `${kw} ${city} ${st} "about us" OR "our team" OR "owner" phone`,
+  (kw, city, st) => `${kw} residential OR commercial contractor ${city} ${st} official website`,
+];
+
 /** Ordered, deterministic list of search queries for the owner's targeting. */
 export function buildQueryPlan(input: {
   keywords: string[];
@@ -133,6 +141,9 @@ export function buildQueryPlan(input: {
     "residential_re",
     "commercial_real_estate",
     "commercial_re",
+    "hvac_replacement",
+    "hvac_emergency",
+    "commercial_hvac",
   ].includes(customSubNicheClean.toLowerCase());
 
   const keywords = input.keywords.map((k) => k.trim()).filter(Boolean);
@@ -192,12 +203,19 @@ export function buildQueryPlan(input: {
     input.subNiche === "str_cohost_hospitality" ||
     /\b(airbnb|vrbo|vacation\s*rental|short[- ]term\s*rental|co-?host|serviced\s*apartment)\b/i.test(joinedKw);
 
+  const isHvacNiche =
+    (input.subNiche || "").toLowerCase().startsWith("hvac") ||
+    input.subNiche === "commercial_hvac" ||
+    /\b(hvac|air\s*conditioning|heating|furnace|heat\s*pump|ac\s*replacement|refrigeration|ductless)\b/i.test(joinedKw);
+
   const templates = isActiveHostNiche
     ? ACTIVE_AIRBNB_HOST_TEMPLATES
     : isCorporateMtrNiche
     ? CORPORATE_MTR_TEMPLATES
     : isStrNiche
     ? STR_AIRBNB_TEMPLATES
+    : isHvacNiche
+    ? HVAC_TEMPLATES
     : input.businessType === "commercial" || input.subNiche === "commercial_re" || input.subNiche === "commercial_real_estate"
     ? COMMERCIAL_TEMPLATES
     : input.businessType === "residential" || input.subNiche === "residential_re" || input.subNiche === "residential_real_estate"
@@ -431,6 +449,31 @@ export function isOffNicheSearchResult(input: {
         fullText
       )
     ) {
+      return true;
+    }
+  }
+
+  // 7. Strict HVAC anti-dump & Real Estate separation
+  const isHvacTarget =
+    !userWantsMarketingOrTech &&
+    /\b(hvac|air\s*conditioning|heating|furnace|heat\s*pump|ac\s*replacement|refrigeration|ductless)\b/i.test(
+      `${kwLower} ${subLower}`
+    );
+
+  if (isHvacTarget && fullText.length > 60) {
+    // Block HVAC parts wholesale/supply houses, job boards, and Real Estate listings
+    if (
+      /\b(supply\s*house|parts\s*wholesale|parts\s*distributor|hvac\s*parts\s*online|hvac\s*jobs|indeed\.com|ziprecruiter|real\s*estate\s*brokerage|homes?\s*for\s*sale|vacation\s*rentals?|airbnb\s*management)\b/i.test(
+        titleAndDomain
+      )
+    ) {
+      return true;
+    }
+    const hasHvacContractorSignal =
+      /\b(hvac|heating|air\s*conditioning|cooling|furnace|heat\s*pump|ductless|mini\s*split|ac\s*repair|ac\s*replacement|refrigeration|thermostat|airflow|mechanical\s*contractor)\b/i.test(
+        fullText
+      );
+    if (!hasHvacContractorSignal) {
       return true;
     }
   }

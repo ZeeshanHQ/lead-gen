@@ -11,7 +11,7 @@ import { normalizeUsPhone } from "@/server/domain/normalize";
 import { cleanPersonName, emailBelongsTo } from "@/server/enrichment/people";
 
 export const LEADERSHIP_TITLE_REGEX =
-  /\b(owner|co-owner|president|vice president|vp|founder|co-founder|general manager|operations manager|sales manager|comfort advisor|master technician|managing partner|principal|broker|managing broker|principal broker|designated broker|broker[\s-]owner|realtor|property manager|hospitality manager|guest experience manager|co-host|managing director|partner|executive director|ceo|coo)\b/i;
+  /\b(owner|co-owner|president|vice president|vp|founder|co-founder|general manager|operations manager|sales manager|service manager|hvac manager|branch manager|comfort advisor|master technician|managing partner|principal|broker|managing broker|principal broker|designated broker|broker[\s-]owner|realtor|property manager|hospitality manager|guest experience manager|co-host|managing director|partner|executive director|ceo|coo|cfo|director)\b/i;
 
 const INLINE_PHONE_REGEX =
   /(?:\+?1[-.\s]?)?\(?([2-9][0-9]{2})\)?[-.\s]?([2-9][0-9]{2})[-.\s]?([0-9]{4})/g;
@@ -204,10 +204,37 @@ export function extractCompanyInfo(pages: CrawledPage[]): CompanyInfoCandidate {
 
 export function extractLeadershipContacts(
   pages: CrawledPage[],
-  companyMainPhone?: string | null
+  companyMainPhone?: string | null,
+  targetTitles?: string[]
 ): ContactCandidate[] {
   const candidates: ContactCandidate[] = [];
   const seenNames = new Set<string>();
+  const customTitleList = (targetTitles || []).map((t) => t.trim()).filter((t) => t.length >= 2);
+  const customTitleRegex =
+    customTitleList.length > 0
+      ? new RegExp(
+          customTitleList
+            .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+            .join("|"),
+          "i"
+        )
+      : null;
+
+  const isTargetTitleOrDm = (title: string | null | undefined): boolean => {
+    if (!title) return false;
+    if (isDecisionMaker(classifyTitle(title))) return true;
+    return Boolean(customTitleRegex && customTitleRegex.test(title));
+  };
+
+  const matchTitleInText = (txt: string): string | null => {
+    const std = LEADERSHIP_TITLE_REGEX.exec(txt);
+    if (std) return std[0];
+    if (customTitleRegex) {
+      const cust = customTitleRegex.exec(txt);
+      if (cust) return cust[0];
+    }
+    return null;
+  };
 
   // Filter pages that are most likely to have team/leadership data, but include homepage/contact as fallback
   const teamPages = pages.filter(
@@ -258,8 +285,7 @@ export function extractLeadershipContacts(
       if (item["@type"] === "Person" && item.name && item.jobTitle) {
         const cleanedName = cleanPersonName(String(item.name));
         const title = String(item.jobTitle).trim();
-        const role = classifyTitle(title);
-        if (cleanedName && isDecisionMaker(role)) {
+        if (cleanedName && isTargetTitleOrDm(title)) {
           const phoneNorm = item.telephone ? normalizeUsPhone(String(item.telephone))?.display ?? null : null;
           const nearby = findNearbyPhoneAndEmail(cleanedName, text, pageEmails, companyMainPhone);
           const finalPhone = phoneNorm ?? nearby.phone;
@@ -319,20 +345,17 @@ export function extractLeadershipContacts(
         .first();
       let titleCandidate: string | null = null;
       if (titleEl.length) {
-        const tMatch = LEADERSHIP_TITLE_REGEX.exec(titleEl.text());
-        if (tMatch) titleCandidate = tMatch[0];
+        titleCandidate = matchTitleInText(titleEl.text());
       }
       if (!titleCandidate) {
         const nextEl = nameEl.next("p, span, div, h4, h5, small");
         if (nextEl.length) {
-          const tMatch = LEADERSHIP_TITLE_REGEX.exec(nextEl.text());
-          if (tMatch) titleCandidate = tMatch[0];
+          titleCandidate = matchTitleInText(nextEl.text());
         }
       }
       const cardText = card.text().replace(/\s+/g, " ").trim();
       if (!titleCandidate) {
-        const tMatch = LEADERSHIP_TITLE_REGEX.exec(cardText);
-        if (tMatch) titleCandidate = tMatch[0];
+        titleCandidate = matchTitleInText(cardText);
       }
 
       if (
@@ -343,9 +366,7 @@ export function extractLeadershipContacts(
         titleCandidate = "Licensed Agent / Broker";
       }
 
-      if (titleCandidate) {
-        const role = classifyTitle(titleCandidate);
-        if (isDecisionMaker(role)) {
+      if (titleCandidate && isTargetTitleOrDm(titleCandidate)) {
           const cardHtml = card.html() || "";
           const emails = extractEmailsFromHtml(cardHtml);
           const phones = extractPhonesFromHtml(cardHtml);
@@ -371,7 +392,6 @@ export function extractLeadershipContacts(
             confidence: 0.92,
             sourceUrl: page.url,
           });
-        }
       }
     });
 
@@ -388,11 +408,10 @@ export function extractLeadershipContacts(
       const nextText = nextEl.text().replace(/\s+/g, " ").trim();
       if (!nextText || nextText.length > 90) return;
 
-      const tMatch = LEADERSHIP_TITLE_REGEX.exec(nextText);
-      if (!tMatch) return;
-      const titleCandidate = nextText.length <= 45 ? nextText : tMatch[0];
-      const role = classifyTitle(titleCandidate);
-      if (!isDecisionMaker(role)) return;
+      const matchedTitle = matchTitleInText(nextText);
+      if (!matchedTitle) return;
+      const titleCandidate = nextText.length <= 45 ? nextText : matchedTitle;
+      if (!isTargetTitleOrDm(titleCandidate)) return;
 
       // Collect sibling elements until the next heading
       const siblingSlice = h.nextUntil("h1, h2, h3, h4");
