@@ -149,6 +149,8 @@ export const ruleConfigSchema = z.object({
   requirements: z.object({ websiteRequired: z.boolean() }),
   /** Owner-controlled must-haves. A lead missing any enabled one never enters the CRM. */
   gate: gateSchema.default(() => defaultGate()),
+  /** Optional preferred signals that boost score/priority without ever rejecting leads. */
+  preferredGate: gateSchema.optional(),
   discovery: z.object({
     keywords: z.array(z.string()),
     negativeKeywords: z.array(z.string()).optional(),

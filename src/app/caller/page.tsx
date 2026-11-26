@@ -54,18 +54,42 @@ export default async function CallerQueuePage({
   const isOwnerOrManager =
     activeMember.role === "OWNER" || Boolean(activeMember.permissions.manageTeamAndSettings);
 
+  // Enforce nicheScope === "SELECTED" for callers (Hamda, Saad, etc.) so they ONLY see their assigned niche
+  let effectiveMarket = market;
+  if (
+    !isOwnerOrManager &&
+    activeMember.nicheScope === "SELECTED" &&
+    Array.isArray(activeMember.allowedNicheIds) &&
+    activeMember.allowedNicheIds.length > 0 &&
+    !activeMember.allowedNicheIds.includes(market.id)
+  ) {
+    const matched = allMarkets.find((m) => activeMember.allowedNicheIds.includes(m.id));
+    if (matched) {
+      effectiveMarket = matched;
+    }
+  }
+
+  const formatShortNicheLabel = (m: { key?: string; category?: string; name?: string }) => {
+    const k = (m.key || m.category || "").toLowerCase();
+    const n = (m.name || "").toLowerCase();
+    if (k === "hvac" || n.includes("hvac")) return "HVAC Niche";
+    if (k === "realestate" || n.includes("real estate")) return "Real Estate Niche";
+    if (k === "airbnb_str" || n.includes("airbnb")) return "Airbnb & STR Niche";
+    return m.name || "Target Niche";
+  };
+
   const marketNames: Record<string, string> = {};
   for (const m of allMarkets) {
-    marketNames[m.id] = m.name;
+    marketNames[m.id] = formatShortNicheLabel(m);
   }
 
   const activeGate = (rule?.config as any)?.gate;
   const [fullQueue, customColumns] = await Promise.all([
-    getCallerQueue(db, market.id, activeGate, {
+    getCallerQueue(db, effectiveMarket.id, activeGate, {
       includeCrossMarketForOwner: false,
       marketNames,
     }),
-    getCustomCrmColumns(db, market.id),
+    getCustomCrmColumns(db, effectiveMarket.id),
   ]);
 
   const verticalMarkets = allMarkets
@@ -73,32 +97,34 @@ export default async function CallerQueuePage({
     .map((m) => ({
       id: m.id,
       key: m.key,
-      name: m.key === "hvac" ? "HVAC" : "Real Estate",
+      name: m.key === "hvac" ? "HVAC Niche" : "Real Estate Niche",
       count: m.approvedCount ?? m.leadCount ?? 0,
     }));
 
   // Multi-Caller Isolation & Full Owner Transparency:
-  // - OWNER / Team Managers see all leads across all callers + unassigned pool across the workspace
-  // - CALLER role sees ONLY leads assigned specifically to them
+  // - OWNER / Team Managers see all leads across the active vertical
+  // - CALLER role sees ONLY leads assigned specifically to them in their allowed niche
   const visibleQueue = isOwnerOrManager
     ? fullQueue
     : fullQueue.filter((lead) => lead.assignedMemberId === activeMember.id);
 
+  const shortNicheName = formatShortNicheLabel(effectiveMarket);
+
   return (
     <CallerClient
-      key={`${market.id}_${resolvedParams?.caller || "ALL"}_${resolvedParams?.status || "ALL"}_${resolvedParams?.tz || "ALL"}_${resolvedParams?.window || "ALL"}`}
+      key={`${effectiveMarket.id}_${resolvedParams?.caller || "ALL"}_${resolvedParams?.status || "ALL"}_${resolvedParams?.tz || "ALL"}_${resolvedParams?.window || "ALL"}`}
       initialQueue={visibleQueue}
       initialCallerFilter={resolvedParams?.caller || "ALL"}
       initialStatusFilter={resolvedParams?.status || "ALL"}
       initialTzFilter={resolvedParams?.tz || "ALL"}
       initialWindowFilter={resolvedParams?.window || "ALL"}
-      nicheName={market.name}
-      nicheCategory={market.category}
+      nicheName={shortNicheName}
+      nicheCategory={effectiveMarket.category}
       initialCustomColumns={customColumns}
       dialerConfig={dialerConfig}
       initialShiftConfig={initialShiftConfig}
       activeActorName={activeMember.name}
-      marketId={market.id}
+      marketId={effectiveMarket.id}
       verticalMarkets={verticalMarkets}
       activeMember={activeMember}
       allMembers={allMembers}

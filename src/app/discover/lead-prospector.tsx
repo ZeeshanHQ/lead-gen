@@ -58,7 +58,7 @@ import { EvidenceDrawer } from "@/components/evidence-drawer";
 import { DiscoveryTerminal, type TerminalCounters } from "./discovery-terminal";
 import { getFilteredPresetsForMarket, ALL_INTENT_PRESETS, type IntentPreset } from "./presets";
 import type { TelemetryLogEntry } from "@/server/research/telemetry";
-import { GATE_FIELDS, GATE_META, resolveGate, type GateField, type LeadGate } from "@/server/domain/gate";
+import { GATE_FIELDS, GATE_META, resolveGate, emptyGate, type GateField, type LeadGate } from "@/server/domain/gate";
 import type { TeamMember } from "@/server/domain/team";
 import type { MarketView } from "@/server/repo/markets";
 
@@ -133,6 +133,15 @@ export function LeadProspector({
   const [gate, setGate] = useState<LeadGate>(() =>
     initialGate ? resolveGate(initialGate) : resolveGate(initialRule?.gate)
   );
+  const [preferredGate, setPreferredGate] = useState<LeadGate>(() => ({
+    ...emptyGate(),
+    ...(initialRule?.preferredGate || {}),
+    customMustHaves: Array.isArray(initialRule?.preferredGate?.customMustHaves)
+      ? initialRule.preferredGate.customMustHaves
+      : [],
+  }));
+  const [showCustomPrefInput, setShowCustomPrefInput] = useState(false);
+  const [customPrefText, setCustomPrefText] = useState("");
   const [showCustomGateInput, setShowCustomGateInput] = useState(false);
   const [customGateText, setCustomGateText] = useState("");
   const [leads, setLeads] = useState<LeadItem[]>(initialLeads);
@@ -373,6 +382,7 @@ export function LeadProspector({
       serviceOfferings: selectedOfferings,
       minScore: editMinScore,
       gate,
+      preferredGate,
     };
     const res = await saveIcpPresetAction(activeMarketKey, newPreset);
     setSavingPreset(false);
@@ -410,6 +420,16 @@ export function LeadProspector({
     setEditMinScore(cp.minScore ?? 60);
     const nextGate = cp.gate ? resolveGate(cp.gate) : gate;
     setGate(nextGate);
+    const nextPrefGate: LeadGate = cp.preferredGate
+      ? {
+          ...emptyGate(),
+          ...cp.preferredGate,
+          customMustHaves: Array.isArray(cp.preferredGate.customMustHaves)
+            ? cp.preferredGate.customMustHaves
+            : [],
+        }
+      : preferredGate;
+    setPreferredGate(nextPrefGate);
     setIsCustomSubNicheMode(
       Boolean(
         cp.subNiche &&
@@ -441,6 +461,7 @@ export function LeadProspector({
       targetTitles: cp.targetTitles || [],
       serviceOfferings: cp.serviceOfferings || [],
       gate: nextGate,
+      preferredGate: nextPrefGate,
     });
     if (res.ok && res.rule) {
       setActiveRule(res.rule);
@@ -609,6 +630,106 @@ export function LeadProspector({
         setCrmReadyCount((refreshed as any).crmReadyCount ?? refreshed.leads.length);
       }
     }
+  };
+
+  // Toggle an Optional / Preferred signal (NEVER rejects leads; boosts priority & score)
+  const handleTogglePreferredField = async (field: GateField) => {
+    if (!canEditRules) return;
+    const nextPref: LeadGate = { ...preferredGate, [field]: !preferredGate[field] };
+    setPreferredGate(nextPref);
+
+    const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+    const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const titlesArr = editTargetTitles.split(",").map((t) => t.trim()).filter(Boolean);
+
+    await updateRuleTargetingAction({
+      states: statesArr.length > 0 ? statesArr : ["TX"],
+      cities: citiesArr,
+      minScore: editMinScore,
+      keywords: kwsArr,
+      negativeKeywords: negsArr,
+      subNiche: editSubNiche,
+      businessType: editBusinessType,
+      minEmployees: editMinEmployees,
+      maxEmployees: editMaxEmployees,
+      minDoors: isHvacActive ? null : editMinDoors,
+      targetTitles: titlesArr,
+      serviceOfferings: selectedOfferings,
+      gate,
+      preferredGate: nextPref,
+    });
+  };
+
+  const handleAddCustomPreferredRule = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = customPrefText.trim();
+    if (!trimmed) return;
+    const current = preferredGate.customMustHaves || [];
+    if (current.some((x) => x.toLowerCase() === trimmed.toLowerCase())) {
+      setCustomPrefText("");
+      setShowCustomPrefInput(false);
+      return;
+    }
+    const nextPref: LeadGate = { ...preferredGate, customMustHaves: [...current, trimmed] };
+    setPreferredGate(nextPref);
+    setCustomPrefText("");
+    setShowCustomPrefInput(false);
+
+    const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+    const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const titlesArr = editTargetTitles.split(",").map((t) => t.trim()).filter(Boolean);
+
+    await updateRuleTargetingAction({
+      states: statesArr.length > 0 ? statesArr : ["TX"],
+      cities: citiesArr,
+      minScore: editMinScore,
+      keywords: kwsArr,
+      negativeKeywords: negsArr,
+      subNiche: editSubNiche,
+      businessType: editBusinessType,
+      minEmployees: editMinEmployees,
+      maxEmployees: editMaxEmployees,
+      minDoors: isHvacActive ? null : editMinDoors,
+      targetTitles: titlesArr,
+      serviceOfferings: selectedOfferings,
+      gate,
+      preferredGate: nextPref,
+    });
+  };
+
+  const handleRemoveCustomPreferredRule = async (ruleText: string) => {
+    const nextPref: LeadGate = {
+      ...preferredGate,
+      customMustHaves: (preferredGate.customMustHaves || []).filter((x) => x !== ruleText),
+    };
+    setPreferredGate(nextPref);
+
+    const statesArr = editStates.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    const citiesArr = editCities.split(",").map((c) => c.trim()).filter(Boolean);
+    const kwsArr = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const negsArr = editNegativeKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+    const titlesArr = editTargetTitles.split(",").map((t) => t.trim()).filter(Boolean);
+
+    await updateRuleTargetingAction({
+      states: statesArr.length > 0 ? statesArr : ["TX"],
+      cities: citiesArr,
+      minScore: editMinScore,
+      keywords: kwsArr,
+      negativeKeywords: negsArr,
+      subNiche: editSubNiche,
+      businessType: editBusinessType,
+      minEmployees: editMinEmployees,
+      maxEmployees: editMaxEmployees,
+      minDoors: isHvacActive ? null : editMinDoors,
+      targetTitles: titlesArr,
+      serviceOfferings: selectedOfferings,
+      gate,
+      preferredGate: nextPref,
+    });
   };
 
   const handleApplyIntentPreset = async (preset: {
@@ -862,6 +983,7 @@ export function LeadProspector({
       cities: citiesArr,
       minScore: editMinScore,
       gate,
+      preferredGate,
       minEmployees: editMinEmployees,
       maxEmployees: editMaxEmployees,
       minDoors: isHvacActive ? null : editMinDoors,
@@ -1113,6 +1235,7 @@ export function LeadProspector({
       subNiche: editSubNiche,
       businessType: editBusinessType,
       gate,
+      preferredGate,
       minEmployees: editMinEmployees,
       maxEmployees: editMaxEmployees,
       minDoors: isHvacActive ? null : editMinDoors,
@@ -2086,6 +2209,143 @@ export function LeadProspector({
                 </button>
               )
             )}
+          </div>
+        </div>
+
+        {/* Optional / Preferred Signals Gateway (Boosts Priority — Never Blocks Leads) */}
+        <div className="p-4 rounded-xl bg-[#09090b] border border-cyan-500/20 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-bold text-white flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-cyan-400" />
+                <span>Optional / Preferred Signals (Boosts Priority — Never Blocks Leads)</span>
+              </div>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                Select signals you <strong className="text-zinc-200">prefer</strong> to find. Matching leads get boosted to the top, while leads without them still pass normally.
+              </p>
+            </div>
+            <span className="text-[11px] text-cyan-400 font-semibold shrink-0">
+              {GATE_FIELDS.filter((f) => f !== "requirePhone" && f !== "requireWebsite" && !(isHvacActive && f === "requireHighValueProperty") && preferredGate[f]).length + (preferredGate.customMustHaves?.length || 0)} Preferred Signals Active
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {GATE_FIELDS.filter(
+              (f) =>
+                f !== "requirePhone" &&
+                f !== "requireWebsite" &&
+                !(isHvacActive && f === "requireHighValueProperty")
+            ).map((field) => {
+              const active = preferredGate[field];
+              const meta = GATE_META[field];
+              const displayLabel =
+                field === "requireBleedingAds"
+                  ? isHvacActive
+                    ? "Running Paid Ads (Google / Meta)"
+                    : "Running Paid Ads (Google / Meta / Zillow)"
+                  : meta.label;
+              return (
+                <button
+                  key={`pref_${field}`}
+                  type="button"
+                  disabled={isPending}
+                  onClick={() => handleTogglePreferredField(field)}
+                  title={`Optional preference: ${meta.description}`}
+                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                    active
+                      ? "bg-cyan-500/15 text-cyan-200 border-cyan-500/40 shadow-sm"
+                      : "bg-zinc-900/90 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200"
+                  }`}
+                >
+                  <span
+                    className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${
+                      active
+                        ? "bg-cyan-500 border-cyan-400 text-black"
+                        : "border-zinc-600 bg-zinc-950"
+                    }`}
+                  >
+                    {active && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                  </span>
+                  <span>{displayLabel}</span>
+                  {active && (
+                    <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-bold">
+                      Prefer
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+
+            {(preferredGate.customMustHaves || []).map((customPref) => (
+              <div
+                key={`cpref_${customPref}`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border bg-cyan-500/15 text-cyan-200 border-cyan-500/40 shadow-sm"
+              >
+                <span className="w-3.5 h-3.5 rounded flex items-center justify-center border bg-cyan-500 border-cyan-400 text-black">
+                  <Check className="w-2.5 h-2.5 stroke-[3]" />
+                </span>
+                <span>{customPref}</span>
+                <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-bold">
+                  Prefer
+                </span>
+                {canEditRules && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveCustomPreferredRule(customPref)}
+                    className="ml-0.5 text-cyan-300/70 hover:text-white transition cursor-pointer"
+                    title="Remove preference"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+
+            {canEditRules &&
+              (showCustomPrefInput ? (
+                <form
+                  onSubmit={handleAddCustomPreferredRule}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-zinc-900 px-2 py-1"
+                >
+                  <input
+                    type="text"
+                    autoFocus
+                    value={customPrefText}
+                    onChange={(e) => setCustomPrefText(e.target.value)}
+                    placeholder={
+                      isHvacActive
+                        ? "e.g., Financing Available, ServiceTitan, 5+ Trucks..."
+                        : "e.g., AppFolio, 50+ Doors, 24/7 Concierge..."
+                    }
+                    className="w-52 bg-transparent text-xs text-white placeholder-zinc-500 focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded bg-cyan-400 px-2 py-0.5 text-[11px] font-bold text-black hover:bg-cyan-300 cursor-pointer"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCustomPrefInput(false);
+                      setCustomPrefText("");
+                    }}
+                    className="text-zinc-400 hover:text-white p-0.5 cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowCustomPrefInput(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-dashed border-cyan-500/30 bg-zinc-900/50 text-cyan-300 hover:border-cyan-400 hover:text-cyan-200 transition cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Custom Preference</span>
+                </button>
+              ))}
           </div>
         </div>
 

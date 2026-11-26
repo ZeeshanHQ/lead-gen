@@ -19,7 +19,7 @@ import { crawlWebsite, type CrawledPage } from "./crawler";
 import { extractAllFacts } from "./extractors";
 import type { FactMap } from "../domain/facts";
 import { isDecisionMaker } from "../domain/contact";
-import { evaluateGate } from "../domain/gate";
+import { evaluateGate, evaluatePreferredGateBonus } from "../domain/gate";
 
 export interface ResearchOptions {
   actor?: string;
@@ -545,6 +545,23 @@ export async function researchCompany(
     facts: evalCompany.facts,
     searchText: `${refreshed.name} ${refreshed.website || ""} ${crawledTextSummary}`,
   });
+
+  const preferredBonus = evaluatePreferredGateBonus(activeRule?.preferredGate, {
+    phone: verifiedNanpPhone ? verifiedNanpPhone.display : null,
+    website: refreshed.website,
+    websiteAlive: true,
+    city: updates.city || refreshed.city,
+    state: updates.state || refreshed.state,
+    contacts: evalCompany.contacts,
+    facts: evalCompany.facts,
+    searchText: `${refreshed.name} ${refreshed.website || ""} ${crawledTextSummary}`,
+  });
+  if (preferredBonus.bonusPoints > 0) {
+    scoreBreakdown.icpScore = Math.min(100, scoreBreakdown.icpScore + preferredBonus.bonusPoints);
+    scoreBreakdown.totalScore = Math.min(100, scoreBreakdown.totalScore + preferredBonus.bonusPoints);
+    if (scoreBreakdown.icpScore >= 85) scoreBreakdown.grade = "A";
+    else if (scoreBreakdown.icpScore >= 70) scoreBreakdown.grade = "B";
+  }
 
   const postCrawlOffNiche =
     kwList.length > 0 &&

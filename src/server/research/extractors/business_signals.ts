@@ -261,23 +261,36 @@ export function extractBusinessSignals(pages: CrawledPage[]): FactCandidate[] {
       }
     }
 
-    // 12. Google Ads & Search Marketing Tracking (Bleeding Ad Spend Indicator)
+    // 12. Active Paid Ads Detection (Google Ads, Meta/Facebook Pixel, Local Services Ads)
     if (!discovered.has("google_ads")) {
-      const googleAdsPat = /(?:googleads\.g\.doubleclick\.net|google_conversion_id|googletagmanager\.com\/gtag\/js\?id=AW-|gtag\s*\(\s*['"]config['"],\s*['"]AW-[A-Za-z0-9_-]+['"]|data-google-ad-click)/i;
-      const snippet = extractSnippet(html, googleAdsPat);
-      if (snippet || html.includes("googletagmanager.com/gtag/js?id=AW-") || /gtag\s*\(\s*['"]config['"],\s*['"]AW-/i.test(html)) {
+      const googleAdsPat = /(?:googleads\.g\.doubleclick\.net|googleadservices\.com\/pagead|google_conversion_id|googletagmanager\.com\/gtag\/js\?id=AW-|gtag\s*\(\s*['"]config['"],\s*['"]AW-[A-Za-z0-9_-]+['"]|data-google-ad-click)/i;
+      const metaAdsPat = /(?:connect\.facebook\.net\/[a-z_]+\/fbevents\.js|facebook\.com\/tr\?id=|fbq\s*\(\s*['"]init['"])/i;
+      const hasGoogleAds =
+        googleAdsPat.test(html) ||
+        html.includes("googletagmanager.com/gtag/js?id=AW-") ||
+        /gtag\s*\(\s*['"]config['"],\s*['"]AW-/i.test(html);
+      const hasMetaAds = metaAdsPat.test(html);
+      const hasGoogleGuaranteed = /\bgoogle\s+guaranteed\b|\blocal\s+services\s+ads\b/i.test(text);
+
+      if (hasGoogleAds || hasMetaAds || hasGoogleGuaranteed) {
+        const channels: string[] = [];
+        if (hasGoogleAds) channels.push("Google Ads (AW tag)");
+        if (hasMetaAds) channels.push("Meta / Facebook Pixel");
+        if (hasGoogleGuaranteed) channels.push("Google Guaranteed / LSA");
+        const channelText = channels.join(" + ");
+
         facts.push({
           key: "google_ads",
           value: "YES",
           confidence: 0.96,
-          evidenceSnippet: "Active Google Ads Conversion Tracking (AW tag / AdWords) detected on website",
+          evidenceSnippet: `Active paid ad tracking detected: ${channelText}`,
           sourceUrl: page.url,
         });
         facts.push({
           key: "bleeding_ads",
           value: "YES",
           confidence: 0.96,
-          evidenceSnippet: "Actively spending budget on Google Ads / search advertising",
+          evidenceSnippet: `Actively running paid ads (${channelText})`,
           sourceUrl: page.url,
         });
         discovered.add("google_ads");

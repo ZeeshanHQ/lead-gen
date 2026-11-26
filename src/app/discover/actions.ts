@@ -316,6 +316,7 @@ export interface SavedIcpPreset {
   serviceOfferings: string[];
   minScore: number;
   gate?: Partial<LeadGate>;
+  preferredGate?: Partial<LeadGate>;
   createdAt?: string;
 }
 
@@ -408,6 +409,7 @@ export async function startLeadDiscoveryAction(
     businessType?: "residential" | "commercial" | "both";
     minScore?: number;
     gate?: Partial<LeadGate>;
+    preferredGate?: Partial<LeadGate>;
     minEmployees?: number | null;
     maxEmployees?: number | null;
     minDoors?: number | null;
@@ -493,7 +495,8 @@ export async function startLeadDiscoveryAction(
         options.minDoors !== undefined ||
         options.targetTitles !== undefined ||
         options.serviceOfferings !== undefined ||
-        options.gate !== undefined)
+        options.gate !== undefined ||
+        options.preferredGate !== undefined)
     ) {
       const isHvacKw =
         market.key === "hvac" ||
@@ -550,6 +553,10 @@ export async function startLeadDiscoveryAction(
           minDoors: minDoorsToUse,
         },
         gate: mergedGate,
+        preferredGate:
+          options.preferredGate !== undefined
+            ? { ...ruleConfig.preferredGate, ...options.preferredGate }
+            : ruleConfig.preferredGate,
       };
       ruleConfig = nextRuleConfig;
 
@@ -714,6 +721,7 @@ export async function startLeadDiscoveryAction(
       runId,
       targetCount,
       gate: mergedGate,
+      preferredGate: ruleConfig?.preferredGate,
     };
   } catch (err: any) {
     return { ok: false, error: err.message || "Failed to start lead discovery" };
@@ -731,6 +739,7 @@ export async function runLeadDiscoveryAction(
     businessType?: "residential" | "commercial" | "both";
     minScore?: number;
     gate?: Partial<LeadGate>;
+    preferredGate?: Partial<LeadGate>;
     minEmployees?: number | null;
     maxEmployees?: number | null;
     minDoors?: number | null;
@@ -816,7 +825,8 @@ export async function runLeadDiscoveryAction(
         options.minDoors !== undefined ||
         options.targetTitles !== undefined ||
         options.serviceOfferings !== undefined ||
-        options.gate !== undefined)
+        options.gate !== undefined ||
+        options.preferredGate !== undefined)
     ) {
       const isHvacKw =
         market.key === "hvac" ||
@@ -872,6 +882,10 @@ export async function runLeadDiscoveryAction(
           minDoors: minDoorsToUse,
         },
         gate: mergedGate,
+        preferredGate:
+          options.preferredGate !== undefined
+            ? { ...ruleConfig.preferredGate, ...options.preferredGate }
+            : ruleConfig.preferredGate,
       };
       try {
         await saveRule(db, defaultRule.id, { name: defaultRule.name, config: ruleConfig }, actorName);
@@ -1185,6 +1199,7 @@ export async function updateRuleTargetingAction(params: {
   tavilyApiKey?: string;
   businessType?: "residential" | "commercial" | "both";
   gate?: Partial<LeadGate>;
+  preferredGate?: Partial<LeadGate>;
   minEmployees?: number | null;
   maxEmployees?: number | null;
   minDoors?: number | null;
@@ -1276,6 +1291,10 @@ export async function updateRuleTargetingAction(params: {
         minDoors: params.minDoors !== undefined ? params.minDoors : cfg.size?.minDoors ?? null,
       },
       gate: mergedGate,
+      preferredGate:
+        params.preferredGate !== undefined
+          ? { ...cfg.preferredGate, ...params.preferredGate }
+          : cfg.preferredGate,
     };
 
     const updated = await saveRule(

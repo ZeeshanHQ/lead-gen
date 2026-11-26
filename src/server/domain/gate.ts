@@ -48,6 +48,71 @@ export function defaultGate(): LeadGate {
   };
 }
 
+export function emptyGate(): LeadGate {
+  return {
+    requirePhone: false,
+    requireWebsite: false,
+    requireDecisionMaker: false,
+    requireEmail: false,
+    requireLocation: false,
+    requireDirectPhone: false,
+    requireBleedingAds: false,
+    requireHighValueProperty: false,
+    customMustHaves: [],
+  };
+}
+
+/**
+ * Evaluates optional / preferred signals (never rejects a lead; only boosts score & priority).
+ */
+export function evaluatePreferredGateBonus(
+  preferredIn: Partial<LeadGate> | null | undefined,
+  input: GateInput
+): { bonusPoints: number; matchedLabels: string[] } {
+  if (!preferredIn) return { bonusPoints: 0, matchedLabels: [] };
+  const f = normalizeFactRecord(input.facts);
+  const matched: string[] = [];
+
+  if (preferredIn.requireDecisionMaker) {
+    const ok = input.contacts.some(
+      (c) => Boolean(c.name && isValidPersonName(c.name)) && isDecisionMaker(c.roleClass)
+    );
+    if (ok) matched.push("Decision-maker identified");
+  }
+  if (preferredIn.requireEmail) {
+    const ok = input.contacts.some((c) => Boolean(c.email && c.email.includes("@")));
+    if (ok) matched.push("Business email found");
+  }
+  if (preferredIn.requireDirectPhone) {
+    const ok =
+      (hasDialableNumber(input.phone) && !isTollFreeNumber(input.phone)) ||
+      input.contacts.some((c) => hasDialableNumber(c.phone) && !isTollFreeNumber(c.phone)) ||
+      f.direct_mobile_found === "YES";
+    if (ok) matched.push("Direct / mobile line");
+  }
+  if (preferredIn.requireBleedingAds) {
+    const ok =
+      f.bleeding_ads === "YES" || f.google_ads === "YES" || f.zillow_advertiser === "YES";
+    if (ok) matched.push("Active Paid Ads");
+  }
+  if (preferredIn.requireHighValueProperty) {
+    const ok = f.luxury_high_value === "YES" || f.avg_property_value === "$400k+";
+    if (ok) matched.push("$400k+ High-Ticket");
+  }
+  if (preferredIn.customMustHaves && preferredIn.customMustHaves.length > 0) {
+    for (const pref of preferredIn.customMustHaves) {
+      if (matchesCustomMustHave(pref, f, input.contacts, input.searchText)) {
+        matched.push(pref);
+      }
+    }
+  }
+
+  return {
+    bonusPoints: Math.min(20, matched.length * 7),
+    matchedLabels: matched,
+  };
+}
+
 /** Fills any missing keys so older saved rules keep working. */
 export function resolveGate(gate: Partial<LeadGate> | null | undefined): LeadGate {
   const base = defaultGate();
