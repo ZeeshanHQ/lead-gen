@@ -210,11 +210,18 @@ export function matchLeadSearchQuery(lead: any, rawQuery: string): boolean {
     lead.bestContact?.linkedinUrl,
     lead.email,
     lead.notes,
+    lead.painIdentified,
+    lead.researchSummary,
     lead.assignedMemberName,
     lead.status,
+    lead.qualificationStatus,
+    lead.dealStage,
+    lead.marketName,
     lead.replacement,
+    lead.installation,
     lead.software,
     lead.financing,
+    lead.nextFollowUp,
     factsText,
     ...leadPhones,
   ]
@@ -234,4 +241,44 @@ export function matchLeadSearchQuery(lead: any, rawQuery: string): boolean {
     }
     return false;
   });
+}
+
+/**
+ * Returns a short excerpt from caller notes (or painIdentified / researchSummary)
+ * when a search query matches inside those text fields, for instant search context.
+ */
+export function getNoteMatchSnippet(lead: any, rawQuery: string): string | null {
+  if (!lead) return null;
+  const query = (rawQuery || "").trim().toLowerCase();
+  if (!query) return null;
+
+  const tokens = query.split(/\s+/).filter((t) => t.length >= 2);
+  if (tokens.length === 0) return null;
+
+  const sources: Array<{ label: string; text: string }> = [];
+  if (lead.notes && typeof lead.notes === "string") {
+    sources.push({ label: "Note", text: lead.notes });
+  }
+  if (lead.painIdentified && typeof lead.painIdentified === "string") {
+    sources.push({ label: "Pain", text: lead.painIdentified });
+  }
+  if (lead.researchSummary && typeof lead.researchSummary === "string") {
+    sources.push({ label: "Intel", text: lead.researchSummary });
+  }
+
+  for (const src of sources) {
+    const lower = src.text.toLowerCase();
+    const matchedToken = tokens.find((t) => lower.includes(t));
+    if (!matchedToken) continue;
+
+    const idx = lower.indexOf(matchedToken);
+    const start = Math.max(0, idx - 24);
+    const end = Math.min(src.text.length, idx + matchedToken.length + 46);
+    const rawSlice = src.text.slice(start, end).replace(/\s+/g, " ").trim();
+    const prefix = start > 0 ? "..." : "";
+    const suffix = end < src.text.length ? "..." : "";
+    return `${src.label}: ${prefix}${rawSlice}${suffix}`;
+  }
+
+  return null;
 }

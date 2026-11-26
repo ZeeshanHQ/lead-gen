@@ -40,7 +40,7 @@ import {
   stripFollowUpTagFromNotes,
 } from "@/components/crm-lead-sheet";
 import { CallLogModal, type CallLogSubmitData } from "@/components/call-log-modal";
-import { classifyLeadDate, parseLatestCallerNote, type LeadDateCategory } from "@/components/crm-date-utils";
+import { classifyLeadDate, matchLeadSearchQuery, parseLatestCallerNote, type LeadDateCategory } from "@/components/crm-date-utils";
 import {
   CALL_STATUS_DEFS,
   CRM_FILTER_CHIPS,
@@ -1087,17 +1087,7 @@ export function CallerClient({
     }
 
     if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      lead.name.toLowerCase().includes(q) ||
-      (lead.city && lead.city.toLowerCase().includes(q)) ||
-      (lead.state && lead.state.toLowerCase().includes(q)) ||
-      (lead.bestContact.name && lead.bestContact.name.toLowerCase().includes(q)) ||
-      (lead.phone && lead.phone.includes(q)) ||
-      (lead.bestContact.phone && lead.bestContact.phone.includes(q)) ||
-      (lead.notes && lead.notes.toLowerCase().includes(q)) ||
-      (lead.assignedMemberName && lead.assignedMemberName.toLowerCase().includes(q))
-    );
+    return matchLeadSearchQuery(lead, search);
   });
 
   const copyToClipboard = (text: string, id: string) => {

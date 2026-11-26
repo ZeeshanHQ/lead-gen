@@ -31,7 +31,7 @@ import {
   buildPresetFollowUpIso,
   formatFollowUpLabel,
 } from "@/components/crm-lead-sheet";
-import { matchLeadSearchQuery } from "@/components/crm-date-utils";
+import { getNoteMatchSnippet, matchLeadSearchQuery } from "@/components/crm-date-utils";
 import { CallStatusBadge } from "@/components/call-status-ui";
 import { getLeadEmailStatus } from "@/server/domain/email-templates";
 import { type TeamMember } from "@/server/domain/team";
@@ -1444,7 +1444,7 @@ export function CallerFocusCockpit({
               </p>
               <p className="text-[11px] text-zinc-500">
                 {lookupQuery
-                  ? "Try searching by company name, owner name, phone digits, or city."
+                  ? "Try searching by company name, owner name, phone digits, city, or words in caller notes."
                   : "Select any disposition (1–4) or pick a callback date when logging a call to schedule follow-ups."}
               </p>
             </div>
@@ -1524,6 +1524,15 @@ export function CallerFocusCockpit({
                           {leadCleanPhone || "No phone"}
                         </span>
                       </div>
+                      {lookupQuery.trim().length > 0 && (() => {
+                        const snippet = getNoteMatchSnippet(item, lookupQuery);
+                        if (!snippet) return null;
+                        return (
+                          <div className="text-[10px] text-amber-300/90 truncate mt-0.5 font-medium">
+                            {snippet}
+                          </div>
+                        );
+                      })()}
                       {fu.text && (
                         <div
                           className={`text-[10px] font-semibold mt-1 flex items-center gap-1 ${
