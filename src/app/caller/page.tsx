@@ -55,8 +55,10 @@ export default async function CallerQueuePage({
     activeMember.role === "OWNER" || Boolean(activeMember.permissions.manageTeamAndSettings);
 
   // Enforce nicheScope === "SELECTED" for callers (Hamda, Saad, etc.) so they ONLY see their assigned niche
+  // PRODUCT_MARKETING members bypass niche isolation — they market own products (FBSniper, Astraventa Voice), not industry niches
   let effectiveMarket = market;
   if (
+    activeMember.role !== "PRODUCT_MARKETING" &&
     !isOwnerOrManager &&
     activeMember.nicheScope === "SELECTED" &&
     Array.isArray(activeMember.allowedNicheIds) &&

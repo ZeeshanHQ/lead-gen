@@ -262,7 +262,7 @@ export function CallerClient({
   };
 
   const isOwner = Boolean(activeMember && activeMember.role === "OWNER");
-  const isProductRep = Boolean(activeMember && activeMember.role === "PRODUCT_REP") || Boolean(permissions?.emailOutreach);
+  const isProductMarketing = Boolean(activeMember && activeMember.role === "PRODUCT_MARKETING") || Boolean(permissions?.emailOutreach);
   const canDiscover = isOwner || Boolean(permissions?.discoverLeads);
   const canImport = isOwner || Boolean(permissions?.discoverLeads || permissions?.exportAndSync);
   const canExport = isOwner || Boolean(permissions?.exportAndSync);
@@ -559,7 +559,7 @@ export function CallerClient({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"FOCUS" | "CARDS" | "SHEET">("FOCUS");
   // Product Reps land in CARDS (email-first table); Callers & non-owners land in FOCUS cockpit; Owner can switch freely
-  const effectiveViewMode = isProductRep ? "CARDS" : (isOwner ? viewMode : "FOCUS");
+  const effectiveViewMode = isProductMarketing ? "CARDS" : (isOwner ? viewMode : "FOCUS");
   const [visibleCardsCount, setVisibleCardsCount] = useState<number>(50);
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "YESTERDAY" | "OLDER">("ALL");
   const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
@@ -1967,17 +1967,17 @@ export function CallerClient({
             })}
           </div>
         </div>
-      ) : viewMode === "CARDS" && (activeMember?.role === "CALLER" || isProductRep) ? (
-        <div className={`rounded-xl border p-4 flex flex-wrap items-center justify-between gap-4 ${isProductRep ? "border-violet-500/30 bg-violet-950/15" : "border-emerald-500/30 bg-emerald-950/15"}`}>
+      ) : viewMode === "CARDS" && (activeMember?.role === "CALLER" || isProductMarketing) ? (
+        <div className={`rounded-xl border p-4 flex flex-wrap items-center justify-between gap-4 ${isProductMarketing ? "border-violet-500/30 bg-violet-950/15" : "border-emerald-500/30 bg-emerald-950/15"}`}>
           <div className="flex items-center gap-2.5">
-            <span className={`h-2.5 w-2.5 rounded-full ${isProductRep ? "bg-violet-400" : "bg-emerald-400"}`} />
+            <span className={`h-2.5 w-2.5 rounded-full ${isProductMarketing ? "bg-violet-400" : "bg-emerald-400"}`} />
             <div>
               <div className="text-xs font-bold text-white flex items-center gap-2">
-                <span>{activeMember?.name ?? activeActorName}&apos;s Personal {isProductRep ? "Email Outreach" : "Calling"} Queue</span>
-                <span className={`rounded px-2 py-0.5 text-[10px] font-semibold border ${isProductRep ? "bg-violet-500/20 border-violet-500/30 text-violet-300" : "bg-emerald-500/20 border-emerald-500/30 text-emerald-300"}`}>
+                <span>{activeMember?.name ?? activeActorName}&apos;s Personal {isProductMarketing ? "Email Outreach" : "Calling"} Queue</span>
+                <span className={`rounded px-2 py-0.5 text-[10px] font-semibold border ${isProductMarketing ? "bg-violet-500/20 border-violet-500/30 text-violet-300" : "bg-emerald-500/20 border-emerald-500/30 text-emerald-300"}`}>
                   {nicheName}
                 </span>
-                {isProductRep && (
+                {isProductMarketing && (
                   <span className="rounded bg-violet-500/10 border border-violet-400/30 px-2 py-0.5 text-[10px] font-semibold text-violet-300 flex items-center gap-1">
                     <Mail className="w-3 h-3" />
                     Email-First Mode
@@ -1985,38 +1985,59 @@ export function CallerClient({
                 )}
               </div>
               <div className="text-[11px] text-zinc-400">
-                {isProductRep
+                {isProductMarketing
                   ? "Showing product leads assigned to you — use Email Compose to reach out to owners & decision-makers"
                   : "Showing leads assigned directly to your active calling shift"}
               </div>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2.5 text-xs">
-            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
-              Calls Dialed: <strong className="text-sky-300">{scopedTelemetry.totalCallsDialed}</strong>{" "}
-              <span className="text-[10px] text-zinc-500">({scopedTelemetry.dialedLeads} leads)</span>
-            </span>
-            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
-              Answered: <strong className="text-cyan-300">{scopedTelemetry.answeredLeads}</strong>{" "}
-              <span className="text-[10px] text-zinc-500">({scopedTelemetry.answerRatePct}%)</span>
-            </span>
-            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
-              Connected: <strong className="text-indigo-300">{connectedCount}</strong>{" "}
-              <span className="text-[10px] text-zinc-500">({scopedTelemetry.connectRatePct}%)</span>
-            </span>
-            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
-              Follow-Ups: <strong className="text-amber-300">{followUpCount}</strong>
-            </span>
-            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
-              Meetings Booked: <strong className="text-emerald-400">{meetingsCount}</strong>
-            </span>
-            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
-              No Answer / VM: <strong className="text-amber-400/90">{noAnswerCount + scopedTelemetry.voicemailLeads}</strong>
-            </span>
-            <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
-              Gatekeeper: <strong className="text-orange-400">{gatekeeperCount}</strong>
-            </span>
-
+            {isProductMarketing ? (
+              <>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  Total Leads: <strong className="text-violet-300">{totalCount}</strong>
+                </span>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  My Assigned: <strong className="text-violet-300">{myLeadsCount}</strong>
+                </span>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  Follow-Up / Nurture: <strong className="text-amber-300">{followUpCount}</strong>
+                </span>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  Replied / Engaged: <strong className="text-indigo-300">{connectedCount}</strong>
+                </span>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  Demos Booked: <strong className="text-emerald-400">{meetingsCount}</strong>
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  Calls Dialed: <strong className="text-sky-300">{scopedTelemetry.totalCallsDialed}</strong>{" "}
+                  <span className="text-[10px] text-zinc-500">({scopedTelemetry.dialedLeads} leads)</span>
+                </span>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  Answered: <strong className="text-cyan-300">{scopedTelemetry.answeredLeads}</strong>{" "}
+                  <span className="text-[10px] text-zinc-500">({scopedTelemetry.answerRatePct}%)</span>
+                </span>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  Connected: <strong className="text-indigo-300">{connectedCount}</strong>{" "}
+                  <span className="text-[10px] text-zinc-500">({scopedTelemetry.connectRatePct}%)</span>
+                </span>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  Follow-Ups: <strong className="text-amber-300">{followUpCount}</strong>
+                </span>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  Meetings Booked: <strong className="text-emerald-400">{meetingsCount}</strong>
+                </span>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  No Answer / VM: <strong className="text-amber-400/90">{noAnswerCount + scopedTelemetry.voicemailLeads}</strong>
+                </span>
+                <span className="rounded-lg bg-[#09090b] border border-zinc-800 px-3 py-1.5 text-zinc-300">
+                  Gatekeeper: <strong className="text-orange-400">{gatekeeperCount}</strong>
+                </span>
+              </>
+            )}
           </div>
         </div>
       ) : null}
@@ -2674,14 +2695,20 @@ export function CallerClient({
           {/* Pipeline Tabs and Search Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800/80 bg-[#121215] p-3.5">
             <div className="flex flex-wrap items-center gap-1">
-              {[
+              {(isProductMarketing ? [
+                { key: "ALL", label: `All Product Leads (${totalCount})` },
+                { key: "MY_LEADS", label: `My Assigned (${myLeadsCount})` },
+                { key: "FOLLOW_UP", label: `Follow-Up / Nurture (${followUpCount})` },
+                { key: "CONNECTED", label: `Replied / Engaged (${connectedCount})` },
+                { key: "MEETINGS", label: `Demo Booked (${meetingsCount})` },
+              ] : [
                 { key: "TO_CALL", label: `Ready to Call (${toCallCount})` },
                 { key: "MY_LEADS", label: `My Assigned Leads (${myLeadsCount})` },
                 { key: "FOLLOW_UP", label: `Scheduled Follow-Ups (${followUpCount})` },
                 { key: "CONNECTED", label: `Connected (${connectedCount})` },
                 { key: "MEETINGS", label: `Meetings Booked (${meetingsCount})` },
                 { key: "ALL", label: `All CRM Leads (${totalCount})` },
-              ].map((tab) => (
+              ]).map((tab) => (
                 <button
                   key={tab.key}
                   type="button"

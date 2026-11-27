@@ -1767,7 +1767,8 @@ export function SettingsForm({
                   </div>
                 </div>
 
-                {/* Allowed Niches */}
+                {/* Allowed Niches — hidden for Product Marketing (they market products, not industry niches) */}
+                {inviteRole !== "PRODUCT_MARKETING" && (
                 <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-4">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
@@ -1835,6 +1836,7 @@ export function SettingsForm({
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* Feature Permissions */}
                 <div>
@@ -2031,7 +2033,8 @@ export function SettingsForm({
                 </div>
               </div>
 
-              {/* Allowed Niches */}
+              {/* Allowed Niches — hidden for Product Marketing (they market products, not industry niches) */}
+              {editRole !== "PRODUCT_MARKETING" && (
               <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-4">
                 <div className="flex items-center justify-between gap-2">
                   <div>
@@ -2095,10 +2098,10 @@ export function SettingsForm({
                       );
                     })}
                   </div>
+
                 )}
               </div>
-
-              {/* Feature Permissions */}
+              )}
               <div>
                 <div className="mb-2 flex items-center justify-between">
                   <label className="text-xs font-medium text-slate-300">

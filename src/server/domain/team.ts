@@ -1,4 +1,4 @@
-export type TeamRole = "OWNER" | "ADMIN" | "REVIEWER" | "CALLER" | "PRODUCT_REP" | "VIEWER";
+export type TeamRole = "OWNER" | "ADMIN" | "REVIEWER" | "CALLER" | "PRODUCT_MARKETING" | "VIEWER";
 
 export type MemberStatus = "ACTIVE" | "INVITED" | "SUSPENDED";
 
@@ -289,12 +289,12 @@ export const ROLE_PRESETS: Record<TeamRole, RolePresetMeta> = {
       manageTeamAndSettings: false,
     },
   },
-  PRODUCT_REP: {
-    role: "PRODUCT_REP",
-    label: "Product Rep",
-    shortLabel: "Product",
+  PRODUCT_MARKETING: {
+    role: "PRODUCT_MARKETING",
+    label: "Product Marketing",
+    shortLabel: "Marketing",
     badgeColor: "bg-violet-500/10 text-violet-300 border-violet-500/25",
-    description: "Email-first outreach workspace: view assigned leads, compose and send outreach emails, track email status — no cold calling required.",
+    description: "Email-first outreach workspace: view product leads, compose and send outreach emails, track pipeline — no cold calling required. Products: FBSniper & Astraventa Voice.",
     defaultPermissions: {
       discoverLeads: false,
       approveLeads: false,
@@ -335,7 +335,7 @@ export function getPermissionsForRole(role: TeamRole): TeamPermissions {
 export function getDefaultRouteForMember(member?: TeamMember | null): string {
   if (!member || member.id === "guest") return "/login";
   if (member.role === "OWNER" || member.permissions.approveLeads) return "/";
-  if (member.role === "PRODUCT_REP" || member.permissions.emailOutreach) return "/caller";
+  if (member.role === "PRODUCT_MARKETING" || member.permissions.emailOutreach) return "/caller";
   if (member.permissions.callerWorkbench) return "/caller";
   if (member.permissions.discoverLeads) return "/discover";
   if (member.permissions.manageTeamAndSettings) return "/settings";
