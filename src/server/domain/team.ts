@@ -1,4 +1,4 @@
-export type TeamRole = "OWNER" | "ADMIN" | "REVIEWER" | "CALLER" | "VIEWER";
+export type TeamRole = "OWNER" | "ADMIN" | "REVIEWER" | "CALLER" | "PRODUCT_REP" | "VIEWER";
 
 export type MemberStatus = "ACTIVE" | "INVITED" | "SUSPENDED";
 
@@ -12,6 +12,8 @@ export interface TeamPermissions {
   exportAndSync: boolean;
   manageNiches: boolean;
   manageTeamAndSettings: boolean;
+  /** Email-first outreach mode — hides dialer/Focus Cockpit, shows email compose as primary action */
+  emailOutreach?: boolean;
 }
 
 export type PermissionKey = keyof TeamPermissions;
@@ -287,6 +289,25 @@ export const ROLE_PRESETS: Record<TeamRole, RolePresetMeta> = {
       manageTeamAndSettings: false,
     },
   },
+  PRODUCT_REP: {
+    role: "PRODUCT_REP",
+    label: "Product Rep",
+    shortLabel: "Product",
+    badgeColor: "bg-violet-500/10 text-violet-300 border-violet-500/25",
+    description: "Email-first outreach workspace: view assigned leads, compose and send outreach emails, track email status — no cold calling required.",
+    defaultPermissions: {
+      discoverLeads: false,
+      approveLeads: false,
+      callerWorkbench: true,
+      editContacts: true,
+      salesAnalytics: false,
+      editRules: false,
+      exportAndSync: false,
+      manageNiches: false,
+      manageTeamAndSettings: false,
+      emailOutreach: true,
+    },
+  },
   VIEWER: {
     role: "VIEWER",
     label: "Viewer",
@@ -314,6 +335,7 @@ export function getPermissionsForRole(role: TeamRole): TeamPermissions {
 export function getDefaultRouteForMember(member?: TeamMember | null): string {
   if (!member || member.id === "guest") return "/login";
   if (member.role === "OWNER" || member.permissions.approveLeads) return "/";
+  if (member.role === "PRODUCT_REP" || member.permissions.emailOutreach) return "/caller";
   if (member.permissions.callerWorkbench) return "/caller";
   if (member.permissions.discoverLeads) return "/discover";
   if (member.permissions.manageTeamAndSettings) return "/settings";

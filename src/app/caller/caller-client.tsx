@@ -262,6 +262,7 @@ export function CallerClient({
   };
 
   const isOwner = Boolean(activeMember && activeMember.role === "OWNER");
+  const isProductRep = Boolean(activeMember && activeMember.role === "PRODUCT_REP") || Boolean(permissions?.emailOutreach);
   const canDiscover = isOwner || Boolean(permissions?.discoverLeads);
   const canImport = isOwner || Boolean(permissions?.discoverLeads || permissions?.exportAndSync);
   const canExport = isOwner || Boolean(permissions?.exportAndSync);
@@ -557,7 +558,8 @@ export function CallerClient({
   const [selectedLead, setSelectedLead] = useState<CallerLeadView | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"FOCUS" | "CARDS" | "SHEET">("FOCUS");
-  const effectiveViewMode = isOwner ? viewMode : "FOCUS";
+  // Product Reps land in CARDS (email-first table); Callers & non-owners land in FOCUS cockpit; Owner can switch freely
+  const effectiveViewMode = isProductRep ? "CARDS" : (isOwner ? viewMode : "FOCUS");
   const [visibleCardsCount, setVisibleCardsCount] = useState<number>(50);
   const [dateFilter, setDateFilter] = useState<"ALL" | "TODAY" | "YESTERDAY" | "OLDER">("ALL");
   const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
@@ -1965,19 +1967,27 @@ export function CallerClient({
             })}
           </div>
         </div>
-      ) : viewMode === "CARDS" && activeMember?.role === "CALLER" ? (
-        <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/15 p-4 flex flex-wrap items-center justify-between gap-4">
+      ) : viewMode === "CARDS" && (activeMember?.role === "CALLER" || isProductRep) ? (
+        <div className={`rounded-xl border p-4 flex flex-wrap items-center justify-between gap-4 ${isProductRep ? "border-violet-500/30 bg-violet-950/15" : "border-emerald-500/30 bg-emerald-950/15"}`}>
           <div className="flex items-center gap-2.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+            <span className={`h-2.5 w-2.5 rounded-full ${isProductRep ? "bg-violet-400" : "bg-emerald-400"}`} />
             <div>
               <div className="text-xs font-bold text-white flex items-center gap-2">
-                <span>{activeMember.name}&apos;s Personal Calling Queue</span>
-                <span className="rounded bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                <span>{activeMember?.name ?? activeActorName}&apos;s Personal {isProductRep ? "Email Outreach" : "Calling"} Queue</span>
+                <span className={`rounded px-2 py-0.5 text-[10px] font-semibold border ${isProductRep ? "bg-violet-500/20 border-violet-500/30 text-violet-300" : "bg-emerald-500/20 border-emerald-500/30 text-emerald-300"}`}>
                   {nicheName}
                 </span>
+                {isProductRep && (
+                  <span className="rounded bg-violet-500/10 border border-violet-400/30 px-2 py-0.5 text-[10px] font-semibold text-violet-300 flex items-center gap-1">
+                    <Mail className="w-3 h-3" />
+                    Email-First Mode
+                  </span>
+                )}
               </div>
               <div className="text-[11px] text-zinc-400">
-                Showing leads assigned directly to your active calling shift
+                {isProductRep
+                  ? "Showing product leads assigned to you — use Email Compose to reach out to owners & decision-makers"
+                  : "Showing leads assigned directly to your active calling shift"}
               </div>
             </div>
           </div>
